@@ -86,7 +86,7 @@ h2 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
 .sub, .muted { color: var(--text-secondary); font-size: 13px; }
 .muted { color: var(--text-muted); }
 header.top {
-  position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center;
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; display: flex; gap: 12px; align-items: center;
   justify-content: space-between; flex-wrap: wrap; padding: 10px 16px;
   background: var(--surface-1); border-bottom: 1px solid var(--border);
 }
@@ -179,7 +179,8 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
     <span id="summary" class="muted">No data loaded</span>
   </div>
   <div class="actions">
-    <label class="btn primary">Choose folder<input id="dirInput" type="file" webkitdirectory directory multiple hidden></label>
+    <button id="driveBtn" class="btn primary" type="button" hidden>Refresh from Drive</button>
+    <label class="btn primary" id="dirBtn">Choose folder<input id="dirInput" type="file" webkitdirectory directory multiple hidden></label>
     <label class="btn">Choose files<input id="fileInput" type="file" multiple accept=".csv,.txt" hidden></label>
     <button id="themeBtn" class="btn" type="button" title="Switch light / dark">Theme</button>
   </div>
@@ -202,6 +203,7 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
     </ol>
     <p class="sub">Tip: <code>AppData</code> is hidden in Windows. Paste <code>%APPDATA%\MetaQuotes\Terminal</code> into the folder dialog's address bar.</p>
     <div id="drop" class="drop">…or drop a folder or files here</div>
+    <p class="sub" id="driveNote" hidden></p>
   </section>
 
   <div id="progress" class="progress" hidden></div>
@@ -401,6 +403,10 @@ function fixRow(row, header, idx) {
 /* ---------------- file classification ---------------- */
 function classify(name, header) {
   const n = name.toLowerCase();
+  if (/^trades_.*\.csv\.gz$/.test(n)) return 'trades';
+  if (/^equity_.*\.csv\.gz$/.test(n)) return 'snaps';
+  if (/^open_now\.csv\.gz$/.test(n)) return 'open';
+  if (n === 'status_all.txt') return 'statusAll';
   if (/_detailedstatementlive\.csv$/.test(n)) return 'trades';
   if (/_account_snapshots\.csv$/.test(n)) return 'snaps';
   if (/_open_now\.csv$/.test(n)) return 'open';
@@ -416,7 +422,8 @@ function classify(name, header) {
 function tagOf(name) { const m = /_(Quant[A-Za-z]*\d+)_/i.exec(name); return m ? m[1] : 'untagged'; }
 function isCandidate(name) {
   const n = name.toLowerCase();
-  return /_detailedstatementlive\.csv$|_account_snapshots\.csv$|_open_now\.csv$|collector_status\.txt$/.test(n);
+  return /_detailedstatementlive\.csv$|_account_snapshots\.csv$|_open_now\.csv$|collector_status\.txt$/.test(n)
+    || /^(trades_.*|equity_.*|open_now)\.csv\.gz$|^status_all\.txt$|^mt4dash_manifest\.json$/.test(n);
 }
 
 /* ---------------- trade records ---------------- */
@@ -437,7 +444,7 @@ function normExit(x, comment) {
 function ingestTrades(rows, file, report) {
   const header = rows[0]; const idx = headerIndex(header);
   const g = (r, k) => { const i = idx[k]; return i === undefined ? '' : (r[i] || '').trim(); };
-  const tag = tagOf(file.name);
+  const fileTag = tagOf(file.name);
   let added = 0, replaced = 0, dup = 0, other = 0;
   for (let i = 1; i < rows.length; i++) {
     const r = fixRow(rows[i], header, idx);
@@ -450,7 +457,7 @@ function ingestTrades(rows, file, report) {
     const profit = num0(g(r, 'profit')), commission = num0(g(r, 'commission')), swap = num0(g(r, 'swap'));
     let net = num(g(r, 'net_profit')); if (Number.isNaN(net)) net = profit + commission + swap;
     const t = {
-      account, ticket, tag,
+      account, ticket, tag: g(r, 'file_tag') || fileTag,
       version: num0(g(r, 'collector_version')),
       machine: g(r, 'machine_label'), terminal: g(r, 'terminal_label'), campaign: g(r, 'campaign') || '(none)',
       currency: g(r, 'account_currency'), server: g(r, 'server'),
@@ -580,21 +587,42 @@ function ingestStatus(text, file, report) {
 }
 
 /* ---------------- loading ---------------- */
+async function gunzipText(bytes) {
+  if (typeof DecompressionStream === 'undefined') throw new Error('this browser cannot read .gz files');
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+  return decodeBuffer(await new Response(stream).arrayBuffer());
+}
 async function loadFiles(fileList) {
   const files = Array.from(fileList).filter((f) => isCandidate(f.name) || /\.csv$/i.test(f.name));
   if (!files.length) { showProgress('No collector files found in that selection. Expected names ending in _DetailedStatementLive.csv, _open_now.csv, _account_snapshots.csv or collector_status.txt.'); return; }
+  SOURCE = { kind: 'local' };
+  return loadSources(files.map((f) => ({
+    name: f.name, path: f.webkitRelativePath || f._path || f.name, size: f.size,
+    read: async () => { const buf = await f.arrayBuffer(); return /\.gz$/i.test(f.name) ? gunzipText(new Uint8Array(buf)) : decodeBuffer(buf); },
+  })));
+}
+let SOURCE = { kind: 'none' };
+async function loadSources(files) {
   showProgress('Reading ' + files.length + ' files…');
   // fresh load each time
   TRADE_MAP = new Map(); SNAP_RAW = new Map(); OPEN_FILES = [];
   Object.assign(DB, { trades: [], other: 0, snaps: new Map(), open: [], openMeta: new Map(), status: new Map(), accounts: new Map(), files: [] });
   let done = 0;
   for (const f of files) {
-    const path = f.webkitRelativePath || f._path || f.name;
-    const report = { name: f.name, path, size: f.size, kind: '', rows: 0, added: 0, dups: 0, other: 0, note: '' };
+    const path = f.path || f.name;
+    const report = { name: f.name, path, size: f.size, kind: '', rows: 0, added: 0, dups: 0, other: 0, note: f.note || '' };
     try {
-      const text = decodeBuffer(await f.arrayBuffer());
+      if (/^mt4dash_manifest\.json$/i.test(f.name)) continue;
+      const text = f.text !== undefined ? f.text : await f.read();
+      if (text === null) { report.kind = 'failed'; DB.files.push(report); continue; }
       let kind = classify(f.name, null);
       if (kind === 'status') { report.kind = 'status'; ingestStatus(text, f, report); }
+      else if (kind === 'statusAll') {
+        report.kind = 'status';
+        const parts = text.split(/^#FILE: (.*)$/m);
+        for (let i = 1; i < parts.length; i += 2) ingestStatus(parts[i + 1] || '', { name: parts[i].trim() }, { rows: 0 });
+        report.rows = Math.floor(parts.length / 2);
+      }
       else {
         const rows = parseCSV(text);
         if (!rows.length) { report.note = 'empty'; }
@@ -623,11 +651,18 @@ async function loadFiles(fileList) {
   if (!DB.trades.length && !DB.open.length && !DB.snaps.size) { showProgress('Files were read but contained no usable rows. See the console for details.'); return; }
   $('#empty').hidden = true; $('#app').hidden = false;
   const tf = DB.files.filter((f) => f.kind === 'trades').length;
-  $('#summary').textContent = DB.trades.length.toLocaleString('en-US') + ' closed trades · ' + DB.accounts.size + ' accounts · ' + tf + ' statement files';
-  resetFilters(false);
+  let sum = DB.trades.length.toLocaleString('en-US') + ' closed trades · ' + DB.accounts.size + ' accounts · ' + tf + ' trade files';
+  if (SOURCE.kind === 'drive' && SOURCE.manifest) sum += ' · Drive data built ' + SOURCE.manifest.generatedAt + (SOURCE.manifest.machine ? ' on ' + SOURCE.manifest.machine : '');
+  $('#summary').textContent = sum;
+  const failed = DB.files.filter((f) => f.kind === 'failed').length;
+  if (failed) DB.loadWarning = failed + ' file(s) could not be downloaded from Drive, so figures may be incomplete. See the Files tab and press Refresh from Drive.';
+  else DB.loadWarning = '';
+  if (!KEEP_FILTERS) resetFilters(false);
+  KEEP_FILTERS = false;
   buildFilterOptions();
   render();
 }
+let KEEP_FILTERS = false;
 function showProgress(t) { const p = $('#progress'); p.hidden = false; p.textContent = t; }
 function hideProgress() { $('#progress').hidden = true; }
 
@@ -772,6 +807,7 @@ function renderWarnings(T) {
   const w = $('#warn'); const msgs = [];
   const cur = new Set(T.map((t) => t.currency).filter(Boolean));
   if (cur.size > 1) msgs.push('The selection mixes account currencies (' + [...cur].join(', ') + '). Totals add them together; filter by account for exact figures.');
+  if (DB.loadWarning) msgs.push(DB.loadWarning);
   if (DB.other) msgs.push(DB.other + ' non BUY/SELL rows (pending orders etc.) were excluded from statistics.');
   w.hidden = !msgs.length; w.textContent = msgs.join(' ');
 }
@@ -1109,9 +1145,21 @@ function exportCSV(cols, rows, name) {
   const lines = [cols.map((c) => csvCell(c.label)).join(',')];
   for (const r of rows) lines.push(cols.map((c) => csvCell(plain(c, r[c.key]))).join(','));
   const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
-  const a = el('a'); a.href = URL.createObjectURL(blob); a.download = 'mt4_' + name + '.csv'; document.body.appendChild(a); a.click();
+  const filename = 'mt4_' + name + '.csv';
+  if (DOWNLOADS) {
+    DOWNLOADS.save({ filename, data: blob }).catch((e) => {
+      const code = e && e.code;
+      if (code === 'declined') return;
+      if (code === 'rate_limited') { flash('Another save is already open. Try again in a moment.'); return; }
+      flash('This view cannot save files (' + (code || 'error') + ').');
+    });
+    return;
+  }
+  const a = el('a'); a.href = URL.createObjectURL(blob); a.download = filename; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
 }
+let DOWNLOADS = null;
+function flash(msg) { const w = $('#warn'); w.hidden = false; w.textContent = msg; }
 function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({ key: k }, C[k]))); }
 function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
 
@@ -1310,6 +1358,122 @@ function render() {
   renderWarnings(CUR); renderKPIs(CUR, s); renderCharts(CUR, s); renderTabsNav(); renderTab();
 }
 function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+/* ---------------- Google Drive (claude.ai page only) ---------------- */
+// When this page is opened as a claude.ai artifact it reads the compact files
+// that Build-DashboardData.ps1 writes to MT4_Terminals\_DASHBOARD in your Drive.
+const DRIVE = 'Google Drive';
+let MCP = null;
+const DRIVE_HELP = {
+  needs_reauth: 'Google Drive needs to be reconnected: claude.ai → Settings → Connectors → Google Drive.',
+  server_not_connected: 'Google Drive is not connected to your claude.ai account. Add it in claude.ai → Settings → Connectors, then press Refresh from Drive.',
+  selection_required: 'You have more than one Google Drive connector. Choose one when claude.ai asks, then press Refresh from Drive.',
+  not_in_manifest: 'Google Drive access is not allowed for this page. Allow it from the page\'s Permissions menu, then press Refresh from Drive.',
+  consent_required: 'Google Drive access is not allowed for this page yet. Press Refresh from Drive and allow it when asked.',
+  blocked_by_policy: 'Your organization\'s policy blocks Google Drive for this page.',
+  approval_required: 'Your organization requires approval for Google Drive calls, which pages cannot request yet.',
+};
+function driveError(e) {
+  const code = (e && e.code) || 'upstream_error';
+  return DRIVE_HELP[code] || ('Could not read Google Drive (' + code + (e && e.message ? ': ' + e.message : '') + ').');
+}
+function asObj(p) { if (typeof p === 'string') { try { return JSON.parse(p); } catch (e) { return {}; } } return p || {}; }
+async function driveCall(tool, input) {
+  try { return asObj((await MCP.callTool(DRIVE, tool, input, { cache: false })).payload); }
+  catch (e) {
+    if (e && e.retryable) { // one retry for reads, after the suggested wait
+      await new Promise((r) => setTimeout(r, Math.min(e.retryAfterMs || 1500 + Math.random() * 1500, 60000)));
+      return asObj((await MCP.callTool(DRIVE, tool, input, { cache: false })).payload);
+    }
+    throw e;
+  }
+}
+function b64ToBytes(b64) { const bin = atob(b64); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
+// per-viewer cache of downloaded files, keyed by Drive file id + modifiedTime
+const idb = {
+  db: null,
+  async open() {
+    if (this.db !== null) return this.db;
+    this.db = await new Promise((res) => {
+      try { const rq = indexedDB.open('mt4dash', 1); rq.onupgradeneeded = () => rq.result.createObjectStore('files'); rq.onsuccess = () => res(rq.result); rq.onerror = () => res(false); }
+      catch (e) { res(false); }
+    });
+    return this.db;
+  },
+  async get(k) { const db = await this.open(); if (!db) return null; return new Promise((res) => { try { const rq = db.transaction('files').objectStore('files').get(k); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); } catch (e) { res(null); } }); },
+  async put(k, v) { const db = await this.open(); if (!db) return; try { db.transaction('files', 'readwrite').objectStore('files').put(v, k); } catch (e) { /* cache is optional */ } },
+};
+async function driveText(f) {
+  const hit = await idb.get(f.id);
+  if (hit && hit.modifiedTime === f.modifiedTime) return hit.text;
+  const p = await driveCall('download_file_content', { fileId: f.id });
+  if (!p || typeof p.content !== 'string') throw new Error('unexpected download result');
+  const bytes = b64ToBytes(p.content);
+  const text = /\.gz$/i.test(f.title) ? await gunzipText(bytes) : decodeBuffer(bytes.buffer);
+  idb.put(f.id, { modifiedTime: f.modifiedTime, text });
+  return text;
+}
+let DRIVE_BUSY = false;
+async function loadFromDrive(keepFilters) {
+  if (!MCP || DRIVE_BUSY) return;
+  DRIVE_BUSY = true; $('#driveBtn').disabled = true;
+  try {
+    showProgress('Looking for the _DASHBOARD folder in Google Drive…');
+    const found = await driveCall('search_files', { query: "title = 'mt4dash_manifest.json'", pageSize: 10, excludeContentSnippets: true });
+    const mans = (found.files || []).sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')));
+    if (!mans.length) {
+      showProgress('No dashboard data found in Google Drive. Run Build-DashboardData.ps1 once on the VPS (see README), wait for Drive to sync, then press Refresh from Drive.');
+      return;
+    }
+    const folder = mans[0].parentId;
+    let files = []; let token = '';
+    do {
+      const q = { query: "parentId = '" + folder + "'", pageSize: 100, excludeContentSnippets: true };
+      if (token) q.pageToken = token;
+      const page = await driveCall('search_files', q);
+      files = files.concat(page.files || []); token = page.nextPageToken || '';
+    } while (token && files.length < 5000);
+    files = files.filter((f) => /^(trades_.*\.csv\.gz|equity_.*\.csv\.gz|open_now\.csv\.gz|status_all\.txt|mt4dash_manifest\.json)$/i.test(f.title || ''));
+    let manifest = null;
+    const items = []; let done = 0; const queue = files.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const f = queue.shift();
+        const item = { name: f.title, path: 'Google Drive/_DASHBOARD/' + f.title, size: +f.fileSize || 0, text: null };
+        try { item.text = await driveText(f); }
+        catch (e) {
+          if (e && ['needs_reauth', 'server_not_connected', 'selection_required', 'not_in_manifest', 'consent_required', 'blocked_by_policy', 'approval_required'].includes(e.code)) throw e;
+          item.note = 'download failed: ' + ((e && (e.code || e.message)) || 'error');
+        }
+        if (/^mt4dash_manifest\.json$/i.test(f.title) && item.text) { try { manifest = JSON.parse(item.text); } catch (e) { /* ignore */ } }
+        items.push(item); done++;
+        showProgress('Downloading from Google Drive… ' + done + ' / ' + files.length + ' files (unchanged files come from this browser\'s cache)');
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+    SOURCE = { kind: 'drive', manifest };
+    KEEP_FILTERS = !!keepFilters;
+    items.sort((a, b) => a.name.localeCompare(b.name));
+    await loadSources(items);
+  } catch (e) {
+    showProgress(driveError(e));
+  } finally {
+    DRIVE_BUSY = false; $('#driveBtn').disabled = false;
+  }
+}
+(async () => {
+  if (!window.claude || typeof window.claude.use !== 'function') return; // opened as a local file
+  window.claude.use('downloads').then((d) => { DOWNLOADS = d; }).catch(() => {});
+  MCP = await window.claude.use('mcp');
+  if (!MCP) return;
+  $('#driveBtn').hidden = false;
+  $('#driveNote').hidden = false;
+  $('#driveNote').textContent = 'Opened from claude.ai: data is read from MT4_Terminals/_DASHBOARD in your Google Drive automatically.';
+  $('#driveBtn').addEventListener('click', () => loadFromDrive(true));
+  loadFromDrive(false);
+  // refresh every 15 minutes while the page is visible; unchanged files come from cache
+  setInterval(() => { if (document.visibilityState === 'visible') loadFromDrive(true); }, 15 * 60 * 1000);
+})();
 
 /* ---------------- events ---------------- */
 $('#dirInput').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
