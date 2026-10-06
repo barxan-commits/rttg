@@ -1,0 +1,1369 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MT4 Dashboard</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --surface-2: #f0efec;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11,11,11,0.10);
+  --accent: #2a78d6;
+  --pos-text: #006300;
+  --neg-text: #d03b3b;
+  --warn-bg: #fff4dc;
+  --warn-ink: #6b4a00;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-8: #e34948;
+  --wash-neg: rgba(227,73,72,0.12);
+  --wash-pos: rgba(42,120,214,0.10);
+  --hover: rgba(11,11,11,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --surface-2: #232321;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255,255,255,0.10);
+    --accent: #3987e5;
+    --pos-text: #0ca30c;
+    --neg-text: #e66767;
+    --warn-bg: #3a2e10;
+    --warn-ink: #f5d48a;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-8: #e66767;
+    --wash-neg: rgba(230,103,103,0.16);
+    --wash-pos: rgba(57,135,229,0.14);
+    --hover: rgba(255,255,255,0.05);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface-1: #1a1a19;
+  --surface-2: #232321;
+  --text-primary: #ffffff;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255,255,255,0.10);
+  --accent: #3987e5;
+  --pos-text: #0ca30c;
+  --neg-text: #e66767;
+  --warn-bg: #3a2e10;
+  --warn-ink: #f5d48a;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-8: #e66767;
+  --wash-neg: rgba(230,103,103,0.16);
+  --wash-pos: rgba(57,135,229,0.14);
+  --hover: rgba(255,255,255,0.05);
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+h1 { font-size: 18px; margin: 0; font-weight: 600; }
+h2 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+.sub, .muted { color: var(--text-secondary); font-size: 13px; }
+.muted { color: var(--text-muted); }
+header.top {
+  position: sticky; top: 0; z-index: 5; display: flex; gap: 12px; align-items: center;
+  justify-content: space-between; flex-wrap: wrap; padding: 10px 16px;
+  background: var(--surface-1); border-bottom: 1px solid var(--border);
+}
+.brand { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
+.actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary);
+  font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--hover); }
+.btn.primary { background: var(--accent); color: #fff; border-color: transparent; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.small { padding: 3px 8px; font-size: 12px; }
+main { padding: 16px; max-width: 1600px; margin: 0 auto; }
+.empty { max-width: 760px; margin: 40px auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 24px 28px; }
+.empty code, .card code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; word-break: break-all; }
+.empty li { margin: 6px 0; }
+.drop { margin-top: 16px; border: 2px dashed var(--axis); border-radius: 10px; padding: 22px; text-align: center; color: var(--text-secondary); }
+.drop.over { border-color: var(--accent); background: var(--wash-pos); }
+.progress { margin: 12px 0; color: var(--text-secondary); }
+.filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin-bottom: 12px; }
+.filters label { display: flex; flex-direction: column; font-size: 12px; color: var(--text-secondary); gap: 3px; }
+.filters select, .filters input {
+  font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border);
+  background: var(--surface-1); color: var(--text-primary); max-width: 240px;
+}
+.presets { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.presets button { font: inherit; font-size: 12.5px; padding: 6px 10px; border: 0; background: var(--surface-1); color: var(--text-secondary); cursor: pointer; border-right: 1px solid var(--border); }
+.presets button:last-child { border-right: 0; }
+.presets button.on { background: var(--surface-2); color: var(--text-primary); font-weight: 600; }
+.warn { background: var(--warn-bg); color: var(--warn-ink); border-radius: 8px; padding: 8px 12px; margin-bottom: 12px; font-size: 13px; }
+.kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.tile .label { font-size: 12px; color: var(--text-secondary); }
+.tile .value { font-size: 20px; font-weight: 600; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .note { font-size: 11.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile.hero { grid-column: span 2; }
+.tile.hero .value { font-size: 34px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+@media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } .tile.hero { grid-column: span 1; } }
+.card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; min-width: 0; }
+.card-head { display: flex; justify-content: space-between; align-items: start; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.chart { width: 100%; position: relative; }
+.chart svg { display: block; overflow: visible; }
+.chart text { font: 11px system-ui, -apple-system, "Segoe UI", sans-serif; fill: var(--text-muted); font-variant-numeric: tabular-nums; }
+.chart text.lbl { fill: var(--text-secondary); }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--text-secondary); margin: 2px 0 6px; }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 14px; height: 2px; border-radius: 1px; }
+.tabs { display: flex; gap: 2px; flex-wrap: wrap; margin: 4px 0 0; border-bottom: 1px solid var(--border); }
+.tabs button { font: inherit; font-size: 13px; padding: 7px 12px; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--text-secondary); cursor: pointer; }
+.tabs button.on { color: var(--text-primary); border-bottom-color: var(--accent); font-weight: 600; }
+.tabbody { border-top-left-radius: 0; border-top-right-radius: 0; border-top: 0; }
+.tablewrap { overflow: auto; max-height: 640px; border: 1px solid var(--border); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { padding: 5px 9px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--grid); }
+th { position: sticky; top: 0; background: var(--surface-2); color: var(--text-secondary); font-weight: 600; cursor: pointer; user-select: none; z-index: 1; }
+th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
+th .arrow { color: var(--text-primary); }
+tbody tr:hover { background: var(--hover); }
+tbody tr.click { cursor: pointer; }
+tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bottom: 0; }
+.pos { color: var(--pos-text); }
+.neg { color: var(--neg-text); }
+.badge { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 9px; background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border); }
+.badge.stale { background: var(--warn-bg); color: var(--warn-ink); }
+.toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+.toolbar input { font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); min-width: 220px; }
+.pager { display: flex; gap: 8px; align-items: center; margin-top: 8px; font-size: 12.5px; color: var(--text-secondary); }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 1000px) { .split { grid-template-columns: 1fr; } }
+.tooltip {
+  position: fixed; z-index: 20; pointer-events: none; background: var(--surface-1); color: var(--text-primary);
+  border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15); max-width: 320px;
+}
+.tooltip .tt-x { color: var(--text-secondary); margin-bottom: 3px; }
+.tooltip .tt-row { display: flex; align-items: center; gap: 7px; }
+.tooltip .tt-row b { font-variant-numeric: tabular-nums; }
+.tooltip .tt-row i { display: inline-block; width: 12px; height: 2px; border-radius: 1px; }
+.tooltip .tt-row span { color: var(--text-secondary); }
+.hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>MT4 Dashboard</h1>
+    <span id="summary" class="muted">No data loaded</span>
+  </div>
+  <div class="actions">
+    <label class="btn primary">Choose folder<input id="dirInput" type="file" webkitdirectory directory multiple hidden></label>
+    <label class="btn">Choose files<input id="fileInput" type="file" multiple accept=".csv,.txt" hidden></label>
+    <button id="themeBtn" class="btn" type="button" title="Switch light / dark">Theme</button>
+  </div>
+</header>
+
+<main>
+  <section id="empty" class="empty">
+    <h2>Load your MT4 collector files</h2>
+    <p class="sub">This page reads the CSV files written by <b>MT4Collector_Quant</b> and computes everything in your browser. Nothing is uploaded anywhere.</p>
+    <ol>
+      <li>Click <b>Choose folder</b> and pick a folder that contains the collector files, for example
+        <code>C:\Users\&lt;you&gt;\AppData\Roaming\MetaQuotes\Terminal</code> (all terminals at once)
+        or your Google Drive folder that holds the terminals' <code>Reports</code> folders.</li>
+      <li>The page searches every subfolder for:
+        <code>*_DetailedStatementLive.csv</code> (closed trades),
+        <code>*_open_now.csv</code> (open positions),
+        <code>*_account_snapshots.csv</code> (balance / equity) and
+        <code>*_collector_status.txt</code>.</li>
+      <li>Duplicates across collector versions (QuantV2, V204, V205, V206 ...) are merged by account + ticket.</li>
+    </ol>
+    <p class="sub">Tip: <code>AppData</code> is hidden in Windows. Paste <code>%APPDATA%\MetaQuotes\Terminal</code> into the folder dialog's address bar.</p>
+    <div id="drop" class="drop">…or drop a folder or files here</div>
+  </section>
+
+  <div id="progress" class="progress" hidden></div>
+
+  <section id="app" hidden>
+    <div class="filters" id="filters">
+      <label>Period (closed trades)
+        <div class="presets" id="presets">
+          <button type="button" data-p="all" class="on">All</button>
+          <button type="button" data-p="1">Last day</button>
+          <button type="button" data-p="7">7 days</button>
+          <button type="button" data-p="30">30 days</button>
+          <button type="button" data-p="90">90 days</button>
+        </div>
+      </label>
+      <label>From <input type="date" id="fFrom"></label>
+      <label>To <input type="date" id="fTo"></label>
+      <label>Account <select id="fAccount"></select></label>
+      <label>Campaign <select id="fCampaign"></select></label>
+      <label>Magic <select id="fMagic"></select></label>
+      <label>Comment <select id="fComment"></select></label>
+      <label>Symbol <select id="fSymbol"></select></label>
+      <label>Side <select id="fSide"><option value="">All</option><option>BUY</option><option>SELL</option></select></label>
+      <label>Group comments by
+        <select id="fCommentMode">
+          <option value="base">Base comment (no [sl]/[tp])</option>
+          <option value="raw">Raw comment</option>
+        </select>
+      </label>
+      <button class="btn" id="resetBtn" type="button">Reset filters</button>
+    </div>
+    <div id="warn" class="warn" hidden></div>
+    <div class="kpis" id="kpis"></div>
+
+    <div class="grid2">
+      <div class="card">
+        <div class="card-head"><div><h2>Cumulative net profit</h2><div class="sub" id="cumSub"></div></div></div>
+        <div id="cumChart" class="chart"></div>
+        <div class="sub" style="margin-top:8px">Drawdown from peak (closed trades)</div>
+        <div id="ddChart" class="chart"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><div><h2>Daily net profit</h2><div class="sub">By close date, server time</div></div></div>
+        <div id="dailyChart" class="chart"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><div><h2>Net profit by magic number</h2><div class="sub" id="magicChartSub"></div></div></div>
+      <div id="magicChart" class="chart"></div>
+    </div>
+
+    <nav class="tabs" id="tabs"></nav>
+    <div class="card tabbody" id="tabBody"></div>
+    <p class="hint">Times are MT4 server time as written by the collector. Net profit = profit + commission + swap.</p>
+  </section>
+</main>
+<div id="tooltip" class="tooltip" hidden></div>
+
+<script>
+'use strict';
+/* =====================================================================
+   MT4 Dashboard - reads MT4Collector_Quant CSV output locally.
+   ===================================================================== */
+const $ = (s) => document.querySelector(s);
+const DAY = 86400000;
+
+const DB = {
+  trades: [],            // deduped closed trades, sorted by closeTime
+  other: 0,              // non BUY/SELL rows (pending orders etc.)
+  snaps: new Map(),      // account -> [{t,balance,equity,floating,ml,orders}]
+  open: [],              // open positions (latest file per account)
+  openMeta: new Map(),   // account -> {lastSeen, file}
+  status: new Map(),     // account -> status object
+  accounts: new Map(),   // account -> {account, machine, terminal, campaign, server, currency}
+  files: [],             // loaded files report
+};
+const state = {
+  from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '',
+  commentMode: 'base', tab: 'magic', sort: {}, page: {}, search: '', basketSearch: '', equityAccount: '',
+};
+
+/* ---------------- helpers ---------------- */
+const nf2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const nf0 = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+const nfLots = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+function num(v) { if (v === undefined || v === null || v === '') return NaN; const x = +v; return Number.isFinite(x) ? x : NaN; }
+function num0(v) { const x = num(v); return Number.isNaN(x) ? 0 : x; }
+function money(v) { if (!Number.isFinite(v)) return '–'; return (v < 0 ? '−' : '') + nf2.format(Math.abs(v)); }
+function moneyCompact(v) {
+  if (!Number.isFinite(v)) return '–';
+  const a = Math.abs(v), s = v < 0 ? '−' : '';
+  if (a >= 1e6) return s + (a / 1e6).toFixed(2) + 'M';
+  if (a >= 1e4) return s + (a / 1e3).toFixed(1) + 'K';
+  return s + nf2.format(a);
+}
+function pct(v) { return Number.isFinite(v) ? (v * 100).toFixed(1) + '%' : '–'; }
+function ratio(v) { return v === Infinity ? '∞' : Number.isFinite(v) ? v.toFixed(2) : '–'; }
+function fmtNum(v, d = 1) { return Number.isFinite(v) ? v.toFixed(d) : '–'; }
+function pad2(n) { return n < 10 ? '0' + n : '' + n; }
+function fmtTime(ms) { if (!Number.isFinite(ms)) return '–'; const d = new Date(ms); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()) + ' ' + pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()); }
+function fmtDate(ms) { if (!Number.isFinite(ms)) return '–'; const d = new Date(ms); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
+function fmtDur(s) {
+  if (!Number.isFinite(s)) return '–';
+  s = Math.round(s);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60); if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60); if (h < 48) return h + 'h ' + (m % 60) + 'm';
+  return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
+}
+// MT4 "2026.08.31 20:22:44" (server time) -> ms, kept as naive UTC so it displays unchanged
+function parseMT(s) {
+  if (!s) return NaN;
+  const m = /^(\d{4})[.\-/](\d{2})[.\-/](\d{2})(?:[ T](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(s.trim());
+  if (!m) return NaN;
+  return Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0));
+}
+function signCls(v) { return v > 0 ? 'pos' : v < 0 ? 'neg' : ''; }
+function el(tag, attrs, text) {
+  const e = document.createElement(tag);
+  if (attrs) for (const k in attrs) { if (k === 'class') e.className = attrs[k]; else e.setAttribute(k, attrs[k]); }
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+
+/* ---------------- decoding & CSV ---------------- */
+function decodeBuffer(buf) {
+  const b = new Uint8Array(buf);
+  if (b.length >= 2 && b[0] === 0xFF && b[1] === 0xFE) return new TextDecoder('utf-16le').decode(b.subarray(2));
+  if (b.length >= 2 && b[0] === 0xFE && b[1] === 0xFF) return new TextDecoder('utf-16be').decode(b.subarray(2));
+  if (b.length >= 3 && b[0] === 0xEF && b[1] === 0xBB && b[2] === 0xBF) return new TextDecoder('utf-8').decode(b.subarray(3));
+  // MQL4 writes UTF-16LE without BOM in some modes: many zero bytes at odd offsets
+  let zeros = 0; const n = Math.min(b.length, 2000);
+  for (let i = 1; i < n; i += 2) if (b[i] === 0) zeros++;
+  if (n > 20 && zeros > n / 4) return new TextDecoder('utf-16le').decode(b);
+  return new TextDecoder('utf-8').decode(b);
+}
+function parseCSV(text) {
+  const rows = [];
+  if (text.indexOf('"') === -1) {
+    const delim = sniffDelim(text);
+    const lines = text.split(/\r?\n/);
+    for (const l of lines) if (l.trim().length) rows.push(l.split(delim));
+    return rows;
+  }
+  const delim = sniffDelim(text);
+  let row = [], field = '', inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+      else field += c;
+    } else if (c === '"') inQ = true;
+    else if (c === delim) { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.length > 1 || row[0].trim() !== '') rows.push(row);
+      row = [];
+    } else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); if (row.length > 1 || row[0].trim() !== '') rows.push(row); }
+  return rows;
+}
+function sniffDelim(text) {
+  const first = text.slice(0, text.indexOf('\n') > 0 ? text.indexOf('\n') : 500);
+  const c = (first.match(/,/g) || []).length, s = (first.match(/;/g) || []).length, t = (first.match(/\t/g) || []).length;
+  if (t > c && t > s) return '\t';
+  if (s > c) return ';';
+  return ',';
+}
+function headerIndex(header) {
+  const idx = {};
+  header.forEach((h, i) => { idx[h.trim().toLowerCase()] = i; });
+  return idx;
+}
+// If an unquoted comment contained commas the row is too long: glue the extra fields back into the comment.
+function fixRow(row, header, idx) {
+  if (row.length === header.length) return row;
+  if (row.length < header.length) { while (row.length < header.length) row.push(''); return row; }
+  const extra = row.length - header.length;
+  const ci = idx['comment'], bi = idx['base_comment'];
+  if (ci === undefined) return row.slice(0, header.length);
+  const r = row.slice();
+  if (bi === ci + 1 && extra % 2 === 0) {
+    const h = extra / 2;
+    const c = r.slice(ci, ci + h + 1).join(',');
+    const b = r.slice(ci + h + 1, ci + h + 1 + h + 1).join(',');
+    r.splice(ci, extra + 2, c, b);
+  } else {
+    const c = r.slice(ci, ci + extra + 1).join(',');
+    r.splice(ci, extra + 1, c);
+  }
+  return r;
+}
+
+/* ---------------- file classification ---------------- */
+function classify(name, header) {
+  const n = name.toLowerCase();
+  if (/_detailedstatementlive\.csv$/.test(n)) return 'trades';
+  if (/_account_snapshots\.csv$/.test(n)) return 'snaps';
+  if (/_open_now\.csv$/.test(n)) return 'open';
+  if (/collector_status\.txt$/.test(n)) return 'status';
+  if (header) {
+    const h = new Set(header.map((x) => x.trim().toLowerCase()));
+    if (h.has('ticket') && h.has('close_time') && h.has('magic')) return 'trades';
+    if (h.has('balance') && h.has('equity') && h.has('time')) return 'snaps';
+    if (h.has('ticket') && h.has('magic') && h.has('last_seen')) return 'open';
+  }
+  return null;
+}
+function tagOf(name) { const m = /_(Quant[A-Za-z]*\d+)_/i.exec(name); return m ? m[1] : 'untagged'; }
+function isCandidate(name) {
+  const n = name.toLowerCase();
+  return /_detailedstatementlive\.csv$|_account_snapshots\.csv$|_open_now\.csv$|collector_status\.txt$/.test(n);
+}
+
+/* ---------------- trade records ---------------- */
+function stripSuffix(c) { return (c || '').replace(/\s*\[(sl|tp|so)\]\s*$/i, '').trim(); }
+function deriveExit(c) {
+  const m = /\[(sl|tp|so)\]\s*$/i.exec(c || '');
+  if (!m) return 'Other';
+  return m[1].toUpperCase() === 'SO' ? 'Stop out' : m[1].toUpperCase();
+}
+function normExit(x, comment) {
+  const v = (x || '').trim();
+  if (!v) return deriveExit(comment);
+  const u = v.toUpperCase();
+  if (u === 'SL' || u === 'TP') return u;
+  return v;
+}
+
+function ingestTrades(rows, file, report) {
+  const header = rows[0]; const idx = headerIndex(header);
+  const g = (r, k) => { const i = idx[k]; return i === undefined ? '' : (r[i] || '').trim(); };
+  const tag = tagOf(file.name);
+  let added = 0, replaced = 0, dup = 0, other = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const r = fixRow(rows[i], header, idx);
+    const ticket = g(r, 'ticket'); const account = g(r, 'account');
+    if (!ticket) continue;
+    const type = g(r, 'type').toUpperCase();
+    if (type !== 'BUY' && type !== 'SELL') { other++; continue; }
+    const comment = g(r, 'comment');
+    const base = g(r, 'base_comment') || stripSuffix(comment);
+    const profit = num0(g(r, 'profit')), commission = num0(g(r, 'commission')), swap = num0(g(r, 'swap'));
+    let net = num(g(r, 'net_profit')); if (Number.isNaN(net)) net = profit + commission + swap;
+    const t = {
+      account, ticket, tag,
+      version: num0(g(r, 'collector_version')),
+      machine: g(r, 'machine_label'), terminal: g(r, 'terminal_label'), campaign: g(r, 'campaign') || '(none)',
+      currency: g(r, 'account_currency'), server: g(r, 'server'),
+      openTime: parseMT(g(r, 'open_time')), closeTime: parseMT(g(r, 'close_time')),
+      type, lots: num0(g(r, 'lots')), symbol: g(r, 'symbol'), digits: num(g(r, 'digits')),
+      openPrice: num(g(r, 'open_price')), closePrice: num(g(r, 'close_price')),
+      initialSL: num(g(r, 'initial_sl')), initialTP: num(g(r, 'initial_tp')),
+      finalSL: num(g(r, 'final_sl')), finalTP: num(g(r, 'final_tp')),
+      slPts: num(g(r, 'initial_sl_points')), tpPts: num(g(r, 'initial_tp_points')),
+      magic: g(r, 'magic') || '0', comment, base,
+      exit: normExit(g(r, 'exit_reason'), comment),
+      profit, commission, swap, net,
+      duration: num(g(r, 'duration_seconds')),
+      avgSpread: num(g(r, 'avg_spread_points')), maxSpread: num(g(r, 'max_spread_points')),
+      mfe: num(g(r, 'mfe_points')), mae: num(g(r, 'mae_points')),
+      spreadCost: num0(g(r, 'open_spread_cost_estimate_account_ccy')) + num0(g(r, 'close_spread_cost_estimate_account_ccy')),
+      basket: g(r, 'basket_id'), leg: num(g(r, 'basket_leg_seq')),
+      recorded: parseMT(g(r, 'recorded_at')),
+    };
+    if (!Number.isFinite(t.closeTime)) continue;
+    if (!Number.isFinite(t.duration) && Number.isFinite(t.openTime)) t.duration = (t.closeTime - t.openTime) / 1000;
+    const key = account + '|' + ticket;
+    const prev = TRADE_MAP.get(key);
+    if (!prev) { TRADE_MAP.set(key, t); added++; }
+    else if (t.version > prev.version || (t.version === prev.version && (t.recorded || 0) > (prev.recorded || 0))) { TRADE_MAP.set(key, t); replaced++; }
+    else dup++;
+    noteAccount(t);
+  }
+  DB.other += other;
+  report.rows = rows.length - 1; report.added = added; report.dups = dup + replaced; report.other = other;
+}
+let TRADE_MAP = new Map();
+
+function noteAccount(t) {
+  if (!t.account) return;
+  let a = DB.accounts.get(t.account);
+  if (!a) { a = { account: t.account, machine: '', terminal: '', campaign: '', server: '', currency: '', lastSeen: 0 }; DB.accounts.set(t.account, a); }
+  const when = t.closeTime || t.time || 0;
+  if (when >= a.lastSeen) {
+    a.lastSeen = when;
+    if (t.machine) a.machine = t.machine;
+    if (t.terminal) a.terminal = t.terminal;
+    if (t.campaign && t.campaign !== '(none)') a.campaign = t.campaign;
+    if (t.server) a.server = t.server;
+  }
+  if (t.currency) a.currency = t.currency;
+}
+
+function ingestSnaps(rows, file, report) {
+  const header = rows[0]; const idx = headerIndex(header);
+  const g = (r, k) => { const i = idx[k]; return i === undefined ? '' : (r[i] || '').trim(); };
+  let n = 0;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i]; const account = g(r, 'account'); const t = parseMT(g(r, 'time'));
+    if (!account || !Number.isFinite(t)) continue;
+    let arr = SNAP_RAW.get(account); if (!arr) { arr = []; SNAP_RAW.set(account, arr); }
+    arr.push({ t, balance: num(g(r, 'balance')), equity: num(g(r, 'equity')), floating: num(g(r, 'floating_net')),
+      ml: num(g(r, 'margin_level_pct')), orders: num(g(r, 'open_market_orders')), lots: num(g(r, 'total_market_lots')) });
+    n++;
+    if (i === rows.length - 1) noteAccount({ account, machine: g(r, 'machine_label'), terminal: g(r, 'terminal_label'), campaign: g(r, 'campaign'), server: g(r, 'server'), time: t });
+  }
+  report.rows = n;
+}
+let SNAP_RAW = new Map();
+function finalizeSnaps() {
+  for (const [acc, arr] of SNAP_RAW) {
+    arr.sort((a, b) => a.t - b.t);
+    // downsample: at most one point per 5 minutes, always keep the last
+    const out = []; let last = -Infinity;
+    for (let i = 0; i < arr.length; i++) {
+      const p = arr[i];
+      if (p.t - last >= 300000 || i === arr.length - 1) {
+        if (out.length && out[out.length - 1].t === p.t) out[out.length - 1] = p; else out.push(p);
+        last = p.t;
+      }
+    }
+    DB.snaps.set(acc, out);
+  }
+  SNAP_RAW = new Map();
+}
+
+let OPEN_FILES = []; // {account, lastSeen, rows:[], file}
+function ingestOpen(rows, file, report) {
+  const header = rows[0]; const idx = headerIndex(header);
+  const g = (r, k) => { const i = idx[k]; return i === undefined ? '' : (r[i] || '').trim(); };
+  const perAcc = new Map();
+  for (let i = 1; i < rows.length; i++) {
+    const r = fixRow(rows[i], header, idx);
+    const account = g(r, 'account'); if (!account) continue;
+    const comment = g(r, 'comment');
+    const p = {
+      account, machine: g(r, 'machine_label'), terminal: g(r, 'terminal_label'), campaign: g(r, 'campaign') || '(none)',
+      ticket: g(r, 'ticket'), type: g(r, 'type').toUpperCase(), lots: num0(g(r, 'lots')), symbol: g(r, 'symbol'),
+      openTime: parseMT(g(r, 'open_time')), openPrice: num(g(r, 'open_price')),
+      sl: num(g(r, 'last_sl')), tp: num(g(r, 'last_tp')), magic: g(r, 'magic') || '0', comment,
+      base: g(r, 'base_comment') || stripSuffix(comment), mfe: num(g(r, 'mfe_points')), mae: num(g(r, 'mae_points')),
+      lastSeen: parseMT(g(r, 'last_seen')),
+    };
+    let o = perAcc.get(account); if (!o) { o = { account, lastSeen: 0, rows: [], file: file.name }; perAcc.set(account, o); }
+    o.rows.push(p); if (p.lastSeen > o.lastSeen) o.lastSeen = p.lastSeen;
+  }
+  for (const o of perAcc.values()) OPEN_FILES.push(o);
+  report.rows = rows.length - 1;
+}
+function finalizeOpen() {
+  const best = new Map();
+  for (const o of OPEN_FILES) { const b = best.get(o.account); if (!b || o.lastSeen > b.lastSeen) best.set(o.account, o); }
+  DB.open = []; DB.openMeta = new Map();
+  for (const o of best.values()) { DB.openMeta.set(o.account, { lastSeen: o.lastSeen, file: o.file }); DB.open.push(...o.rows); }
+  OPEN_FILES = [];
+}
+
+function ingestStatus(text, file, report) {
+  const s = { file: file.name, tag: tagOf(file.name) };
+  for (const line of text.split(/\r?\n/)) {
+    const v = /MT4Collector.*?v(\d+(?:\.\d+)*)/i.exec(line);
+    if (v && !s.version) s.version = v[1];
+    const m = /^([^:]+):\s*(.*)$/.exec(line.trim());
+    if (m) s[m[1].trim().toLowerCase()] = m[2].trim();
+  }
+  const acc = s['account'];
+  report.rows = 1;
+  if (!acc) return;
+  s.updatedMs = parseMT(s['updated']);
+  const prev = DB.status.get(acc);
+  if (!prev || (s.updatedMs || 0) > (prev.updatedMs || 0)) DB.status.set(acc, s);
+}
+
+/* ---------------- loading ---------------- */
+async function loadFiles(fileList) {
+  const files = Array.from(fileList).filter((f) => isCandidate(f.name) || /\.csv$/i.test(f.name));
+  if (!files.length) { showProgress('No collector files found in that selection. Expected names ending in _DetailedStatementLive.csv, _open_now.csv, _account_snapshots.csv or collector_status.txt.'); return; }
+  showProgress('Reading ' + files.length + ' files…');
+  // fresh load each time
+  TRADE_MAP = new Map(); SNAP_RAW = new Map(); OPEN_FILES = [];
+  Object.assign(DB, { trades: [], other: 0, snaps: new Map(), open: [], openMeta: new Map(), status: new Map(), accounts: new Map(), files: [] });
+  let done = 0;
+  for (const f of files) {
+    const path = f.webkitRelativePath || f._path || f.name;
+    const report = { name: f.name, path, size: f.size, kind: '', rows: 0, added: 0, dups: 0, other: 0, note: '' };
+    try {
+      const text = decodeBuffer(await f.arrayBuffer());
+      let kind = classify(f.name, null);
+      if (kind === 'status') { report.kind = 'status'; ingestStatus(text, f, report); }
+      else {
+        const rows = parseCSV(text);
+        if (!rows.length) { report.note = 'empty'; }
+        else {
+          kind = kind || classify(f.name, rows[0]);
+          report.kind = kind || 'ignored';
+          if (kind === 'trades') ingestTrades(rows, f, report);
+          else if (kind === 'snaps') ingestSnaps(rows, f, report);
+          else if (kind === 'open') ingestOpen(rows, f, report);
+        }
+      }
+    } catch (e) { report.note = 'error: ' + e.message; }
+    if (report.kind !== 'ignored') DB.files.push(report);
+    done++;
+    if (done % 5 === 0) { showProgress('Reading files… ' + done + ' / ' + files.length); await new Promise((r) => setTimeout(r, 0)); }
+  }
+  DB.trades = Array.from(TRADE_MAP.values()).sort((a, b) => a.closeTime - b.closeTime || (a.ticket < b.ticket ? -1 : 1));
+  TRADE_MAP = new Map();
+  finalizeSnaps(); finalizeOpen();
+  for (const [acc, s] of DB.status) {
+    let a = DB.accounts.get(acc);
+    if (!a) { a = { account: acc, machine: s['machine'] || '', terminal: s['terminal'] || '', campaign: s['campaign'] || '', server: s['server'] || '', currency: '', lastSeen: 0 }; DB.accounts.set(acc, a); }
+  }
+  for (const p of DB.open) noteAccount({ account: p.account, machine: p.machine, terminal: p.terminal, campaign: p.campaign, time: p.lastSeen });
+  hideProgress();
+  if (!DB.trades.length && !DB.open.length && !DB.snaps.size) { showProgress('Files were read but contained no usable rows. See the console for details.'); return; }
+  $('#empty').hidden = true; $('#app').hidden = false;
+  const tf = DB.files.filter((f) => f.kind === 'trades').length;
+  $('#summary').textContent = DB.trades.length.toLocaleString('en-US') + ' closed trades · ' + DB.accounts.size + ' accounts · ' + tf + ' statement files';
+  resetFilters(false);
+  buildFilterOptions();
+  render();
+}
+function showProgress(t) { const p = $('#progress'); p.hidden = false; p.textContent = t; }
+function hideProgress() { $('#progress').hidden = true; }
+
+/* ---------------- filters ---------------- */
+function accLabel(acc) {
+  const a = DB.accounts.get(acc);
+  if (!a) return acc;
+  const parts = [a.machine, a.terminal].filter(Boolean).join(' / ');
+  return acc + (parts ? ' · ' + parts : '');
+}
+function commentOf(t) { return state.commentMode === 'raw' ? (t.comment || '(empty)') : (t.base || '(empty)'); }
+function fillSelect(sel, values, current, labelFn) {
+  sel.textContent = '';
+  sel.appendChild(el('option', { value: '' }, 'All'));
+  for (const [v, n] of values) { const o = el('option', { value: v }, (labelFn ? labelFn(v) : v) + '  (' + n + ')'); sel.appendChild(o); }
+  sel.value = values.some(([v]) => v === current) ? current : '';
+}
+function countBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); m.set(k, (m.get(k) || 0) + 1); } return m; }
+function buildFilterOptions() {
+  const T = DB.trades;
+  const accs = countBy(T, (t) => t.account); for (const a of DB.accounts.keys()) if (!accs.has(a)) accs.set(a, 0);
+  fillSelect($('#fAccount'), [...accs].sort((a, b) => a[0].localeCompare(b[0])), state.account, accLabel);
+  fillSelect($('#fCampaign'), [...countBy(T, (t) => t.campaign)].sort((a, b) => b[1] - a[1]), state.campaign);
+  fillSelect($('#fMagic'), [...countBy(T, (t) => t.magic)].sort((a, b) => (+a[0]) - (+b[0]) || a[0].localeCompare(b[0])), state.magic);
+  fillSelect($('#fComment'), [...countBy(T, commentOf)].sort((a, b) => b[1] - a[1]), state.comment);
+  fillSelect($('#fSymbol'), [...countBy(T, (t) => t.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
+}
+function resetFilters(doRender = true) {
+  Object.assign(state, { from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '' });
+  $('#fFrom').value = ''; $('#fTo').value = ''; $('#fSide').value = '';
+  for (const b of document.querySelectorAll('#presets button')) b.classList.toggle('on', b.dataset.p === 'all');
+  if (doRender) { buildFilterOptions(); render(); }
+}
+function matchDims(t, skipDate) {
+  if (state.account && t.account !== state.account) return false;
+  if (state.campaign && t.campaign !== state.campaign) return false;
+  if (state.magic && t.magic !== state.magic) return false;
+  if (state.symbol && t.symbol !== state.symbol) return false;
+  if (state.side && t.type !== state.side) return false;
+  if (state.comment && commentOf(t) !== state.comment) return false;
+  if (!skipDate) {
+    if (state.from !== null && t.closeTime < state.from) return false;
+    if (state.to !== null && t.closeTime >= state.to) return false;
+  }
+  return true;
+}
+function filtered() { return DB.trades.filter((t) => matchDims(t, false)); }
+function dataMaxTime() { return DB.trades.length ? DB.trades[DB.trades.length - 1].closeTime : Date.now(); }
+
+/* ---------------- statistics ---------------- */
+function stats(arr) {
+  const s = { n: 0, wins: 0, losses: 0, gp: 0, gl: 0, net: 0, lots: 0, profit: 0, comm: 0, swap: 0, spread: 0,
+    maxWin: -Infinity, maxLoss: Infinity, maxDD: 0, mcw: 0, mcl: 0, durSum: 0, durN: 0, sl: 0, tp: 0, oth: 0,
+    mfeSum: 0, mfeN: 0, maeSum: 0, maeN: 0, sumSq: 0, first: Infinity, last: -Infinity, buys: 0, sells: 0,
+    buyNet: 0, sellNet: 0, accounts: new Set(), symbols: new Set(), comments: new Map() };
+  let cum = 0, peak = 0, cw = 0, cl = 0;
+  for (const t of arr) {
+    const v = t.net; s.n++; s.net += v; s.sumSq += v * v; s.lots += t.lots; s.profit += t.profit; s.comm += t.commission; s.swap += t.swap; s.spread += t.spreadCost;
+    if (v > 0) { s.wins++; s.gp += v; cw++; cl = 0; if (cw > s.mcw) s.mcw = cw; }
+    else if (v < 0) { s.losses++; s.gl += v; cl++; cw = 0; if (cl > s.mcl) s.mcl = cl; }
+    if (v > s.maxWin) s.maxWin = v; if (v < s.maxLoss) s.maxLoss = v;
+    cum += v; if (cum > peak) peak = cum; if (peak - cum > s.maxDD) s.maxDD = peak - cum;
+    if (Number.isFinite(t.duration)) { s.durSum += t.duration; s.durN++; }
+    if (t.exit === 'SL') s.sl++; else if (t.exit === 'TP') s.tp++; else s.oth++;
+    if (Number.isFinite(t.mfe)) { s.mfeSum += t.mfe; s.mfeN++; }
+    if (Number.isFinite(t.mae)) { s.maeSum += t.mae; s.maeN++; }
+    if (t.closeTime < s.first) s.first = t.closeTime; if (t.closeTime > s.last) s.last = t.closeTime;
+    if (t.type === 'BUY') { s.buys++; s.buyNet += v; } else { s.sells++; s.sellNet += v; }
+    s.accounts.add(t.account); s.symbols.add(t.symbol);
+    const c = commentOf(t); s.comments.set(c, (s.comments.get(c) || 0) + 1);
+  }
+  s.winRate = s.n ? s.wins / s.n : NaN;
+  s.pf = s.gl < 0 ? s.gp / -s.gl : (s.gp > 0 ? Infinity : NaN);
+  s.exp = s.n ? s.net / s.n : NaN;
+  s.avgWin = s.wins ? s.gp / s.wins : NaN;
+  s.avgLoss = s.losses ? s.gl / s.losses : NaN;
+  s.payoff = (s.wins && s.losses) ? s.avgWin / -s.avgLoss : NaN;
+  s.avgDur = s.durN ? s.durSum / s.durN : NaN;
+  s.avgMfe = s.mfeN ? s.mfeSum / s.mfeN : NaN;
+  s.avgMae = s.maeN ? s.maeSum / s.maeN : NaN;
+  const variance = s.n > 1 ? (s.sumSq - s.n * s.exp * s.exp) / (s.n - 1) : NaN;
+  const sd = Math.sqrt(Math.max(variance, 0));
+  s.sqn = s.n > 1 && sd > 0 ? Math.sqrt(Math.min(s.n, 100)) * s.exp / sd : NaN;
+  s.recovery = s.maxDD > 0 ? s.net / s.maxDD : NaN;
+  if (!s.n) { s.maxWin = NaN; s.maxLoss = NaN; }
+  s.topComment = [...s.comments].sort((a, b) => b[1] - a[1]).slice(0, 2).map((x) => x[0]).join(', ') + (s.comments.size > 2 ? ' +' + (s.comments.size - 2) : '');
+  return s;
+}
+function groupBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); let a = m.get(k); if (!a) { a = []; m.set(k, a); } a.push(x); } return m; }
+function baskets(arr) {
+  const m = groupBy(arr.filter((t) => t.basket), (t) => t.account + '|' + t.basket);
+  const out = [];
+  for (const [k, legs] of m) {
+    let net = 0, lots = 0, first = Infinity, last = -Infinity; const ex = new Map();
+    for (const t of legs) { net += t.net; lots += t.lots; if (t.openTime < first) first = t.openTime; if (t.closeTime > last) last = t.closeTime; ex.set(t.exit, (ex.get(t.exit) || 0) + 1); }
+    const t0 = legs[0];
+    out.push({ key: k, id: t0.basket, account: t0.account, magic: t0.magic, symbol: t0.symbol, side: t0.type, comment: commentOf(t0),
+      legs: legs.length, lots, net, first, last, dur: (last - first) / 1000,
+      exits: [...ex].sort((a, b) => b[1] - a[1]).map(([k2, v]) => k2 + '×' + v).join(', ') });
+  }
+  return out;
+}
+
+/* ---------------- KPIs ---------------- */
+function renderKPIs(T, s) {
+  const k = $('#kpis'); k.textContent = '';
+  const tile = (label, value, note, cls, hero) => {
+    const d = el('div', { class: 'tile' + (hero ? ' hero' : '') });
+    d.appendChild(el('div', { class: 'label' }, label));
+    d.appendChild(el('div', { class: 'value' + (cls ? ' ' + cls : '') }, value));
+    if (note) d.appendChild(el('div', { class: 'note' }, note));
+    k.appendChild(d);
+  };
+  const cur = currencyNote(T);
+  tile('Net profit' + cur, money(s.net), s.n ? fmtDate(s.first) + ' → ' + fmtDate(s.last) : 'no trades in filter', signCls(s.net), true);
+  tile('Closed trades', s.n.toLocaleString('en-US'), s.wins + ' won · ' + s.losses + ' lost');
+  tile('Win rate', pct(s.winRate), 'Payoff ' + ratio(s.payoff));
+  tile('Profit factor', ratio(s.pf), 'SQN ' + fmtNum(s.sqn, 2));
+  tile('Expectancy / trade', money(s.exp), 'Avg win ' + money(s.avgWin) + ' · loss ' + money(s.avgLoss), signCls(s.exp));
+  tile('Max drawdown (closed)', money(-s.maxDD), 'Recovery factor ' + fmtNum(s.recovery, 2), s.maxDD > 0 ? 'neg' : '');
+  tile('Gross profit', money(s.gp), 'Largest win ' + money(s.maxWin), 'pos');
+  tile('Gross loss', money(s.gl), 'Largest loss ' + money(s.maxLoss), s.gl < 0 ? 'neg' : '');
+  tile('Commission + swap', money(s.comm + s.swap), 'Comm ' + money(s.comm) + ' · swap ' + money(s.swap), signCls(s.comm + s.swap));
+  tile('Lots traded', nfLots.format(s.lots), 'Avg hold ' + fmtDur(s.avgDur));
+  tile('Closed by TP', pct(s.n ? s.tp / s.n : NaN), 'TP ' + s.tp.toLocaleString('en-US') + ' · SL ' + s.sl.toLocaleString('en-US') + ' · other ' + s.oth.toLocaleString('en-US'));
+  const op = openFiltered();
+  const ol = op.reduce((a, p) => a + p.lots, 0);
+  tile('Open positions', op.length.toLocaleString('en-US'), nfLots.format(ol) + ' lots, latest file per account');
+  // floating P/L: account level only (collector does not write per-position profit)
+  const accs = state.account ? [state.account] : [...DB.accounts.keys()];
+  let fl = 0, any = false;
+  for (const a of accs) { const sn = DB.snaps.get(a); if (sn && sn.length && (!state.campaign || (DB.accounts.get(a) || {}).campaign === state.campaign)) { const v = sn[sn.length - 1].floating; if (Number.isFinite(v)) { fl += v; any = true; } } }
+  const dimFilter = state.magic || state.comment || state.symbol || state.side;
+  tile('Floating P/L', any ? money(fl) : '–', dimFilter ? 'account level, ignores magic/comment/symbol' : 'latest account snapshot', signCls(fl));
+}
+function currencyNote(T) {
+  const set = new Set(T.map((t) => t.currency).filter(Boolean));
+  if (set.size === 1) return ' (' + [...set][0] + ')';
+  return '';
+}
+function renderWarnings(T) {
+  const w = $('#warn'); const msgs = [];
+  const cur = new Set(T.map((t) => t.currency).filter(Boolean));
+  if (cur.size > 1) msgs.push('The selection mixes account currencies (' + [...cur].join(', ') + '). Totals add them together; filter by account for exact figures.');
+  if (DB.other) msgs.push(DB.other + ' non BUY/SELL rows (pending orders etc.) were excluded from statistics.');
+  w.hidden = !msgs.length; w.textContent = msgs.join(' ');
+}
+
+/* ---------------- charts (inline SVG) ---------------- */
+const SVGNS = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); return e; }
+function niceTicks(min, max, count) {
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return [0];
+  if (min === max) { const d = Math.abs(min) || 1; min -= d; max += d; }
+  const span = max - min; const step0 = span / Math.max(count, 1);
+  const mag = Math.pow(10, Math.floor(Math.log10(step0))); const r = step0 / mag;
+  const step = (r >= 5 ? 10 : r >= 2 ? 5 : r >= 1 ? 2 : 1) * mag;
+  const ticks = []; for (let v = Math.floor(min / step) * step; v <= max + step * 0.5; v += step) ticks.push(+v.toFixed(10));
+  return ticks;
+}
+function axisFormatter(ticks) {
+  const step = ticks.length > 1 ? Math.abs(ticks[1] - ticks[0]) : 1;
+  const top = Math.max(...ticks.map(Math.abs));
+  const dec = (unit) => Math.max(0, Math.min(3, Math.ceil(-Math.log10(step / unit) - 1e-9)));
+  return (v) => {
+    const a = Math.abs(v), s = v < 0 ? '−' : '';
+    if (top >= 1e6 && step >= 1e4) return s + (a / 1e6).toFixed(dec(1e6)) + 'M';
+    if (top >= 1e4 && step >= 1e3) return s + (a / 1e3).toFixed(dec(1e3)) + 'K';
+    const d = dec(1);
+    return s + a.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  };
+}
+const tip = {
+  show(evt, title, rows) {
+    const t = $('#tooltip'); t.textContent = '';
+    if (title) t.appendChild(el('div', { class: 'tt-x' }, title));
+    for (const r of rows) {
+      const row = el('div', { class: 'tt-row' });
+      if (r.color) { const i = el('i'); i.style.background = r.color; row.appendChild(i); }
+      row.appendChild(el('b', null, r.value));
+      if (r.label) row.appendChild(el('span', null, r.label));
+      t.appendChild(row);
+    }
+    t.hidden = false;
+    const pad = 14; let x = evt.clientX + pad, y = evt.clientY + pad;
+    const w = t.offsetWidth, h = t.offsetHeight;
+    if (x + w > window.innerWidth - 8) x = evt.clientX - w - pad;
+    if (y + h > window.innerHeight - 8) y = evt.clientY - h - pad;
+    t.style.left = x + 'px'; t.style.top = y + 'px';
+  },
+  hide() { $('#tooltip').hidden = true; },
+};
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+
+// series: [{name, color, pts:[[x,y]...]}]; opts: {height, area:'neg'|'pos'|null, xTime:true, yFmt}
+function lineChart(host, series, opts) {
+  host.textContent = '';
+  const W = Math.max(host.clientWidth, 300), H = opts.height || 240;
+  const m = { l: 64, r: 14, t: 10, b: 24 };
+  const all = series.flatMap((s) => s.pts);
+  if (!all.length) { host.appendChild(el('div', { class: 'muted' }, 'No data for this selection.')); return; }
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [x, y] of all) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  if (opts.zero) { y0 = Math.min(y0, 0); y1 = Math.max(y1, 0); }
+  if (x0 === x1) { x0 -= DAY / 2; x1 += DAY / 2; }
+  const yt = niceTicks(y0, y1, 5); y0 = Math.min(y0, yt[0]); y1 = Math.max(y1, yt[yt.length - 1]);
+  const yf = axisFormatter(yt);
+  const X = (x) => m.l + (x - x0) / (x1 - x0) * (W - m.l - m.r);
+  const Y = (y) => m.t + (1 - (y - y0) / ((y1 - y0) || 1)) * (H - m.t - m.b);
+  const svg = svgEl('svg', { width: W, height: H, role: 'img', 'aria-label': opts.label || 'line chart' });
+  for (const v of yt) {
+    svg.appendChild(svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === 0 ? cssVar('--axis') : cssVar('--grid'), 'stroke-width': 1 }));
+    const tx = svgEl('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }); tx.textContent = (opts.yFmt || yf)(v); svg.appendChild(tx);
+  }
+  const span = x1 - x0; const nx = Math.max(2, Math.floor((W - m.l - m.r) / 110));
+  for (let i = 0; i <= nx; i++) {
+    const x = x0 + span * i / nx; const tx = svgEl('text', { x: X(x), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === nx ? 'end' : 'middle' });
+    tx.textContent = span > 3 * DAY ? fmtDate(x).slice(5) : fmtTime(x).slice(5); svg.appendChild(tx);
+  }
+  for (const s of series) {
+    if (!s.pts.length) continue;
+    const d = s.pts.map(([x, y], i) => (i ? 'L' : 'M') + X(x).toFixed(1) + ',' + Y(y).toFixed(1)).join('');
+    if (opts.area) {
+      const base = Y(Math.max(Math.min(0, y1), y0));
+      svg.appendChild(svgEl('path', { d: d + 'L' + X(s.pts[s.pts.length - 1][0]).toFixed(1) + ',' + base + 'L' + X(s.pts[0][0]).toFixed(1) + ',' + base + 'Z', fill: opts.area === 'neg' ? cssVar('--wash-neg') : cssVar('--wash-pos'), stroke: 'none' }));
+    }
+    svg.appendChild(svgEl('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  }
+  // end dot + label for single series
+  if (series.length === 1 && series[0].pts.length) {
+    const [lx, ly] = series[0].pts[series[0].pts.length - 1];
+    svg.appendChild(svgEl('circle', { cx: X(lx), cy: Y(ly), r: 4, fill: series[0].color, stroke: cssVar('--surface-1'), 'stroke-width': 2 }));
+  }
+  // hover layer
+  const cross = svgEl('line', { y1: m.t, y2: H - m.b, stroke: cssVar('--axis'), 'stroke-width': 1, visibility: 'hidden' });
+  svg.appendChild(cross);
+  const dots = series.map((s) => { const c = svgEl('circle', { r: 4, fill: s.color, stroke: cssVar('--surface-1'), 'stroke-width': 2, visibility: 'hidden' }); svg.appendChild(c); return c; });
+  const hit = svgEl('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent' });
+  svg.appendChild(hit);
+  const nearest = (pts, x) => { let lo = 0, hi = pts.length - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (pts[mid][0] < x) lo = mid + 1; else hi = mid; } if (lo > 0 && Math.abs(pts[lo - 1][0] - x) < Math.abs(pts[lo][0] - x)) lo--; return pts[lo]; };
+  hit.addEventListener('pointermove', (e) => {
+    const r = svg.getBoundingClientRect(); const px = e.clientX - r.left;
+    const x = x0 + (px - m.l) / (W - m.l - m.r) * (x1 - x0);
+    const rows = []; let cx = null;
+    series.forEach((s, i) => {
+      if (!s.pts.length) return; const p = nearest(s.pts, x); if (cx === null) cx = p[0];
+      dots[i].setAttribute('cx', X(p[0])); dots[i].setAttribute('cy', Y(p[1])); dots[i].setAttribute('visibility', 'visible');
+      rows.push({ color: s.color, value: (opts.tipFmt || money)(p[1]), label: series.length > 1 ? s.name : (opts.tipLabel ? opts.tipLabel(p) : '') });
+    });
+    if (cx === null) return;
+    cross.setAttribute('x1', X(cx)); cross.setAttribute('x2', X(cx)); cross.setAttribute('visibility', 'visible');
+    tip.show(e, fmtTime(cx), rows);
+  });
+  hit.addEventListener('pointerleave', () => { cross.setAttribute('visibility', 'hidden'); dots.forEach((d) => d.setAttribute('visibility', 'hidden')); tip.hide(); });
+  host.appendChild(svg);
+}
+// vertical columns, values may be negative. items: [{x(label/time), v, title}]
+function columnChart(host, items, opts) {
+  host.textContent = '';
+  if (!items.length) { host.appendChild(el('div', { class: 'muted' }, 'No data for this selection.')); return; }
+  const W = Math.max(host.clientWidth, 300), H = opts.height || 300;
+  const m = { l: 64, r: 10, t: 10, b: 24 };
+  let y0 = 0, y1 = 0; for (const it of items) { if (it.v < y0) y0 = it.v; if (it.v > y1) y1 = it.v; }
+  const yt = niceTicks(y0, y1, 5); y0 = Math.min(y0, yt[0]); y1 = Math.max(y1, yt[yt.length - 1]);
+  const yf = axisFormatter(yt);
+  const Y = (y) => m.t + (1 - (y - y0) / ((y1 - y0) || 1)) * (H - m.t - m.b);
+  const svg = svgEl('svg', { width: W, height: H, role: 'img', 'aria-label': opts.label || 'column chart' });
+  for (const v of yt) {
+    svg.appendChild(svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === 0 ? cssVar('--axis') : cssVar('--grid'), 'stroke-width': 1 }));
+    const tx = svgEl('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }); tx.textContent = yf(v); svg.appendChild(tx);
+  }
+  const slot = (W - m.l - m.r) / items.length; const bw = Math.max(1, Math.min(24, slot - 2));
+  const pos = cssVar('--series-1'), neg = cssVar('--series-8');
+  const step = Math.ceil(items.length / Math.max(2, Math.floor((W - m.l - m.r) / 70)));
+  items.forEach((it, i) => {
+    const cx = m.l + slot * i + slot / 2; const yv = Y(it.v), yz = Y(0);
+    const h = Math.abs(yz - yv); const top = Math.min(yv, yz);
+    const rr = Math.min(4, bw / 2, h);
+    const path = it.v >= 0
+      ? `M${cx - bw / 2},${yz}V${top + rr}Q${cx - bw / 2},${top} ${cx - bw / 2 + rr},${top}H${cx + bw / 2 - rr}Q${cx + bw / 2},${top} ${cx + bw / 2},${top + rr}V${yz}Z`
+      : `M${cx - bw / 2},${yz}V${yv - rr}Q${cx - bw / 2},${yv} ${cx - bw / 2 + rr},${yv}H${cx + bw / 2 - rr}Q${cx + bw / 2},${yv} ${cx + bw / 2},${yv - rr}V${yz}Z`;
+    const bar = svgEl('path', { d: h < 0.5 ? `M${cx - bw / 2},${yz}h${bw}` : path, fill: it.v >= 0 ? pos : neg, stroke: h < 0.5 ? cssVar('--axis') : 'none' });
+    svg.appendChild(bar);
+    const hit = svgEl('rect', { x: m.l + slot * i, y: m.t, width: slot, height: H - m.t - m.b, fill: 'transparent' });
+    hit.addEventListener('pointermove', (e) => { bar.setAttribute('opacity', '0.75'); tip.show(e, it.title, [{ color: it.v >= 0 ? pos : neg, value: money(it.v), label: it.sub || '' }]); });
+    hit.addEventListener('pointerleave', () => { bar.removeAttribute('opacity'); tip.hide(); });
+    svg.appendChild(hit);
+    if (i % step === 0) { const tx = svgEl('text', { x: cx, y: H - 6, 'text-anchor': 'middle' }); tx.textContent = it.xl; svg.appendChild(tx); }
+  });
+  host.appendChild(svg);
+}
+// horizontal diverging bars. items: [{label, v, sub}]
+function barChartH(host, items, onClick) {
+  host.textContent = '';
+  if (!items.length) { host.appendChild(el('div', { class: 'muted' }, 'No data for this selection.')); return; }
+  const W = Math.max(host.clientWidth, 300); const rowH = 26; const m = { l: 150, r: 90, t: 6, b: 22 };
+  const H = m.t + m.b + rowH * items.length;
+  let x0 = 0, x1 = 0; for (const it of items) { if (it.v < x0) x0 = it.v; if (it.v > x1) x1 = it.v; }
+  const xt = niceTicks(x0, x1, 5); x0 = Math.min(x0, xt[0]); x1 = Math.max(x1, xt[xt.length - 1]);
+  const xf = axisFormatter(xt);
+  const X = (x) => m.l + (x - x0) / ((x1 - x0) || 1) * (W - m.l - m.r);
+  const svg = svgEl('svg', { width: W, height: H, role: 'img', 'aria-label': 'net profit by magic number' });
+  for (const v of xt) {
+    svg.appendChild(svgEl('line', { x1: X(v), x2: X(v), y1: m.t, y2: H - m.b, stroke: v === 0 ? cssVar('--axis') : cssVar('--grid'), 'stroke-width': 1 }));
+    const tx = svgEl('text', { x: X(v), y: H - 6, 'text-anchor': 'middle' }); tx.textContent = xf(v); svg.appendChild(tx);
+  }
+  const pos = cssVar('--series-1'), neg = cssVar('--series-8'); const bh = Math.min(16, rowH - 6);
+  items.forEach((it, i) => {
+    const cy = m.t + rowH * i + rowH / 2; const xz = X(0), xv = X(it.v); const w = Math.abs(xv - xz); const rr = Math.min(4, bh / 2, w);
+    const lbl = svgEl('text', { x: m.l - 8, y: cy + 4, 'text-anchor': 'end', class: 'lbl' }); lbl.textContent = it.label.length > 22 ? it.label.slice(0, 21) + '…' : it.label; svg.appendChild(lbl);
+    let d;
+    if (it.v >= 0) d = `M${xz},${cy - bh / 2}H${xv - rr}Q${xv},${cy - bh / 2} ${xv},${cy - bh / 2 + rr}V${cy + bh / 2 - rr}Q${xv},${cy + bh / 2} ${xv - rr},${cy + bh / 2}H${xz}Z`;
+    else d = `M${xz},${cy - bh / 2}H${xv + rr}Q${xv},${cy - bh / 2} ${xv},${cy - bh / 2 + rr}V${cy + bh / 2 - rr}Q${xv},${cy + bh / 2} ${xv + rr},${cy + bh / 2}H${xz}Z`;
+    const bar = svgEl('path', { d: w < 0.5 ? `M${xz},${cy - bh / 2}v${bh}` : d, fill: it.v >= 0 ? pos : neg, stroke: w < 0.5 ? cssVar('--axis') : 'none' });
+    svg.appendChild(bar);
+    const vl = svgEl('text', { x: it.v >= 0 ? xv + 6 : xv - 6, y: cy + 4, 'text-anchor': it.v >= 0 ? 'start' : 'end', class: 'lbl' }); vl.textContent = moneyCompact(it.v);
+    // keep value label inside the plot: if a negative bar reaches the left edge, put the label right of zero
+    if (it.v < 0 && xv - 60 < m.l) { vl.setAttribute('x', xz + 6); vl.setAttribute('text-anchor', 'start'); }
+    svg.appendChild(vl);
+    const hit = svgEl('rect', { x: 0, y: m.t + rowH * i, width: W, height: rowH, fill: 'transparent', style: onClick ? 'cursor:pointer' : '' });
+    hit.addEventListener('pointermove', (e) => { bar.setAttribute('opacity', '0.75'); tip.show(e, it.label, [{ color: it.v >= 0 ? pos : neg, value: money(it.v), label: it.sub || '' }]); });
+    hit.addEventListener('pointerleave', () => { bar.removeAttribute('opacity'); tip.hide(); });
+    if (onClick) hit.addEventListener('click', () => onClick(it));
+    svg.appendChild(hit);
+  });
+  host.appendChild(svg);
+}
+function downsample(pts, max) {
+  if (pts.length <= max) return pts;
+  const step = pts.length / max; const out = [];
+  for (let i = 0; i < max; i++) {
+    // keep min and max of each bucket so drawdowns stay visible
+    const a = Math.floor(i * step), b = Math.min(pts.length, Math.floor((i + 1) * step));
+    let lo = pts[a], hi = pts[a];
+    for (let j = a; j < b; j++) { if (pts[j][1] < lo[1]) lo = pts[j]; if (pts[j][1] > hi[1]) hi = pts[j]; }
+    if (lo[0] <= hi[0]) { out.push(lo); if (hi !== lo) out.push(hi); } else { out.push(hi); out.push(lo); }
+  }
+  out.push(pts[pts.length - 1]);
+  return out;
+}
+function renderCharts(T, s) {
+  const pts = []; const dd = []; let cum = 0, peak = 0;
+  for (const t of T) { cum += t.net; if (cum > peak) peak = cum; pts.push([t.closeTime, cum]); dd.push([t.closeTime, cum - peak]); }
+  $('#cumSub').textContent = T.length ? T.length.toLocaleString('en-US') + ' trades in order of close time' : '';
+  lineChart($('#cumChart'), [{ name: 'Net profit', color: cssVar('--series-1'), pts: downsample(pts, 1500) }], { height: 230, zero: true, label: 'cumulative net profit' });
+  lineChart($('#ddChart'), [{ name: 'Drawdown', color: cssVar('--series-8'), pts: downsample(dd, 1500) }], { height: 110, zero: true, area: 'neg', label: 'drawdown' });
+  const days = new Map();
+  for (const t of T) { const d = Math.floor(t.closeTime / DAY) * DAY; const o = days.get(d) || { v: 0, n: 0 }; o.v += t.net; o.n++; days.set(d, o); }
+  const items = [...days].sort((a, b) => a[0] - b[0]).map(([d, o]) => ({ xl: fmtDate(d).slice(5), v: o.v, title: fmtDate(d) + ' (' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(d).getUTCDay()] + ')', sub: o.n + ' trades' }));
+  columnChart($('#dailyChart'), items, { height: 372, label: 'daily net profit' });
+  const g = groupBy(T, (t) => t.magic);
+  let mi = [...g].map(([k, arr]) => { let v = 0; for (const t of arr) v += t.net; return { label: k, v, sub: arr.length + ' trades', n: arr.length }; });
+  mi.sort((a, b) => b.v - a.v);
+  const total = mi.length;
+  if (mi.length > 24) { mi = mi.slice(0, 12).concat(mi.slice(-12)); }
+  $('#magicChartSub').textContent = total > 24 ? 'Top 12 and bottom 12 of ' + total + ' magic numbers. Click a bar to filter.' : total + ' magic numbers. Click a bar to filter.';
+  barChartH($('#magicChart'), mi, (it) => { state.magic = it.label; syncFilterInputs(); render(); });
+}
+
+/* ---------------- tables ---------------- */
+function dimRow(key, label, arr, extra) {
+  const s = stats(arr);
+  const r = { key, label, s, n: s.n, winRate: s.winRate, net: s.net, gp: s.gp, gl: s.gl, pf: s.pf, exp: s.exp, avgWin: s.avgWin, avgLoss: s.avgLoss,
+    payoff: s.payoff, maxWin: s.maxWin, maxLoss: s.maxLoss, maxDD: s.maxDD, lots: s.lots, cs: s.comm + s.swap, sl: s.sl, tp: s.tp, oth: s.oth,
+    avgDur: s.avgDur, mfe: s.avgMfe, mae: s.avgMae, mcl: s.mcl, sqn: s.sqn, buyNet: s.buyNet, sellNet: s.sellNet, first: s.first, last: s.last,
+    accounts: s.accounts.size, symbols: s.symbols.size, comments: s.topComment, spread: s.spread };
+  return Object.assign(r, extra || {});
+}
+const C = {
+  n: { label: 'Trades', num: true, f: (v) => v.toLocaleString('en-US') },
+  winRate: { label: 'Win %', num: true, f: pct },
+  net: { label: 'Net', num: true, f: money, cls: signCls },
+  gp: { label: 'Gross profit', num: true, f: money },
+  gl: { label: 'Gross loss', num: true, f: money },
+  pf: { label: 'PF', num: true, f: ratio },
+  exp: { label: 'Expect.', num: true, f: money, cls: signCls },
+  avgWin: { label: 'Avg win', num: true, f: money },
+  avgLoss: { label: 'Avg loss', num: true, f: money },
+  payoff: { label: 'Payoff', num: true, f: ratio },
+  maxWin: { label: 'Best', num: true, f: money },
+  maxLoss: { label: 'Worst', num: true, f: money },
+  maxDD: { label: 'Max DD', num: true, f: (v) => money(-v) },
+  mcl: { label: 'Max loss streak', num: true, f: (v) => v },
+  lots: { label: 'Lots', num: true, f: (v) => nfLots.format(v) },
+  cs: { label: 'Comm+swap', num: true, f: money },
+  spread: { label: 'Spread cost est.', num: true, f: money },
+  sl: { label: 'SL', num: true, f: (v) => v },
+  tp: { label: 'TP', num: true, f: (v) => v },
+  oth: { label: 'Other exit', num: true, f: (v) => v },
+  avgDur: { label: 'Avg hold', num: true, f: fmtDur },
+  mfe: { label: 'Avg MFE pts', num: true, f: (v) => fmtNum(v, 0) },
+  mae: { label: 'Avg MAE pts', num: true, f: (v) => fmtNum(v, 0) },
+  sqn: { label: 'SQN', num: true, f: (v) => fmtNum(v, 2) },
+  buyNet: { label: 'Buy net', num: true, f: money, cls: signCls },
+  sellNet: { label: 'Sell net', num: true, f: money, cls: signCls },
+  first: { label: 'First close', num: false, f: fmtTime },
+  last: { label: 'Last close', num: false, f: fmtTime },
+  accounts: { label: 'Accounts', num: true, f: (v) => v },
+  symbols: { label: 'Symbols', num: true, f: (v) => v },
+  comments: { label: 'Comments', num: false, f: (v) => v },
+  baskets: { label: 'Baskets', num: true, f: (v) => v },
+  basketWin: { label: 'Basket win %', num: true, f: pct },
+  worstBasket: { label: 'Worst basket', num: true, f: money },
+};
+const STD_COLS = ['n', 'winRate', 'net', 'pf', 'exp', 'gp', 'gl', 'avgWin', 'avgLoss', 'payoff', 'maxWin', 'maxLoss', 'maxDD', 'mcl', 'lots', 'cs', 'sl', 'tp', 'oth', 'avgDur', 'mfe', 'mae', 'sqn', 'buyNet', 'sellNet', 'first', 'last'];
+
+function sortRows(rows, tabId, defKey, defDir) {
+  const st = state.sort[tabId] || { key: defKey, dir: defDir };
+  const dir = st.dir === 'asc' ? 1 : -1;
+  rows.sort((a, b) => {
+    let x = a[st.key], y = b[st.key];
+    if (typeof x === 'string' || typeof y === 'string') return dir * String(x ?? '').localeCompare(String(y ?? ''), undefined, { numeric: true });
+    x = Number.isFinite(x) ? x : (x === Infinity ? 1e300 : -1e300); y = Number.isFinite(y) ? y : (y === Infinity ? 1e300 : -1e300);
+    return dir * (x - y);
+  });
+  return st;
+}
+// cols: [{key, label, num, f, cls}], rows: objects. opts: {tabId, onRow, pageSize, footer}
+function table(host, cols, rows, opts) {
+  const st = sortRows(rows, opts.tabId, opts.defKey, opts.defDir || 'desc');
+  const toolbar = el('div', { class: 'toolbar' });
+  toolbar.appendChild(el('span', { class: 'muted' }, rows.length.toLocaleString('en-US') + ' rows' + (opts.onRow ? ' · click a row to filter' : '')));
+  const exp = el('button', { class: 'btn small', type: 'button' }, 'Export CSV');
+  exp.addEventListener('click', () => exportCSV(cols, rows, opts.tabId));
+  toolbar.appendChild(exp);
+  if (opts.toolbarExtra) opts.toolbarExtra(toolbar);
+  host.appendChild(toolbar);
+  const wrap = el('div', { class: 'tablewrap' }); const tbl = el('table');
+  const thead = el('thead'); const hr = el('tr');
+  for (const c of cols) {
+    const th = el('th', { class: c.num ? 'num' : '' }, c.label);
+    if (st.key === c.key) th.appendChild(el('span', { class: 'arrow' }, st.dir === 'asc' ? ' ▲' : ' ▼'));
+    th.addEventListener('click', () => {
+      const cur = state.sort[opts.tabId] || { key: opts.defKey, dir: opts.defDir || 'desc' };
+      state.sort[opts.tabId] = { key: c.key, dir: cur.key === c.key && cur.dir === 'desc' ? 'asc' : 'desc' };
+      state.page[opts.tabId] = 0; renderTab();
+    });
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr); tbl.appendChild(thead);
+  const ps = opts.pageSize || 500; const pages = Math.max(1, Math.ceil(rows.length / ps));
+  const page = Math.min(state.page[opts.tabId] || 0, pages - 1);
+  const tb = el('tbody');
+  for (const r of rows.slice(page * ps, page * ps + ps)) {
+    const tr = el('tr', opts.onRow ? { class: 'click' } : null);
+    for (const c of cols) {
+      const v = r[c.key]; const td = el('td', { class: (c.num ? 'num ' : '') + (c.cls ? c.cls(v) : '') });
+      if (c.render) c.render(td, v, r); else td.textContent = c.f ? c.f(v) : (v ?? '');
+      tr.appendChild(td);
+    }
+    if (opts.onRow) tr.addEventListener('click', () => opts.onRow(r));
+    tb.appendChild(tr);
+  }
+  tbl.appendChild(tb);
+  if (opts.footer) {
+    const tf = el('tfoot'); const tr = el('tr');
+    for (const c of cols) { const v = opts.footer[c.key]; const td = el('td', { class: (c.num ? 'num ' : '') + (c.cls && v !== undefined ? c.cls(v) : '') }); td.textContent = v === undefined ? '' : (c.f && typeof v === 'number' ? c.f(v) : v); tr.appendChild(td); }
+    tf.appendChild(tr); tbl.appendChild(tf);
+  }
+  wrap.appendChild(tbl); host.appendChild(wrap);
+  if (pages > 1) {
+    const pg = el('div', { class: 'pager' });
+    const prev = el('button', { class: 'btn small', type: 'button' }, '‹ Prev'); prev.disabled = page === 0;
+    const next = el('button', { class: 'btn small', type: 'button' }, 'Next ›'); next.disabled = page >= pages - 1;
+    prev.addEventListener('click', () => { state.page[opts.tabId] = page - 1; renderTab(); });
+    next.addEventListener('click', () => { state.page[opts.tabId] = page + 1; renderTab(); });
+    pg.append(prev, el('span', null, 'Page ' + (page + 1) + ' of ' + pages), next);
+    host.appendChild(pg);
+  }
+}
+function csvCell(v) { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+function exportCSV(cols, rows, name) {
+  const plain = (c, v) => {
+    if (v === null || v === undefined) return '';
+    if (c.key === 'first' || c.key === 'last' || /time|Time$/.test(c.key)) return Number.isFinite(v) ? fmtTime(v) : v;
+    if (typeof v === 'number') return Number.isFinite(v) ? +v.toFixed(6) : (v === Infinity ? 'inf' : '');
+    return v;
+  };
+  const lines = [cols.map((c) => csvCell(c.label)).join(',')];
+  for (const r of rows) lines.push(cols.map((c) => csvCell(plain(c, r[c.key]))).join(','));
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const a = el('a'); a.href = URL.createObjectURL(blob); a.download = 'mt4_' + name + '.csv'; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({ key: k }, C[k]))); }
+function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
+
+const TABS = [
+  ['magic', 'By magic'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
+  ['account', 'By account'], ['campaign', 'By campaign'], ['exit', 'Exit reasons'], ['baskets', 'Baskets'],
+  ['time', 'Hour / weekday'], ['trades', 'Trades'], ['open', 'Open positions'], ['accounts', 'Accounts'], ['files', 'Files'],
+];
+function renderTabsNav() {
+  const nav = $('#tabs'); nav.textContent = '';
+  for (const [id, label] of TABS) {
+    const b = el('button', { type: 'button', class: state.tab === id ? 'on' : '' }, label);
+    b.addEventListener('click', () => { state.tab = id; renderTabsNav(); renderTab(); });
+    nav.appendChild(b);
+  }
+}
+let CUR = [];
+function renderTab() {
+  const host = $('#tabBody'); host.textContent = ''; tip.hide();
+  const T = CUR; const id = state.tab;
+  const setF = (k) => (r) => { state[k] = r.key; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  if (id === 'magic') {
+    const g = groupBy(T, (t) => t.magic);
+    const rows = [...g].map(([k, arr]) => {
+      const bs = baskets(arr);
+      return dimRow(k, k, arr, { baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
+    });
+    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['accounts', 'symbols']), [{ key: 'label', label: 'Magic', num: false }]);
+    table(host, cols, rows, { tabId: id, defKey: 'net', onRow: setF('magic'), footer: totalsFooter(T, 'label') });
+  } else if (id === 'comment') {
+    const g = groupBy(T, commentOf);
+    const rows = [...g].map(([k, arr]) => dimRow(k, k, arr, { magics: [...new Set(arr.map((t) => t.magic))].slice(0, 4).join(', ') + (new Set(arr.map((t) => t.magic)).size > 4 ? ' …' : '') }));
+    const cols = [{ key: 'label', label: state.commentMode === 'raw' ? 'Raw comment' : 'Base comment' }, { key: 'magics', label: 'Magics' }].concat(STD_COLS.map((k) => Object.assign({ key: k }, C[k])), [Object.assign({ key: 'accounts' }, C.accounts), Object.assign({ key: 'symbols' }, C.symbols)]);
+    table(host, cols, rows, { tabId: id, defKey: 'net', onRow: setF('comment'), footer: totalsFooter(T, 'label') });
+  } else if (id === 'magiccomment') {
+    const g = groupBy(T, (t) => t.magic + '\u0000' + commentOf(t));
+    const rows = [...g].map(([k, arr]) => { const [mg, cm] = k.split('\u0000'); return dimRow(k, mg, arr, { magic: mg, comment: cm }); });
+    const cols = [{ key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }].concat(STD_COLS.map((k) => Object.assign({ key: k }, C[k])));
+    table(host, cols, rows, { tabId: id, defKey: 'net', onRow: (r) => { state.magic = r.magic; state.comment = r.comment; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }, footer: totalsFooter(T, 'magic') });
+  } else if (id === 'symbol') {
+    const rows = [...groupBy(T, (t) => t.symbol)].map(([k, arr]) => dimRow(k, k, arr));
+    table(host, colsOf(STD_COLS.concat(['accounts']), [{ key: 'label', label: 'Symbol' }]), rows, { tabId: id, defKey: 'net', onRow: setF('symbol'), footer: totalsFooter(T, 'label') });
+  } else if (id === 'account') {
+    const rows = [...groupBy(T, (t) => t.account)].map(([k, arr]) => { const a = DB.accounts.get(k) || {}; return dimRow(k, k, arr, { machine: a.machine || '', terminal: a.terminal || '', campaign: a.campaign || '' }); });
+    table(host, colsOf(STD_COLS.concat(['symbols']), [{ key: 'label', label: 'Account' }, { key: 'machine', label: 'Machine' }, { key: 'terminal', label: 'Terminal' }, { key: 'campaign', label: 'Campaign' }]), rows, { tabId: id, defKey: 'net', onRow: setF('account'), footer: totalsFooter(T, 'label') });
+  } else if (id === 'campaign') {
+    const rows = [...groupBy(T, (t) => t.campaign)].map(([k, arr]) => dimRow(k, k, arr));
+    table(host, colsOf(STD_COLS.concat(['accounts', 'symbols']), [{ key: 'label', label: 'Campaign' }]), rows, { tabId: id, defKey: 'net', onRow: setF('campaign'), footer: totalsFooter(T, 'label') });
+  } else if (id === 'exit') {
+    const rows = [...groupBy(T, (t) => t.exit)].map(([k, arr]) => dimRow(k, k, arr, { share: arr.length / (T.length || 1) }));
+    const cols = [{ key: 'label', label: 'Exit reason' }, { key: 'share', label: 'Share', num: true, f: pct }].concat(['n', 'net', 'exp', 'gp', 'gl', 'winRate', 'avgDur', 'mfe', 'mae', 'lots'].map((k) => Object.assign({ key: k }, C[k])));
+    table(host, cols, rows, { tabId: id, defKey: 'n' });
+    host.appendChild(el('p', { class: 'hint' }, 'Exit reason comes from the collector (exit_reason). For older files without it, [sl] / [tp] in the comment is used.'));
+  } else if (id === 'baskets') renderBaskets(host, T);
+  else if (id === 'time') renderTime(host, T);
+  else if (id === 'trades') renderTrades(host, T);
+  else if (id === 'open') renderOpen(host);
+  else if (id === 'accounts') renderAccounts(host, T);
+  else if (id === 'files') renderFiles(host);
+}
+function renderBaskets(host, T) {
+  let rows = baskets(T);
+  if (!rows.length) { host.appendChild(el('p', { class: 'muted' }, 'No basket ids in this selection. Basket ids are written by collector v2.04 and later.')); return; }
+  const q = state.basketSearch.trim().toLowerCase();
+  if (q) rows = rows.filter((b) => (b.id + ' ' + b.account + ' ' + b.magic + ' ' + b.symbol + ' ' + b.comment).toLowerCase().includes(q));
+  const net = rows.map((b) => b.net); const wins = net.filter((v) => v > 0).length;
+  host.appendChild(el('p', { class: 'sub' }, rows.length.toLocaleString('en-US') + ' baskets · ' + pct(rows.length ? wins / rows.length : NaN) + ' profitable · avg ' + money(net.reduce((a, b) => a + b, 0) / (rows.length || 1)) + ' · worst ' + money(Math.min(...net)) + ' · best ' + money(Math.max(...net))));
+  const cols = [
+    { key: 'id', label: 'Basket id' }, { key: 'account', label: 'Account' }, { key: 'magic', label: 'Magic' }, { key: 'symbol', label: 'Symbol' }, { key: 'side', label: 'Side' },
+    { key: 'comment', label: 'Comment' }, { key: 'legs', label: 'Legs', num: true }, { key: 'lots', label: 'Lots', num: true, f: (v) => nfLots.format(v) },
+    { key: 'net', label: 'Net', num: true, f: money, cls: signCls }, { key: 'first', label: 'First open', f: fmtTime }, { key: 'last', label: 'Last close', f: fmtTime },
+    { key: 'dur', label: 'Duration', num: true, f: fmtDur }, { key: 'exits', label: 'Exits' },
+  ];
+  table(host, cols, rows, { tabId: 'baskets', defKey: 'last', pageSize: 200, toolbarExtra: (tb) => {
+    const inp = el('input', { type: 'search', placeholder: 'Search basket, magic, symbol…' }); inp.value = state.basketSearch;
+    inp.addEventListener('input', debounce(() => { state.basketSearch = inp.value; state.page.baskets = 0; renderTab(); const i2 = document.querySelector('#tabBody input[type=search]'); if (i2) { i2.focus(); i2.setSelectionRange(i2.value.length, i2.value.length); } }, 250));
+    tb.appendChild(inp);
+  } });
+}
+function renderTime(host, T) {
+  const split = el('div', { class: 'split' });
+  const a = el('div'), b = el('div');
+  a.appendChild(el('h2', null, 'By open hour (server time)'));
+  b.appendChild(el('h2', null, 'By close weekday'));
+  split.append(a, b); host.appendChild(split);
+  const hours = [...groupBy(T.filter((t) => Number.isFinite(t.openTime)), (t) => new Date(t.openTime).getUTCHours())].map(([k, arr]) => dimRow(k, pad2(k) + ':00', arr, { hour: k }));
+  table(a, colsOf(['n', 'winRate', 'net', 'pf', 'exp', 'lots'], [{ key: 'hour', label: 'Hour', num: true, f: (v) => pad2(v) + ':00' }]), hours, { tabId: 'hours', defKey: 'hour', defDir: 'asc' });
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const wd = [...groupBy(T, (t) => new Date(t.closeTime).getUTCDay())].map(([k, arr]) => dimRow(k, names[k], arr, { wd: k, wdName: names[k] }));
+  table(b, colsOf(['n', 'winRate', 'net', 'pf', 'exp', 'lots'], [{ key: 'wd', label: 'Weekday', num: false, f: (v) => names[v] }]), wd, { tabId: 'weekday', defKey: 'wd', defDir: 'asc' });
+}
+function renderTrades(host, T) {
+  const q = state.search.trim().toLowerCase();
+  const rows = (q ? T.filter((t) => (t.ticket + ' ' + t.symbol + ' ' + t.magic + ' ' + t.comment + ' ' + t.account + ' ' + t.basket + ' ' + t.exit).toLowerCase().includes(q)) : T.slice())
+    .map((t) => Object.assign({}, t, { cmt: t.comment }));
+  const cols = [
+    { key: 'closeTime', label: 'Close time', f: fmtTime }, { key: 'openTime', label: 'Open time', f: fmtTime }, { key: 'account', label: 'Account' }, { key: 'terminal', label: 'Terminal' },
+    { key: 'ticket', label: 'Ticket' }, { key: 'symbol', label: 'Symbol' }, { key: 'type', label: 'Type' }, { key: 'lots', label: 'Lots', num: true, f: (v) => nfLots.format(v) },
+    { key: 'openPrice', label: 'Open', num: true, f: (v) => (Number.isFinite(v) ? String(v) : '–') }, { key: 'closePrice', label: 'Close', num: true, f: (v) => (Number.isFinite(v) ? String(v) : '–') },
+    { key: 'magic', label: 'Magic' }, { key: 'cmt', label: 'Comment' }, { key: 'exit', label: 'Exit' },
+    { key: 'net', label: 'Net', num: true, f: money, cls: signCls }, { key: 'profit', label: 'Profit', num: true, f: money }, { key: 'commission', label: 'Comm', num: true, f: money }, { key: 'swap', label: 'Swap', num: true, f: money },
+    { key: 'duration', label: 'Hold', num: true, f: fmtDur }, { key: 'mfe', label: 'MFE pts', num: true, f: (v) => fmtNum(v, 0) }, { key: 'mae', label: 'MAE pts', num: true, f: (v) => fmtNum(v, 0) },
+    { key: 'maxSpread', label: 'Max spread', num: true, f: (v) => fmtNum(v, 0) }, { key: 'basket', label: 'Basket' }, { key: 'leg', label: 'Leg', num: true, f: (v) => (Number.isFinite(v) ? v : '') }, { key: 'tag', label: 'File tag' },
+  ];
+  table(host, cols, rows, { tabId: 'trades', defKey: 'closeTime', pageSize: 200, toolbarExtra: (tb) => {
+    const inp = el('input', { type: 'search', placeholder: 'Search ticket, symbol, magic, comment…' }); inp.value = state.search;
+    inp.addEventListener('input', debounce(() => { state.search = inp.value; state.page.trades = 0; renderTab(); const i2 = document.querySelector('#tabBody input[type=search]'); if (i2) { i2.focus(); i2.setSelectionRange(i2.value.length, i2.value.length); } }, 250));
+    tb.appendChild(inp);
+  } });
+}
+function openFiltered() {
+  return DB.open.filter((p) => (!state.account || p.account === state.account) && (!state.campaign || p.campaign === state.campaign) && (!state.magic || p.magic === state.magic)
+    && (!state.symbol || p.symbol === state.symbol) && (!state.side || p.type === state.side) && (!state.comment || (state.commentMode === 'raw' ? (p.comment || '(empty)') : (p.base || '(empty)')) === state.comment));
+}
+function renderOpen(host) {
+  const P = openFiltered();
+  if (!DB.open.length) { host.appendChild(el('p', { class: 'muted' }, 'No *_open_now.csv files were loaded.')); return; }
+  host.appendChild(el('h2', null, 'Open exposure by magic'));
+  host.appendChild(el('p', { class: 'sub' }, 'The collector does not write per-position profit, so floating P/L is only available per account (Accounts tab).'));
+  const g = groupBy(P, (p) => p.magic);
+  const rows = [...g].map(([k, arr]) => ({ key: k, magic: k, n: arr.length, buyLots: arr.filter((p) => p.type === 'BUY').reduce((a, p) => a + p.lots, 0), sellLots: arr.filter((p) => p.type === 'SELL').reduce((a, p) => a + p.lots, 0),
+    symbols: [...new Set(arr.map((p) => p.symbol))].join(', '), accounts: new Set(arr.map((p) => p.account)).size, oldest: Math.min(...arr.map((p) => p.openTime)),
+    comments: [...new Set(arr.map((p) => (state.commentMode === 'raw' ? p.comment : p.base)))].slice(0, 3).join(', ') }));
+  table(host, [{ key: 'magic', label: 'Magic' }, { key: 'comments', label: 'Comments' }, { key: 'n', label: 'Positions', num: true }, { key: 'buyLots', label: 'Buy lots', num: true, f: (v) => nfLots.format(v) },
+    { key: 'sellLots', label: 'Sell lots', num: true, f: (v) => nfLots.format(v) }, { key: 'symbols', label: 'Symbols' }, { key: 'accounts', label: 'Accounts', num: true }, { key: 'oldest', label: 'Oldest open', f: fmtTime }],
+  rows, { tabId: 'openMagic', defKey: 'n', onRow: (r) => { state.magic = r.magic; syncFilterInputs(); render(); } });
+  host.appendChild(el('h2', { style: 'margin-top:16px' }, 'Positions'));
+  const newest = Math.max(0, ...[...DB.openMeta.values()].map((m) => m.lastSeen));
+  const rows2 = P.map((p) => Object.assign({}, p, { stale: newest - p.lastSeen > 3600000 }));
+  table(host, [
+    { key: 'account', label: 'Account' }, { key: 'terminal', label: 'Terminal' }, { key: 'ticket', label: 'Ticket' }, { key: 'symbol', label: 'Symbol' }, { key: 'type', label: 'Type' },
+    { key: 'lots', label: 'Lots', num: true, f: (v) => nfLots.format(v) }, { key: 'openTime', label: 'Open time', f: fmtTime }, { key: 'openPrice', label: 'Open', num: true, f: (v) => (Number.isFinite(v) ? String(v) : '–') },
+    { key: 'sl', label: 'SL', num: true, f: (v) => (Number.isFinite(v) && v ? String(v) : '–') }, { key: 'tp', label: 'TP', num: true, f: (v) => (Number.isFinite(v) && v ? String(v) : '–') },
+    { key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }, { key: 'mfe', label: 'MFE pts', num: true, f: (v) => fmtNum(v, 0) }, { key: 'mae', label: 'MAE pts', num: true, f: (v) => fmtNum(v, 0) },
+    { key: 'lastSeen', label: 'Last seen', render: (td, v, r) => { td.textContent = fmtTime(v) + ' '; if (r.stale) td.appendChild(el('span', { class: 'badge stale', title: 'Older than the newest open-positions file by more than 1 hour' }, 'stale')); } },
+  ], rows2, { tabId: 'openPos', defKey: 'openTime', pageSize: 300 });
+}
+function renderAccounts(host, T) {
+  const byAcc = groupBy(T, (t) => t.account);
+  const rows = [...DB.accounts.values()].filter((a) => (!state.account || a.account === state.account) && (!state.campaign || a.campaign === state.campaign)).map((a) => {
+    const sn = DB.snaps.get(a.account); const last = sn && sn.length ? sn[sn.length - 1] : null; const st = DB.status.get(a.account) || {};
+    const tr = byAcc.get(a.account) || []; let net = 0; for (const t of tr) net += t.net;
+    const om = DB.openMeta.get(a.account);
+    return { key: a.account, account: a.account, machine: a.machine, terminal: a.terminal, campaign: a.campaign, server: a.server || st['server'] || '',
+      balance: last ? last.balance : NaN, equity: last ? last.equity : NaN, floating: last ? last.floating : NaN, ml: last ? last.ml : NaN,
+      snapTime: last ? last.t : NaN, open: om ? DB.open.filter((p) => p.account === a.account).length : NaN, trades: tr.length, net,
+      version: st.version || '',
+      tag: st.tag || '', updated: st.updatedMs, connected: st['connected'] || '', company: st['terminal_company'] || '', stalls: st['timer_stalls_detected'] || '' };
+  });
+  table(host, [
+    { key: 'account', label: 'Account' }, { key: 'machine', label: 'Machine' }, { key: 'terminal', label: 'Terminal' }, { key: 'campaign', label: 'Campaign' }, { key: 'server', label: 'Server' },
+    { key: 'balance', label: 'Balance', num: true, f: money }, { key: 'equity', label: 'Equity', num: true, f: money }, { key: 'floating', label: 'Floating', num: true, f: money, cls: signCls },
+    { key: 'ml', label: 'Margin level %', num: true, f: (v) => (Number.isFinite(v) && v > 0 ? nf0.format(v) : '–') }, { key: 'snapTime', label: 'Snapshot time', f: fmtTime },
+    { key: 'open', label: 'Open pos.', num: true, f: (v) => (Number.isFinite(v) ? v : '–') }, { key: 'trades', label: 'Trades (filter)', num: true }, { key: 'net', label: 'Net (filter)', num: true, f: money, cls: signCls },
+    { key: 'version', label: 'Collector' }, { key: 'tag', label: 'File tag' }, { key: 'updated', label: 'Status updated', f: fmtTime }, { key: 'connected', label: 'Connected' }, { key: 'stalls', label: 'Timer stalls', num: true },
+  ], rows, { tabId: 'accounts', defKey: 'account', defDir: 'asc', onRow: (r) => { state.equityAccount = r.account; renderTab(); } });
+  // equity chart
+  const accsWithSnaps = [...DB.snaps.keys()].filter((a) => DB.snaps.get(a).length);
+  if (!accsWithSnaps.length) { host.appendChild(el('p', { class: 'muted' }, 'No *_account_snapshots.csv files were loaded.')); return; }
+  const card = el('div', { style: 'margin-top:16px' });
+  const head = el('div', { class: 'card-head' });
+  const h = el('div'); h.appendChild(el('h2', null, 'Balance and equity')); h.appendChild(el('div', { class: 'sub' }, 'From account snapshots, one point per 5 minutes. Period filter applies.'));
+  const sel = el('select');
+  let cur = state.equityAccount || state.account || accsWithSnaps[0]; if (!DB.snaps.has(cur)) cur = accsWithSnaps[0];
+  for (const a of accsWithSnaps.sort()) { const o = el('option', { value: a }, accLabel(a)); if (a === cur) o.selected = true; sel.appendChild(o); }
+  sel.addEventListener('change', () => { state.equityAccount = sel.value; renderTab(); });
+  head.append(h, sel); card.appendChild(head);
+  const legend = el('div', { class: 'legend' });
+  const s1 = cssVar('--series-1'), s2 = cssVar('--series-2');
+  for (const [n, c] of [['Balance', s1], ['Equity', s2]]) { const sp = el('span'); const i = el('i'); i.style.background = c; sp.append(i, document.createTextNode(n)); legend.appendChild(sp); }
+  card.appendChild(legend);
+  const ch = el('div', { class: 'chart' }); card.appendChild(ch); host.appendChild(card);
+  const sn = DB.snaps.get(cur).filter((p) => (state.from === null || p.t >= state.from) && (state.to === null || p.t < state.to));
+  const bal = downsample(sn.filter((p) => Number.isFinite(p.balance)).map((p) => [p.t, p.balance]), 1500);
+  const eq = downsample(sn.filter((p) => Number.isFinite(p.equity)).map((p) => [p.t, p.equity]), 1500);
+  // equity first so the balance line stays visible on top of it
+  lineChart(ch, [{ name: 'Equity', color: s2, pts: eq }, { name: 'Balance', color: s1, pts: bal }], { height: 260, label: 'balance and equity' });
+}
+function renderFiles(host) {
+  const rows = DB.files.map((f) => Object.assign({ key: f.path }, f));
+  host.appendChild(el('p', { class: 'sub' }, 'Every file that was read. "Duplicates" are rows already present from another file (older collector tag or a copy); the newest collector version wins.'));
+  table(host, [{ key: 'path', label: 'File' }, { key: 'kind', label: 'Type' }, { key: 'size', label: 'Size', num: true, f: (v) => (v / 1024).toFixed(0) + ' KB' },
+    { key: 'rows', label: 'Rows', num: true }, { key: 'added', label: 'New trades', num: true }, { key: 'dups', label: 'Duplicates', num: true }, { key: 'other', label: 'Non-market rows', num: true }, { key: 'note', label: 'Note' }],
+  rows, { tabId: 'files', defKey: 'path', defDir: 'asc' });
+}
+
+/* ---------------- render ---------------- */
+function syncFilterInputs() {
+  buildFilterOptions();
+  $('#fSide').value = state.side;
+  $('#fCommentMode').value = state.commentMode;
+}
+function render() {
+  CUR = filtered();
+  const s = stats(CUR);
+  renderWarnings(CUR); renderKPIs(CUR, s); renderCharts(CUR, s); renderTabsNav(); renderTab();
+}
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+/* ---------------- events ---------------- */
+$('#dirInput').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
+$('#fileInput').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
+for (const [id, key] of [['#fAccount', 'account'], ['#fCampaign', 'campaign'], ['#fMagic', 'magic'], ['#fComment', 'comment'], ['#fSymbol', 'symbol'], ['#fSide', 'side']]) {
+  $(id).addEventListener('change', (e) => { state[key] = e.target.value; state.page = {}; render(); });
+}
+$('#fCommentMode').addEventListener('change', (e) => { state.commentMode = e.target.value; state.comment = ''; buildFilterOptions(); render(); });
+function setPreset(p) {
+  state.preset = p;
+  for (const b of document.querySelectorAll('#presets button')) b.classList.toggle('on', b.dataset.p === p);
+  if (p === 'all') { state.from = null; state.to = null; $('#fFrom').value = ''; $('#fTo').value = ''; }
+  else { const end = dataMaxTime(); state.to = null; state.from = Math.floor(end / DAY) * DAY - (+p - 1) * DAY; $('#fFrom').value = fmtDate(state.from); $('#fTo').value = ''; }
+  state.page = {}; render();
+}
+for (const b of document.querySelectorAll('#presets button')) b.addEventListener('click', () => setPreset(b.dataset.p));
+function dateInput() {
+  const f = $('#fFrom').value, t = $('#fTo').value;
+  state.from = f ? parseMT(f.replace(/-/g, '.')) : null;
+  state.to = t ? parseMT(t.replace(/-/g, '.')) + DAY : null;
+  for (const b of document.querySelectorAll('#presets button')) b.classList.remove('on');
+  state.page = {}; render();
+}
+$('#fFrom').addEventListener('change', dateInput); $('#fTo').addEventListener('change', dateInput);
+$('#resetBtn').addEventListener('click', () => resetFilters(true));
+$('#themeBtn').addEventListener('click', () => {
+  const root = document.documentElement; const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+  root.dataset.theme = dark ? 'light' : 'dark';
+  try { localStorage.setItem('mt4dash-theme', root.dataset.theme); } catch (e) { /* storage unavailable */ }
+  if (!$('#app').hidden) render();
+});
+try { const th = localStorage.getItem('mt4dash-theme'); if (th) document.documentElement.dataset.theme = th; } catch (e) { /* storage unavailable */ }
+window.addEventListener('resize', debounce(() => { if (!$('#app').hidden) { const s = stats(CUR); renderCharts(CUR, s); if (state.tab === 'accounts') renderTab(); } }, 200));
+
+// drag & drop of files or whole folders
+const drop = $('#drop');
+['dragenter', 'dragover'].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); if (ev === 'dragleave' && e.relatedTarget) return; drop.classList.remove('over'); }));
+document.addEventListener('drop', async (e) => {
+  const items = e.dataTransfer && e.dataTransfer.items; if (!items) return;
+  const out = []; const entries = [];
+  for (const it of items) { const en = it.webkitGetAsEntry && it.webkitGetAsEntry(); if (en) entries.push(en); }
+  showProgress('Scanning dropped items…');
+  const walk = (en, path) => new Promise((res) => {
+    if (en.isFile) en.file((f) => { if (isCandidate(f.name) || /\.csv$/i.test(f.name)) { f._path = path + f.name; out.push(f); } res(); }, () => res());
+    else if (en.isDirectory) {
+      const rd = en.createReader(); const all = [];
+      const next = () => rd.readEntries(async (batch) => { if (!batch.length) { for (const c of all) await walk(c, path + en.name + '/'); res(); } else { all.push(...batch); next(); } }, () => res());
+      next();
+    } else res();
+  });
+  for (const en of entries) await walk(en, '');
+  loadFiles(out);
+});
+</script>
+</body>
+</html>
