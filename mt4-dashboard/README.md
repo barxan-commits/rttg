@@ -124,8 +124,9 @@ P/L.
   **Group comments by** to *Raw comment* to split them.
 - Net profit = profit + commission + swap. Max drawdown is measured on
   closed-trade cumulative profit. Times are MT4 server time.
-- The collector does not record profit per open position, so floating P/L
-  is shown per account only.
+- Floating P/L per open position needs the updated collector (see above).
+  Terminals still on the original collector show floating P/L per account
+  only.
 
 ## Statistics
 
