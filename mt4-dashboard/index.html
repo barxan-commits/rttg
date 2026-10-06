@@ -192,6 +192,15 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .section-title { margin: 18px 0 2px; }
 .cmp-table td:first-child, .cmp-table th:first-child { color: var(--text-secondary); font-weight: 600; }
 .cmp-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 6px; }
+.controls input[type=date] { font: inherit; font-size: 13px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); }
+.controls .split-row { display: inline-flex; gap: 4px; align-items: center; }
+.per-chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin: 4px 0 12px; }
+.per-chip { border: 1px solid var(--border); border-left: 4px solid var(--c, var(--accent)); border-radius: 8px; padding: 8px 12px; background: var(--surface-1); min-width: 0; }
+.per-chip .label { font-size: 12px; color: var(--text-secondary); font-weight: 600; }
+.per-chip .value { font-size: 20px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.per-chip .note { font-size: 11.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.per-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 14px; }
+@media (max-width: 520px) { .per-groups { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -306,7 +315,7 @@ const DB = {
 const state = {
   from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '',
   commentMode: 'base', tab: 'magic', sort: {}, page: {}, search: '', basketSearch: '', equityAccount: '',
-  healthSev: 'warning', cmp: { dim: 'magic', items: [], unit: 'money' },
+  healthSev: 'warning', cmp: { dim: 'magic', items: [], unit: 'money' }, per: { splits: null, by: 'magic' },
 };
 
 /* ---------------- helpers ---------------- */
@@ -1034,7 +1043,8 @@ const tip = {
 };
 function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
 
-// series: [{name, color, pts:[[x,y]...]}]; opts: {height, area:'neg'|'pos'|null, xTime:true, yFmt}
+// series: [{name, color, pts:[[x,y]...], dash}]; opts: {height, area:'neg'|'pos'|null, xTime:true, yFmt,
+//   bands:[{x0,x1,color}] shaded x ranges, vlines:[{x,label}] dotted markers, segmented: series follow each other in time}
 function lineChart(host, series, opts) {
   host.textContent = '';
   const W = Math.max(host.clientWidth, 300), H = opts.height || 240;
@@ -1050,6 +1060,10 @@ function lineChart(host, series, opts) {
   const X = (x) => m.l + (x - x0) / (x1 - x0) * (W - m.l - m.r);
   const Y = (y) => m.t + (1 - (y - y0) / ((y1 - y0) || 1)) * (H - m.t - m.b);
   const svg = svgEl('svg', { width: W, height: H, role: 'img', 'aria-label': opts.label || 'line chart' });
+  for (const b of opts.bands || []) {
+    const a = Math.max(b.x0, x0), z = Math.min(b.x1, x1); if (!(z > a)) continue;
+    svg.appendChild(svgEl('rect', { x: X(a), y: m.t, width: X(z) - X(a), height: H - m.t - m.b, fill: b.color, 'fill-opacity': 0.07 }));
+  }
   for (const v of yt) {
     svg.appendChild(svgEl('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: v === 0 ? cssVar('--axis') : cssVar('--grid'), 'stroke-width': 1 }));
     const tx = svgEl('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }); tx.textContent = (opts.yFmt || yf)(v); svg.appendChild(tx);
@@ -1059,6 +1073,11 @@ function lineChart(host, series, opts) {
     const x = x0 + span * i / nx; const tx = svgEl('text', { x: X(x), y: H - 6, 'text-anchor': i === 0 ? 'start' : i === nx ? 'end' : 'middle' });
     tx.textContent = span > 3 * DAY ? fmtDate(x).slice(5) : fmtTime(x).slice(5); svg.appendChild(tx);
   }
+  for (const v of opts.vlines || []) {
+    if (!(v.x > x0 && v.x < x1)) continue;
+    svg.appendChild(svgEl('line', { x1: X(v.x), x2: X(v.x), y1: m.t, y2: H - m.b, stroke: cssVar('--text-muted'), 'stroke-width': 1, 'stroke-dasharray': '2 3' }));
+    if (v.label) { const tx = svgEl('text', { x: X(v.x) + 4, y: m.t + 11, 'text-anchor': 'start' }); tx.textContent = v.label; svg.appendChild(tx); }
+  }
   for (const s of series) {
     if (!s.pts.length) continue;
     const d = s.pts.map(([x, y], i) => (i ? 'L' : 'M') + X(x).toFixed(1) + ',' + Y(y).toFixed(1)).join('');
@@ -1066,7 +1085,9 @@ function lineChart(host, series, opts) {
       const base = Y(Math.max(Math.min(0, y1), y0));
       svg.appendChild(svgEl('path', { d: d + 'L' + X(s.pts[s.pts.length - 1][0]).toFixed(1) + ',' + base + 'L' + X(s.pts[0][0]).toFixed(1) + ',' + base + 'Z', fill: opts.area === 'neg' ? cssVar('--wash-neg') : cssVar('--wash-pos'), stroke: 'none' }));
     }
-    svg.appendChild(svgEl('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    const st = { d, fill: 'none', stroke: s.color, 'stroke-width': s.dash ? 1.25 : 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' };
+    if (s.dash) st['stroke-dasharray'] = '5 4';
+    svg.appendChild(svgEl('path', st));
   }
   // end dot + label for single series
   if (series.length === 1 && series[0].pts.length) {
@@ -1076,7 +1097,8 @@ function lineChart(host, series, opts) {
   // hover layer
   const cross = svgEl('line', { y1: m.t, y2: H - m.b, stroke: cssVar('--axis'), 'stroke-width': 1, visibility: 'hidden' });
   svg.appendChild(cross);
-  const dots = series.map((s) => { const c = svgEl('circle', { r: 4, fill: s.color, stroke: cssVar('--surface-1'), 'stroke-width': 2, visibility: 'hidden' }); svg.appendChild(c); return c; });
+  const hov = series.filter((s) => !s.dash && s.pts.length);
+  const dots = hov.map((s) => { const c = svgEl('circle', { r: 4, fill: s.color, stroke: cssVar('--surface-1'), 'stroke-width': 2, visibility: 'hidden' }); svg.appendChild(c); return c; });
   const hit = svgEl('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, fill: 'transparent' });
   svg.appendChild(hit);
   const nearest = (pts, x) => { let lo = 0, hi = pts.length - 1; while (lo < hi) { const mid = (lo + hi) >> 1; if (pts[mid][0] < x) lo = mid + 1; else hi = mid; } if (lo > 0 && Math.abs(pts[lo - 1][0] - x) < Math.abs(pts[lo][0] - x)) lo--; return pts[lo]; };
@@ -1084,11 +1106,17 @@ function lineChart(host, series, opts) {
     const r = svg.getBoundingClientRect(); const px = e.clientX - r.left;
     const x = x0 + (px - m.l) / (W - m.l - m.r) * (x1 - x0);
     const rows = []; let cx = null;
-    series.forEach((s, i) => {
-      if (!s.pts.length) return; const p = nearest(s.pts, x); if (cx === null) cx = p[0];
+    let use = hov.map((s, i) => i);
+    if (opts.segmented && hov.length) { // only the segment under the pointer (or the closest one)
+      const dist = (s) => Math.max(0, s.pts[0][0] - x, x - s.pts[s.pts.length - 1][0]);
+      let best = 0; hov.forEach((s, i) => { if (dist(s) < dist(hov[best])) best = i; }); use = [best];
+      dots.forEach((d) => d.setAttribute('visibility', 'hidden'));
+    }
+    for (const i of use) {
+      const s = hov[i]; const p = nearest(s.pts, x); if (cx === null) cx = p[0];
       dots[i].setAttribute('cx', X(p[0])); dots[i].setAttribute('cy', Y(p[1])); dots[i].setAttribute('visibility', 'visible');
-      rows.push({ color: s.color, value: (opts.tipFmt || money)(p[1]), label: series.length > 1 ? s.name : (opts.tipLabel ? opts.tipLabel(p) : '') });
-    });
+      rows.push({ color: s.color, value: (opts.tipFmt || money)(p[1]), label: hov.length > 1 ? s.name : (opts.tipLabel ? opts.tipLabel(p) : '') });
+    }
     if (cx === null) return;
     cross.setAttribute('x1', X(cx)); cross.setAttribute('x2', X(cx)); cross.setAttribute('visibility', 'visible');
     tip.show(e, fmtTime(cx), rows);
@@ -1121,10 +1149,11 @@ function columnChart(host, items, opts) {
     const path = it.v >= 0
       ? `M${cx - bw / 2},${yz}V${top + rr}Q${cx - bw / 2},${top} ${cx - bw / 2 + rr},${top}H${cx + bw / 2 - rr}Q${cx + bw / 2},${top} ${cx + bw / 2},${top + rr}V${yz}Z`
       : `M${cx - bw / 2},${yz}V${yv - rr}Q${cx - bw / 2},${yv} ${cx - bw / 2 + rr},${yv}H${cx + bw / 2 - rr}Q${cx + bw / 2},${yv} ${cx + bw / 2},${yv - rr}V${yz}Z`;
-    const bar = svgEl('path', { d: h < 0.5 ? `M${cx - bw / 2},${yz}h${bw}` : path, fill: it.v >= 0 ? pos : neg, stroke: h < 0.5 ? cssVar('--axis') : 'none' });
+    const fill = it.color || (it.v >= 0 ? pos : neg);
+    const bar = svgEl('path', { d: h < 0.5 ? `M${cx - bw / 2},${yz}h${bw}` : path, fill, stroke: h < 0.5 ? cssVar('--axis') : 'none' });
     svg.appendChild(bar);
     const hit = svgEl('rect', { x: m.l + slot * i, y: m.t, width: slot, height: H - m.t - m.b, fill: 'transparent' });
-    hit.addEventListener('pointermove', (e) => { bar.setAttribute('opacity', '0.75'); tip.show(e, it.title, [{ color: it.v >= 0 ? pos : neg, value: money(it.v), label: it.sub || '' }]); });
+    hit.addEventListener('pointermove', (e) => { bar.setAttribute('opacity', '0.75'); tip.show(e, it.title, [{ color: fill, value: money(it.v), label: it.sub || '' }]); });
     hit.addEventListener('pointerleave', () => { bar.removeAttribute('opacity'); tip.hide(); });
     svg.appendChild(hit);
     if (i % step === 0) { const tx = svgEl('text', { x: cx, y: H - 6, 'text-anchor': 'middle' }); tx.textContent = it.xl; svg.appendChild(tx); }
@@ -1345,7 +1374,7 @@ function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({
 function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
 
 const TABS = [
-  ['magic', 'By magic'], ['compare', 'Compare'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
+  ['magic', 'By magic'], ['compare', 'Compare'], ['periods', 'Periods'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
   ['account', 'By account'], ['campaign', 'By campaign'], ['exit', 'Exit reasons'], ['baskets', 'Baskets & depth'],
   ['time', 'Hour / weekday'], ['trades', 'Trades'], ['open', 'Open positions'], ['accounts', 'Accounts'], ['health', 'Health'], ['files', 'Files'],
 ];
@@ -1401,6 +1430,7 @@ function renderTab() {
   else if (id === 'accounts') renderAccounts(host, T);
   else if (id === 'health') renderHealth(host);
   else if (id === 'compare') renderCompare(host);
+  else if (id === 'periods') renderPeriods(host, T);
   else if (id === 'files') renderFiles(host);
 }
 function renderBaskets(host, T) {
@@ -1799,6 +1829,208 @@ function renderCompare(host) {
   }
   tbl.appendChild(tb); wrap.appendChild(tbl); host.appendChild(wrap);
   host.appendChild(el('p', { class: 'hint' }, 'The 90% range comes from resampling whole baskets 200–1000 times, because pyramid legs win and lose together. If two ranges overlap a lot, the difference between them may be luck. R uses each trade\'s initial stop; % uses the balance when the trade opened. Other filters (period, account, symbol…) still apply.'));
+}
+
+/* ---------------- periods: consecutive date ranges side by side ---------------- */
+const PER_KEY = 'mt4dash-period-splits';
+const PER_COLORS = ['--series-1', '--series-2', '--series-3', '--series-4'];
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const WDAY = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+function fmtDay(ms) { const d = new Date(ms); return MON[d.getUTCMonth()] + ' ' + d.getUTCDate(); }
+function dayStart(ms) { return Math.floor(ms / DAY) * DAY; }
+function loadSplits() {
+  try { const v = JSON.parse(localStorage.getItem(PER_KEY) || 'null'); return Array.isArray(v) ? v.filter((x) => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x)) : null; }
+  catch (e) { return null; }
+}
+function storeSplits(list) {
+  state.per.splits = [...new Set(list.filter(Boolean))].sort();
+  try { localStorage.setItem(PER_KEY, JSON.stringify(state.per.splits)); } catch (e) { /* storage unavailable */ }
+}
+function setSplits(list) { storeSplits(list); renderTab(); }
+// Each split day starts the next period. T is sorted by close time.
+function buildPeriods(T) {
+  const first = dayStart(T[0].closeTime), last = dayStart(T[T.length - 1].closeTime);
+  if (state.per.splits === null) state.per.splits = loadSplits() || [];
+  let splits = [...new Set(state.per.splits.map(parseMT).filter((v) => v > first && v <= last))].sort((a, b) => a - b).slice(0, 3);
+  if (!splits.length) {
+    splits = [Math.max(first + DAY, dayStart((T[0].closeTime + T[T.length - 1].closeTime) / 2))];
+    // keep the first split, so it stays put and the last period grows with new trades
+    if (!state.per.splits.length && state.from === null && state.to === null) storeSplits([fmtDate(splits[0])]);
+  }
+  const bounds = [-Infinity].concat(splits, [Infinity]);
+  const P = []; let j = 0;
+  for (let i = 0; i < bounds.length - 1; i++) {
+    const arr = [];
+    while (j < T.length && T[j].closeTime < bounds[i + 1]) arr.push(T[j++]);
+    const a = i === 0 ? first : bounds[i], z = i === bounds.length - 2 ? last : bounds[i + 1] - DAY;
+    P.push({ arr, from: bounds[i], to: bounds[i + 1], color: cssVar(PER_COLORS[i % PER_COLORS.length]), label: a >= z ? fmtDay(a) : fmtDay(a) + ' – ' + fmtDay(z) });
+  }
+  return { P, splits, first, last };
+}
+function periodStats(arr) {
+  const s = stats(arr);
+  const days = new Map(), acc = new Map(), mags = new Set(); let risk = 0, riskN = 0;
+  for (const t of arr) {
+    if (t.risk > 0) { risk += t.risk; riskN++; }
+    const d = dayStart(t.closeTime); let o = days.get(d); if (!o) { o = { v: 0, n: 0 }; days.set(d, o); } o.v += t.net; o.n++;
+    let a = acc.get(d); if (!a) { a = new Set(); acc.set(d, a); } a.add(t.account); mags.add(t.magic);
+  }
+  const dv = [...days.values()].map((o) => o.v);
+  s.dayNet = days; s.days = days.size; s.magics = mags.size; s.avgRisk = riskN ? risk / riskN : NaN;
+  s.perDay = s.days ? s.net / s.days : NaN; s.tradesDay = s.days ? s.n / s.days : NaN; s.lotsDay = s.days ? s.lots / s.days : NaN;
+  s.accDay = s.days ? [...acc.values()].reduce((x, v) => x + v.size, 0) / s.days : NaN;
+  s.bestDay = dv.length ? Math.max(...dv) : NaN; s.worstDay = dv.length ? Math.min(...dv) : NaN; s.posDays = dv.filter((v) => v > 0).length;
+  return s;
+}
+function renderPeriods(host, T) {
+  if (!T.length || dayStart(T[0].closeTime) === dayStart(T[T.length - 1].closeTime)) {
+    host.appendChild(el('p', { class: 'muted' }, 'Periods need closed trades on at least two different days in this selection.')); return;
+  }
+  const { P, splits, first, last } = buildPeriods(T);
+  const S = P.map((p) => periodStats(p.arr));
+  const mid = Math.max(first + DAY, dayStart((T[0].closeTime + T[T.length - 1].closeTime) / 2));
+  // controls: the day each later period starts, add / remove, halves, what to list changes by
+  const ctl = el('div', { class: 'controls' }); const cur = splits.map(fmtDate);
+  splits.forEach((v, i) => {
+    const l = el('label', null, 'Period ' + (i + 2) + ' starts on'); const row = el('span', { class: 'split-row' });
+    const inp = el('input', { type: 'date', min: fmtDate(first + DAY), max: fmtDate(last) }); inp.value = fmtDate(v);
+    inp.addEventListener('change', () => { if (!inp.value) return; const next = cur.slice(); next[i] = inp.value; setSplits(next); });
+    row.appendChild(inp);
+    if (splits.length > 1) {
+      const x = el('button', { class: 'btn small', type: 'button', title: 'Remove this split', 'aria-label': 'Remove this split' }, '×');
+      x.addEventListener('click', () => setSplits(cur.filter((_, k) => k !== i))); row.appendChild(x);
+    }
+    l.appendChild(row); ctl.appendChild(l);
+  });
+  const lastArr = P[P.length - 1].arr;
+  const addAt = lastArr.length ? dayStart((lastArr[0].closeTime + lastArr[lastArr.length - 1].closeTime) / 2) : NaN;
+  if (splits.length < 3) {
+    const add = el('button', { class: 'btn', type: 'button', title: 'Split the last period in two' }, '+ Add period');
+    add.disabled = !(addAt > splits[splits.length - 1] && addAt <= last);
+    add.addEventListener('click', () => setSplits(cur.concat([fmtDate(addAt)]))); ctl.appendChild(add);
+  }
+  const halves = el('button', { class: 'btn', type: 'button', title: 'One split in the middle of the data: ' + fmtDay(mid) }, 'Halves');
+  halves.addEventListener('click', () => setSplits([fmtDate(mid)])); ctl.appendChild(halves);
+  const byL = el('label', null, 'List changes by'); const bySel = el('select');
+  for (const [v, t] of [['magic', 'Magic'], ['account', 'Account'], ['symbol', 'Symbol'], ['comment', 'Comment']]) { const o = el('option', { value: v }, t); if (v === state.per.by) o.selected = true; bySel.appendChild(o); }
+  bySel.addEventListener('change', () => { state.per.by = bySel.value; renderTab(); });
+  byL.appendChild(bySel); ctl.appendChild(byL); host.appendChild(ctl);
+
+  // one tile per period
+  const chips = el('div', { class: 'per-chips' });
+  P.forEach((p, i) => {
+    const s = S[i]; const c = el('div', { class: 'per-chip' }); c.style.setProperty('--c', p.color);
+    c.appendChild(el('div', { class: 'label' }, p.label));
+    c.appendChild(el('div', { class: 'value ' + signCls(s.net) }, money(s.net)));
+    c.appendChild(el('div', { class: 'note' }, money(s.perDay) + ' per day · ' + s.days + ' trading day' + (s.days === 1 ? '' : 's')));
+    chips.appendChild(c);
+  });
+  host.appendChild(chips);
+
+  // cumulative net profit: one line through all periods, a straight dashed line per period for the slope
+  host.appendChild(el('h2', null, 'Cumulative net profit'));
+  host.appendChild(el('div', { class: 'sub' }, 'One line through all periods. Dashed: a straight line from the start to the end of each period, to compare the slopes.'));
+  const lines = [], trends = []; let cum = 0, prev = null; const per = Math.max(200, Math.floor(1500 / P.length));
+  P.forEach((p) => {
+    if (!p.arr.length) return;
+    const pts = [prev || [p.arr[0].closeTime, 0]];
+    for (const t of p.arr) { cum += t.net; pts.push([t.closeTime, cum]); }
+    const ds = downsample(pts, per); if (ds[0] !== pts[0]) ds.unshift(pts[0]); // keep the join with the previous period
+    lines.push({ name: p.label, color: p.color, pts: ds });
+    trends.push({ name: p.label, color: p.color, dash: true, pts: [pts[0], pts[pts.length - 1]] });
+    prev = pts[pts.length - 1];
+  });
+  const ch = el('div', { class: 'chart' }); host.appendChild(ch);
+  lineChart(ch, trends.concat(lines), { height: 300, zero: true, segmented: true, label: 'cumulative net profit by period',
+    bands: P.map((p) => ({ x0: p.from, x1: p.to, color: p.color })), vlines: splits.map((v) => ({ x: v, label: fmtDay(v) })) });
+
+  // daily net profit, coloured by period
+  host.appendChild(el('h2', { class: 'section-title' }, 'Daily net profit'));
+  host.appendChild(el('div', { class: 'sub' }, 'By close date, server time. ' + P.map((p, i) => p.label + ': ' + S[i].posDays + ' of ' + S[i].days + ' days positive').join(' · ')));
+  const items = [];
+  P.forEach((p, i) => { for (const [d, o] of [...S[i].dayNet].sort((a, b) => a[0] - b[0])) items.push({ xl: fmtDate(d).slice(5), v: o.v, color: p.color, title: fmtDate(d) + ' (' + WDAY[new Date(d).getUTCDay()] + ')', sub: o.n.toLocaleString('en-US') + ' trades · ' + p.label }); });
+  const dch = el('div', { class: 'chart' }); host.appendChild(dch);
+  columnChart(dch, items, { height: 240, label: 'daily net profit by period' });
+
+  // side by side
+  host.appendChild(el('h2', { class: 'section-title' }, 'Side by side'));
+  const n0 = (v) => (Number.isFinite(v) ? nf0.format(v) : '–');
+  const metrics = [
+    ['Net profit', (s) => money(s.net), (s) => signCls(s.net)], ['Trading days', (s) => String(s.days)],
+    ['Net per trading day', (s) => money(s.perDay), (s) => signCls(s.perDay)], ['Trades per day', (s) => n0(s.tradesDay)],
+    ['Lots per day', (s) => (Number.isFinite(s.lotsDay) ? nfLots.format(s.lotsDay) : '–')], ['Accounts trading per day', (s) => fmtNum(s.accDay, 1)],
+    ['Strategies (magic numbers)', (s) => String(s.magics)], ['Win %', (s) => pct(s.winRate)], ['Profit factor', (s) => ratio(s.pf)],
+    ['Expectancy per trade', (s) => money(s.exp), (s) => signCls(s.exp)], ['Average win / loss', (s) => money(s.avgWin) + ' / ' + money(s.avgLoss)],
+    ['Average risk per trade (initial stop)', (s) => money(s.avgRisk)], ['Avg R (net ÷ risk)', (s) => fmtSigned(s.avgR, 2), (s) => signCls(s.avgR)],
+    ['Winning days', (s) => s.posDays + ' of ' + s.days], ['Best day', (s) => money(s.bestDay), (s) => signCls(s.bestDay)],
+    ['Worst day', (s) => money(s.worstDay), (s) => signCls(s.worstDay)], ['Max drawdown (closed)', (s) => money(-s.maxDD)],
+    ['Commission + swap', (s) => money(s.comm + s.swap)],
+  ];
+  const keyHead = (tr, p) => { const th = el('th', { class: 'num' }); const k = el('span', { class: 'cmp-key' }); k.style.background = p.color; th.append(k, document.createTextNode(p.label)); tr.appendChild(th); };
+  const wrap = el('div', { class: 'tablewrap' }); const tbl = el('table', { class: 'cmp-table' });
+  const hr = el('tr'); hr.appendChild(el('th', null, '')); P.forEach((p) => keyHead(hr, p));
+  const thead = el('thead'); thead.appendChild(hr); tbl.appendChild(thead);
+  const tb = el('tbody');
+  for (const [name, fn, clsFn] of metrics) {
+    const tr = el('tr'); tr.appendChild(el('td', null, name));
+    S.forEach((s) => tr.appendChild(el('td', { class: 'num ' + (clsFn ? clsFn(s) : '') }, fn(s)))); tb.appendChild(tr);
+  }
+  tbl.appendChild(tb); wrap.appendChild(tbl); host.appendChild(wrap);
+
+  // strategies (magic numbers) that stopped, kept running or started at each split
+  host.appendChild(el('h2', { class: 'section-title' }, 'Strategies that stopped, kept running or started'));
+  host.appendChild(el('div', { class: 'sub' }, 'A strategy is a magic number. Net profit of each group before and after each split.'));
+  const nets = P.map((p) => { const m = new Map(); for (const t of p.arr) m.set(t.magic, (m.get(t.magic) || 0) + t.net); return m; });
+  const groups = el('div', { class: 'per-groups' });
+  for (let i = 1; i < P.length; i++) {
+    const A = nets[i - 1], B = nets[i];
+    const g = { stopped: [0, 0, NaN], kept: [0, 0, 0], added: [0, NaN, 0] };
+    for (const [m, v] of A) { if (B.has(m)) { g.kept[0]++; g.kept[1] += v; g.kept[2] += B.get(m); } else { g.stopped[0]++; g.stopped[1] += v; } }
+    for (const [m, v] of B) if (!A.has(m)) { g.added[0]++; g.added[2] += v; }
+    const w = el('div', { class: 'tablewrap' }); const t2 = el('table', { class: 'cmp-table' });
+    const h2r = el('tr'); h2r.appendChild(el('th', null, 'At ' + fmtDay(P[i].from))); h2r.appendChild(el('th', { class: 'num' }, 'Strategies')); keyHead(h2r, P[i - 1]); keyHead(h2r, P[i]);
+    const th2 = el('thead'); th2.appendChild(h2r); t2.appendChild(th2);
+    const b2 = el('tbody');
+    for (const [name, x] of [['Stopped before ' + fmtDay(P[i].from), g.stopped], ['Kept running', g.kept], ['New from ' + fmtDay(P[i].from), g.added], ['All', [A.size + g.added[0], S[i - 1].net, S[i].net]]]) {
+      const tr = el('tr'); tr.appendChild(el('td', null, name));
+      tr.appendChild(el('td', { class: 'num' }, String(x[0])));
+      for (const v of [x[1], x[2]]) tr.appendChild(el('td', { class: 'num ' + signCls(v) }, Number.isFinite(v) ? money(v) : 'not running'));
+      b2.appendChild(tr);
+    }
+    t2.appendChild(b2); w.appendChild(t2); groups.appendChild(w);
+  }
+  host.appendChild(groups);
+
+  // biggest changes between the last two periods
+  const by = state.per.by; const keyFn = { magic: (t) => t.magic, account: (t) => t.account, symbol: (t) => t.symbol, comment: commentOf }[by];
+  const a = P.length - 2, b = P.length - 1;
+  host.appendChild(el('h2', { class: 'section-title' }, 'Biggest changes'));
+  host.appendChild(el('div', { class: 'sub' }, 'Net profit by ' + by + ' in each period. Change per day compares ' + P[a].label + ' with ' + P[b].label + ' per trading day, so periods of different length compare fairly. Click a row to filter by it.'));
+  const gm = new Map();
+  P.forEach((p, i) => {
+    for (const t of p.arr) {
+      const k = keyFn(t); let r = gm.get(k);
+      if (!r) { r = { nets: P.map(() => 0), ns: P.map(() => 0), cm: new Map() }; gm.set(k, r); }
+      r.nets[i] += t.net; r.ns[i]++;
+      if (by === 'magic') { const c = commentOf(t); r.cm.set(c, (r.cm.get(c) || 0) + 1); }
+    }
+  });
+  const rows = [...gm].map(([k, r]) => {
+    const row = { key: k, label: by === 'account' ? accLabel(k) : k, status: r.ns[a] && r.ns[b] ? 'Kept' : r.ns[b] ? 'New' : r.ns[a] ? 'Stopped' : 'Earlier only' };
+    row.chg = (S[b].days ? r.nets[b] / S[b].days : 0) - (S[a].days ? r.nets[a] / S[a].days : 0);
+    P.forEach((p, i) => { row['net' + i] = r.nets[i]; row['n' + i] = r.ns[i]; });
+    if (by === 'magic') row.comments = [...r.cm].sort((x, y) => y[1] - x[1]).slice(0, 2).map((x) => x[0]).join(', ') + (r.cm.size > 2 ? ' +' + (r.cm.size - 2) : '');
+    return row;
+  });
+  const cols = [{ key: 'label', label: { magic: 'Magic', account: 'Account', symbol: 'Symbol', comment: 'Comment' }[by] }];
+  if (by === 'magic') cols.push({ key: 'comments', label: 'Comments' });
+  cols.push({ key: 'status', label: 'Status' });
+  P.forEach((p, i) => cols.push({ key: 'net' + i, label: p.label, num: true, f: money, cls: signCls,
+    render: (td, v, r) => { td.textContent = r['n' + i] ? money(v) : '–'; if (!r['n' + i]) td.className = 'num'; } }));
+  cols.push({ key: 'chg', label: 'Change per day', num: true, f: (v) => (v > 0 ? '+' : '') + money(v), cls: signCls });
+  P.forEach((p, i) => cols.push({ key: 'n' + i, label: 'Trades ' + p.label, num: true, f: (v) => v.toLocaleString('en-US') }));
+  table(host, cols, rows, { tabId: 'periods-' + by, defKey: 'chg', defDir: 'asc', onRow: (r) => { state[by] = r.key; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
+  host.appendChild(el('p', { class: 'hint' }, 'Split days are saved in this browser, so the last period keeps growing as new trades arrive. When you change strategies, add a period on that day to see the effect. Other filters (dates, account, magic, symbol…) still apply.'));
 }
 
 /* ---------------- render ---------------- */

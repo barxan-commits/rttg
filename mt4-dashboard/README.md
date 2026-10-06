@@ -67,6 +67,14 @@ once their collector files are synced into `MT4_Terminals`.
   see their curves on one chart, in money, R or % of balance, with a 90%
   range for the average per trade. The range resamples whole baskets,
   because pyramid legs win and lose together.
+- **Periods**: split the history at one to three dates (default: the middle)
+  and compare the periods side by side: one cumulative curve coloured by
+  period with a straight line for each period's slope, daily results, key
+  figures (net per day, trades and lots per day, win rate, PF, risk per
+  trade, R), which strategies stopped, kept running or started at each split,
+  and the biggest changes by magic, account, symbol or comment. The split
+  dates are saved in your browser, so the last period keeps growing as new
+  trades arrive. Other filters still apply, e.g. pick one account first.
 - **Baskets & depth**: results by number of legs per basket, how often baskets
   reach each depth, and results by leg number.
 - **Open positions**: exposure and floating P/L per magic (P/L per position
