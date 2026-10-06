@@ -24,6 +24,12 @@
   --series-1: #2a78d6;
   --series-2: #eb6834;
   --series-8: #e34948;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --st-good: #0ca30c;
+  --st-warning: #fab219;
+  --st-serious: #ec835a;
+  --st-critical: #d03b3b;
   --wash-neg: rgba(227,73,72,0.12);
   --wash-pos: rgba(42,120,214,0.10);
   --hover: rgba(11,11,11,0.04);
@@ -48,6 +54,8 @@
     --series-1: #3987e5;
     --series-2: #d95926;
     --series-8: #e66767;
+    --series-3: #199e70;
+    --series-4: #c98500;
     --wash-neg: rgba(230,103,103,0.16);
     --wash-pos: rgba(57,135,229,0.14);
     --hover: rgba(255,255,255,0.05);
@@ -72,6 +80,8 @@
   --series-1: #3987e5;
   --series-2: #d95926;
   --series-8: #e66767;
+  --series-3: #199e70;
+  --series-4: #c98500;
   --wash-neg: rgba(230,103,103,0.16);
   --wash-pos: rgba(57,135,229,0.14);
   --hover: rgba(255,255,255,0.05);
@@ -125,6 +135,8 @@ main { padding: 16px; max-width: 1600px; margin: 0 auto; }
 .tile .value { font-size: 20px; font-weight: 600; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .note { font-size: 11.5px; color: var(--text-muted); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile.hero { grid-column: span 2; }
+.tile.clickable { cursor: pointer; }
+.tile.clickable:hover, .tile.clickable:focus-visible { background: var(--hover); outline: none; box-shadow: inset 0 0 0 1px var(--accent); }
 .tile.hero .value { font-size: 34px; }
 .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
 @media (max-width: 1000px) { .grid2 { grid-template-columns: 1fr; } .tile.hero { grid-column: span 1; } }
@@ -170,6 +182,16 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .tooltip .tt-row i { display: inline-block; width: 12px; height: 2px; border-radius: 1px; }
 .tooltip .tt-row span { color: var(--text-secondary); }
 .hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 1px 9px 1px 7px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); white-space: nowrap; }
+.pill i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.pill.critical i { background: var(--st-critical); } .pill.serious i { background: var(--st-serious); }
+.pill.warning i { background: var(--st-warning); } .pill.good i { background: var(--st-good); } .pill.info i { background: var(--text-muted); }
+.controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin-bottom: 10px; }
+.controls label { display: flex; flex-direction: column; font-size: 12px; color: var(--text-secondary); gap: 3px; }
+.controls select { font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); max-width: 260px; }
+.section-title { margin: 18px 0 2px; }
+.cmp-table td:first-child, .cmp-table th:first-child { color: var(--text-secondary); font-weight: 600; }
+.cmp-key { display: inline-block; width: 14px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 6px; }
 </style>
 </head>
 <body>
@@ -284,6 +306,7 @@ const DB = {
 const state = {
   from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '',
   commentMode: 'base', tab: 'magic', sort: {}, page: {}, search: '', basketSearch: '', equityAccount: '',
+  healthSev: 'warning', cmp: { dim: 'magic', items: [], unit: 'money' },
 };
 
 /* ---------------- helpers ---------------- */
@@ -300,6 +323,7 @@ function moneyCompact(v) {
   if (a >= 1e4) return s + (a / 1e3).toFixed(1) + 'K';
   return s + nf2.format(a);
 }
+function fmtSigned(v, d) { return Number.isFinite(v) ? (v > 0 ? '+' : v < 0 ? '−' : '') + Math.abs(v).toFixed(d) : '–'; }
 function pct(v) { return Number.isFinite(v) ? (v * 100).toFixed(1) + '%' : '–'; }
 function ratio(v) { return v === Infinity ? '∞' : Number.isFinite(v) ? v.toFixed(2) : '–'; }
 function fmtNum(v, d = 1) { return Number.isFinite(v) ? v.toFixed(d) : '–'; }
@@ -346,7 +370,7 @@ function parseCSV(text) {
   if (text.indexOf('"') === -1) {
     const delim = sniffDelim(text);
     const lines = text.split(/\r?\n/);
-    for (const l of lines) if (l.trim().length) rows.push(l.split(delim));
+    for (const l of lines) if (l.trim().length && l[0] !== '#') rows.push(l.split(delim));
     return rows;
   }
   const delim = sniffDelim(text);
@@ -366,7 +390,7 @@ function parseCSV(text) {
     } else field += c;
   }
   if (field !== '' || row.length) { row.push(field); if (row.length > 1 || row[0].trim() !== '') rows.push(row); }
-  return rows;
+  return rows.filter((r, i) => i === 0 || (r[0] || '')[0] !== '#');
 }
 function sniffDelim(text) {
   const first = text.slice(0, text.indexOf('\n') > 0 ? text.indexOf('\n') : 500);
@@ -407,6 +431,9 @@ function classify(name, header) {
   if (/^equity_.*\.csv\.gz$/.test(n)) return 'snaps';
   if (/^open_now\.csv\.gz$/.test(n)) return 'open';
   if (n === 'status_all.txt') return 'statusAll';
+  if (n === 'health_events.csv.gz') return 'health';
+  if (n === 'sync_all.txt') return 'syncAll';
+  if (/^_sync_status.*\.txt$|^_terminal_identity_map.*\.txt$/.test(n)) return 'sync';
   if (/_detailedstatementlive\.csv$/.test(n)) return 'trades';
   if (/_account_snapshots\.csv$/.test(n)) return 'snaps';
   if (/_open_now\.csv$/.test(n)) return 'open';
@@ -423,7 +450,8 @@ function tagOf(name) { const m = /_(Quant[A-Za-z]*\d+)_/i.exec(name); return m ?
 function isCandidate(name) {
   const n = name.toLowerCase();
   return /_detailedstatementlive\.csv$|_account_snapshots\.csv$|_open_now\.csv$|collector_status\.txt$/.test(n)
-    || /^(trades_.*|equity_.*|open_now)\.csv\.gz$|^status_all\.txt$|^mt4dash_manifest\.json$/.test(n);
+    || /^(trades_.*|equity_.*|open_now|health_events)\.csv\.gz$|^(status_all|sync_all)\.txt$|^mt4dash_manifest\.json$/.test(n)
+    || /^_sync_status.*\.txt$|^_terminal_identity_map.*\.txt$/.test(n);
 }
 
 /* ---------------- trade records ---------------- */
@@ -479,6 +507,13 @@ function ingestTrades(rows, file, report) {
     };
     if (!Number.isFinite(t.closeTime)) continue;
     if (!Number.isFinite(t.duration) && Number.isFinite(t.openTime)) t.duration = (t.closeTime - t.openTime) / 1000;
+    t.point = num(g(r, 'point_size'));
+    if (!(t.point > 0) && Number.isFinite(t.digits)) t.point = Math.pow(10, -t.digits);
+    if (!(t.slPts > 0) && t.initialSL > 0 && t.openPrice > 0 && t.point > 0) t.slPts = Math.abs(t.openPrice - t.initialSL) / t.point;
+    if (!(t.slPts >= MIN_SL_POINTS)) t.slPts = NaN; // no stop, or one too tight to give a meaningful R
+    t.noTP = g(r, 'flag_no_initial_tp') === '1';
+    t.wideSL = g(r, 'flag_wide_initial_sl') === '1';
+    t.balOpen = num(g(r, 'first_seen_balance'));
     const key = account + '|' + ticket;
     const prev = TRADE_MAP.get(key);
     if (!prev) { TRADE_MAP.set(key, t); added++; }
@@ -514,8 +549,12 @@ function ingestSnaps(rows, file, report) {
     const r = rows[i]; const account = g(r, 'account'); const t = parseMT(g(r, 'time'));
     if (!account || !Number.isFinite(t)) continue;
     let arr = SNAP_RAW.get(account); if (!arr) { arr = []; SNAP_RAW.set(account, arr); }
-    arr.push({ t, balance: num(g(r, 'balance')), equity: num(g(r, 'equity')), floating: num(g(r, 'floating_net')),
-      ml: num(g(r, 'margin_level_pct')), orders: num(g(r, 'open_market_orders')), lots: num(g(r, 'total_market_lots')) });
+    const equity = num(g(r, 'equity')), floating = num(g(r, 'floating_net'));
+    const eqMin = num(g(r, 'equity_min')), eqMax = num(g(r, 'equity_max')), flMin = num(g(r, 'floating_min')), eqMinT = parseMT(g(r, 'equity_min_time'));
+    arr.push({ t, balance: num(g(r, 'balance')), equity, floating,
+      ml: num(g(r, 'margin_level_pct')), orders: num(g(r, 'open_market_orders')), lots: num(g(r, 'total_market_lots')),
+      eqMin: Number.isFinite(eqMin) ? eqMin : equity, eqMinT: Number.isFinite(eqMinT) ? eqMinT : t,
+      eqMax: Number.isFinite(eqMax) ? eqMax : equity, flMin: Number.isFinite(flMin) ? flMin : floating });
     n++;
     if (i === rows.length - 1) noteAccount({ account, machine: g(r, 'machine_label'), terminal: g(r, 'terminal_label'), campaign: g(r, 'campaign'), server: g(r, 'server'), time: t });
   }
@@ -525,14 +564,16 @@ let SNAP_RAW = new Map();
 function finalizeSnaps() {
   for (const [acc, arr] of SNAP_RAW) {
     arr.sort((a, b) => a.t - b.t);
-    // downsample: at most one point per 5 minutes, always keep the last
-    const out = []; let last = -Infinity;
-    for (let i = 0; i < arr.length; i++) {
-      const p = arr[i];
-      if (p.t - last >= 300000 || i === arr.length - 1) {
-        if (out.length && out[out.length - 1].t === p.t) out[out.length - 1] = p; else out.push(p);
-        last = p.t;
-      }
+    // one point per 5-minute slot: last values, plus the lowest/highest equity and worst floating inside the slot
+    const out = []; let cur = null, slot = null;
+    for (const p of arr) {
+      const sl = Math.floor(p.t / 300000);
+      if (sl !== slot) { cur = Object.assign({}, p); out.push(cur); slot = sl; continue; }
+      const keep = { eqMin: cur.eqMin, eqMinT: cur.eqMinT, eqMax: cur.eqMax, flMin: cur.flMin };
+      Object.assign(cur, p);
+      if (Number.isFinite(keep.eqMin) && !(p.eqMin < keep.eqMin)) { cur.eqMin = keep.eqMin; cur.eqMinT = keep.eqMinT; }
+      if (Number.isFinite(keep.eqMax) && !(p.eqMax > keep.eqMax)) cur.eqMax = keep.eqMax;
+      if (Number.isFinite(keep.flMin) && !(p.flMin < keep.flMin)) cur.flMin = keep.flMin;
     }
     DB.snaps.set(acc, out);
   }
@@ -555,7 +596,9 @@ function ingestOpen(rows, file, report) {
       sl: num(g(r, 'last_sl')), tp: num(g(r, 'last_tp')), magic: g(r, 'magic') || '0', comment,
       base: g(r, 'base_comment') || stripSuffix(comment), mfe: num(g(r, 'mfe_points')), mae: num(g(r, 'mae_points')),
       lastSeen: parseMT(g(r, 'last_seen')),
+      profit: num(g(r, 'profit')), swap: num(g(r, 'swap')), commission: num(g(r, 'commission')),
     };
+    p.pnl = Number.isFinite(p.profit) ? p.profit + num0(g(r, 'swap')) + num0(g(r, 'commission')) : NaN;
     let o = perAcc.get(account); if (!o) { o = { account, lastSeen: 0, rows: [], file: file.name }; perAcc.set(account, o); }
     o.rows.push(p); if (p.lastSeen > o.lastSeen) o.lastSeen = p.lastSeen;
   }
@@ -586,6 +629,76 @@ function ingestStatus(text, file, report) {
   if (!prev || (s.updatedMs || 0) > (prev.updatedMs || 0)) DB.status.set(acc, s);
 }
 
+function ingestHealth(rows, report) {
+  const idx = headerIndex(rows[0]);
+  const g = (r, k) => { const i = idx[k]; return i === undefined ? '' : (r[i] || '').trim(); };
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    DB.health.push({ terminal: g(r, 'terminal'), kind: g(r, 'kind'), date: g(r, 'date'), source: g(r, 'source'), chart: g(r, 'chart'),
+      category: g(r, 'category'), severity: g(r, 'severity'), count: num0(g(r, 'count')), first: parseMT(g(r, 'first_time')),
+      last: parseMT(g(r, 'last_time')), max: num(g(r, 'value_max')), sum: num(g(r, 'value_sum')), magic: g(r, 'magic'),
+      account: g(r, 'account'), sample: g(r, 'sample') });
+  }
+  report.rows = rows.length - 1;
+}
+const SYNC_BAD = (st) => st && st !== 'OK';
+function upsertSync(term, info) {
+  const prev = DB.sync.terminals.get(term) || { terminal: term, account: '', status: 'OK', detail: '', profile: '', run: '' };
+  if (info.account) prev.account = info.account;
+  if (info.profile) prev.profile = info.profile;
+  if (info.run) prev.run = info.run;
+  if (SYNC_BAD(info.status) || !SYNC_BAD(prev.status)) { prev.status = info.status || prev.status; if (info.detail) prev.detail = info.detail; }
+  DB.sync.terminals.set(term, prev);
+}
+function ingestSync(text, label) {
+  const name = String(label).split('/').pop();
+  const lines = text.split(/\r?\n/).map((l) => l.replace(/^\uFEFF/, ''));
+  const field = (re) => { for (const l of lines) { const m = re.exec(l); if (m) return m[1].trim(); } return ''; };
+  if (/_terminal_identity_map/i.test(name)) {
+    const profile = /VPS/i.test(name) ? 'VPS' : /HOME/i.test(name) ? 'HOME' : '';
+    for (const l of lines) {
+      const m = /^\s*([^|]+?)\s*\|\s*account=(\d+)/.exec(l); if (!m) continue;
+      if (/^UNMAPPED$/i.test(m[1])) { if (!DB.sync.unmapped.some((u) => u.account === m[2])) DB.sync.unmapped.push({ account: m[2], profile }); }
+      else DB.sync.identity.set(m[1], m[2]);
+    }
+    return;
+  }
+  const logical = field(/^Logical terminal:\s*(.+)$/i);
+  if (logical) {
+    upsertSync(logical, { account: field(/^Expected account:\s*(\d+)/i), status: field(/^STATUS:\s*(.+)$/i) || 'OK', detail: field(/^Hint:\s*(.+)$/i), run: field(/^Run started:\s*(.+)$/i) });
+    return;
+  }
+  const profile = field(/^Sync profile:\s*(.+)$/i), run = field(/^Run:\s*(.+)$/i);
+  for (const l of lines) {
+    const m = /^(\S+)\s+account=(\d+)\s*(.*)$/.exec(l.trim()); if (!m) continue;
+    let status = 'OK'; const rest = m[3] || '';
+    if (/SOURCE_NOT_DISCOVERED/i.test(rest)) status = 'SOURCE NOT DISCOVERED';
+    else { const mm = /mismatches=(\d+)/.exec(rest); if (mm && +mm[1] > 0) status = mm[1] + ' file mismatches'; }
+    upsertSync(m[1], { account: m[2], status, profile, run });
+  }
+}
+const MIN_SL_POINTS = 10;
+// value of one point for one lot, per symbol and account currency, learned from closed trades
+function computeDerived() {
+  const samples = new Map();
+  for (const t of DB.trades) {
+    const move = Math.abs(t.closePrice - t.openPrice);
+    if (!(t.point > 0) || !(move > 0) || !(t.lots > 0) || !(Math.abs(t.profit) > 0)) continue;
+    const pts = move / t.point; if (pts < 5) continue;
+    const k = t.symbol + '|' + (t.currency || '');
+    let a = samples.get(k); if (!a) { a = []; samples.set(k, a); }
+    if (a.length < 4000) a.push(Math.abs(t.profit) / (pts * t.lots));
+  }
+  DB.pointValue = new Map();
+  for (const [k, a] of samples) { a.sort((x, y) => x - y); DB.pointValue.set(k, a[Math.floor(a.length / 2)]); }
+  for (const t of DB.trades) {
+    const vpp = DB.pointValue.get(t.symbol + '|' + (t.currency || ''));
+    t.risk = t.slPts > 0 && vpp > 0 && t.lots > 0 ? t.slPts * vpp * t.lots : NaN;
+    t.r = t.risk > 0 ? t.net / t.risk : NaN;
+    t.pct = t.balOpen > 0 ? t.net / t.balOpen * 100 : NaN;
+  }
+}
+
 /* ---------------- loading ---------------- */
 async function gunzipText(bytes) {
   if (typeof DecompressionStream === 'undefined') throw new Error('this browser cannot read .gz files');
@@ -606,7 +719,8 @@ async function loadSources(files) {
   showProgress('Reading ' + files.length + ' files…');
   // fresh load each time
   TRADE_MAP = new Map(); SNAP_RAW = new Map(); OPEN_FILES = [];
-  Object.assign(DB, { trades: [], other: 0, snaps: new Map(), open: [], openMeta: new Map(), status: new Map(), accounts: new Map(), files: [] });
+  Object.assign(DB, { trades: [], other: 0, snaps: new Map(), open: [], openMeta: new Map(), status: new Map(), accounts: new Map(), files: [],
+    health: [], sync: { terminals: new Map(), identity: new Map(), unmapped: [] }, pointValue: new Map() });
   let done = 0;
   for (const f of files) {
     const path = f.path || f.name;
@@ -623,6 +737,13 @@ async function loadSources(files) {
         for (let i = 1; i < parts.length; i += 2) ingestStatus(parts[i + 1] || '', { name: parts[i].trim() }, { rows: 0 });
         report.rows = Math.floor(parts.length / 2);
       }
+      else if (kind === 'syncAll') {
+        report.kind = 'sync';
+        const parts = text.split(/^#FILE: (.*)$/m);
+        for (let i = 1; i < parts.length; i += 2) ingestSync(parts[i + 1] || '', parts[i].trim());
+        report.rows = Math.floor(parts.length / 2);
+      }
+      else if (kind === 'sync') { report.kind = 'sync'; ingestSync(text, path); report.rows = 1; }
       else {
         const rows = parseCSV(text);
         if (!rows.length) { report.note = 'empty'; }
@@ -632,6 +753,7 @@ async function loadSources(files) {
           if (kind === 'trades') ingestTrades(rows, f, report);
           else if (kind === 'snaps') ingestSnaps(rows, f, report);
           else if (kind === 'open') ingestOpen(rows, f, report);
+          else if (kind === 'health') ingestHealth(rows, report);
         }
       }
     } catch (e) { report.note = 'error: ' + e.message; }
@@ -641,7 +763,7 @@ async function loadSources(files) {
   }
   DB.trades = Array.from(TRADE_MAP.values()).sort((a, b) => a.closeTime - b.closeTime || (a.ticket < b.ticket ? -1 : 1));
   TRADE_MAP = new Map();
-  finalizeSnaps(); finalizeOpen();
+  finalizeSnaps(); finalizeOpen(); computeDerived();
   for (const [acc, s] of DB.status) {
     let a = DB.accounts.get(acc);
     if (!a) { a = { account: acc, machine: s['machine'] || '', terminal: s['terminal'] || '', campaign: s['campaign'] || '', server: s['server'] || '', currency: '', lastSeen: 0 }; DB.accounts.set(acc, a); }
@@ -717,7 +839,8 @@ function stats(arr) {
   const s = { n: 0, wins: 0, losses: 0, gp: 0, gl: 0, net: 0, lots: 0, profit: 0, comm: 0, swap: 0, spread: 0,
     maxWin: -Infinity, maxLoss: Infinity, maxDD: 0, mcw: 0, mcl: 0, durSum: 0, durN: 0, sl: 0, tp: 0, oth: 0,
     mfeSum: 0, mfeN: 0, maeSum: 0, maeN: 0, sumSq: 0, first: Infinity, last: -Infinity, buys: 0, sells: 0,
-    buyNet: 0, sellNet: 0, accounts: new Set(), symbols: new Set(), comments: new Map() };
+    buyNet: 0, sellNet: 0, accounts: new Set(), symbols: new Set(), comments: new Map(),
+    rSum: 0, rN: 0, pctSum: 0, pctN: 0, noTP: 0, wideSL: 0 };
   let cum = 0, peak = 0, cw = 0, cl = 0;
   for (const t of arr) {
     const v = t.net; s.n++; s.net += v; s.sumSq += v * v; s.lots += t.lots; s.profit += t.profit; s.comm += t.commission; s.swap += t.swap; s.spread += t.spreadCost;
@@ -733,6 +856,10 @@ function stats(arr) {
     if (t.type === 'BUY') { s.buys++; s.buyNet += v; } else { s.sells++; s.sellNet += v; }
     s.accounts.add(t.account); s.symbols.add(t.symbol);
     const c = commentOf(t); s.comments.set(c, (s.comments.get(c) || 0) + 1);
+    if (Number.isFinite(t.r)) { s.rSum += t.r; s.rN++; }
+    if (Number.isFinite(t.pct)) { s.pctSum += t.pct; s.pctN++; }
+    if (t.noTP) s.noTP++;
+    if (t.wideSL) s.wideSL++;
   }
   s.winRate = s.n ? s.wins / s.n : NaN;
   s.pf = s.gl < 0 ? s.gp / -s.gl : (s.gp > 0 ? Infinity : NaN);
@@ -747,9 +874,34 @@ function stats(arr) {
   const sd = Math.sqrt(Math.max(variance, 0));
   s.sqn = s.n > 1 && sd > 0 ? Math.sqrt(Math.min(s.n, 100)) * s.exp / sd : NaN;
   s.recovery = s.maxDD > 0 ? s.net / s.maxDD : NaN;
+  s.avgR = s.rN ? s.rSum / s.rN : NaN;
+  s.totR = s.rN ? s.rSum : NaN;
+  s.netPct = s.pctN ? s.pctSum : NaN;
   if (!s.n) { s.maxWin = NaN; s.maxLoss = NaN; }
   s.topComment = [...s.comments].sort((a, b) => b[1] - a[1]).slice(0, 2).map((x) => x[0]).join(', ') + (s.comments.size > 2 ? ' +' + (s.comments.size - 2) : '');
   return s;
+}
+function snapsInPeriod(acc) {
+  return (DB.snaps.get(acc) || []).filter((p) => (state.from === null || p.t >= state.from) && (state.to === null || p.t < state.to));
+}
+// Peak-to-trough on equity, using the lowest equity inside each slot; also the worst floating loss.
+function equityStats(acc) {
+  const sn = snapsInPeriod(acc);
+  const r = { acc, n: sn.length, maxDD: 0, maxDDPct: NaN, ddTime: NaN, peak: NaN, worstFl: NaN, worstFlTime: NaN };
+  let peak = -Infinity;
+  for (const p of sn) {
+    if (peak > -Infinity && Number.isFinite(p.eqMin)) {
+      const dd = peak - p.eqMin;
+      if (dd > r.maxDD) { r.maxDD = dd; r.maxDDPct = dd / peak; r.ddTime = p.eqMinT; r.peak = peak; }
+    }
+    if (Number.isFinite(p.eqMax) && p.eqMax > peak) peak = p.eqMax;
+    if (Number.isFinite(p.flMin) && !(p.flMin >= r.worstFl)) { r.worstFl = p.flMin; r.worstFlTime = Number.isFinite(p.eqMinT) ? p.eqMinT : p.t; }
+  }
+  if (!(r.maxDD > 0)) r.maxDDPct = NaN;
+  return r;
+}
+function accountsInView() {
+  return [...DB.accounts.keys()].filter((a) => (!state.account || a === state.account) && (!state.campaign || (DB.accounts.get(a) || {}).campaign === state.campaign));
 }
 function groupBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); let a = m.get(k); if (!a) { a = []; m.set(k, a); } a.push(x); } return m; }
 function baskets(arr) {
@@ -769,11 +921,13 @@ function baskets(arr) {
 /* ---------------- KPIs ---------------- */
 function renderKPIs(T, s) {
   const k = $('#kpis'); k.textContent = '';
-  const tile = (label, value, note, cls, hero) => {
-    const d = el('div', { class: 'tile' + (hero ? ' hero' : '') });
+  const tile = (label, value, note, cls, hero, title, onClick) => {
+    const d = el('div', { class: 'tile' + (hero ? ' hero' : '') + (onClick ? ' clickable' : '') });
+    if (title) d.title = title;
+    if (onClick) { d.tabIndex = 0; d.setAttribute('role', 'button'); d.addEventListener('click', onClick); d.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } }); }
     d.appendChild(el('div', { class: 'label' }, label));
     d.appendChild(el('div', { class: 'value' + (cls ? ' ' + cls : '') }, value));
-    if (note) d.appendChild(el('div', { class: 'note' }, note));
+    if (note) { const n = el('div', { class: 'note' }, note); n.title = note; d.appendChild(n); }
     k.appendChild(d);
   };
   const cur = currencyNote(T);
@@ -781,8 +935,24 @@ function renderKPIs(T, s) {
   tile('Closed trades', s.n.toLocaleString('en-US'), s.wins + ' won · ' + s.losses + ' lost');
   tile('Win rate', pct(s.winRate), 'Payoff ' + ratio(s.payoff));
   tile('Profit factor', ratio(s.pf), 'SQN ' + fmtNum(s.sqn, 2));
-  tile('Expectancy / trade', money(s.exp), 'Avg win ' + money(s.avgWin) + ' · loss ' + money(s.avgLoss), signCls(s.exp));
+  tile('Expectancy / trade', money(s.exp), (Number.isFinite(s.avgR) ? fmtSigned(s.avgR, 2) + ' R · ' : '') + 'avg win ' + money(s.avgWin) + ' · loss ' + money(s.avgLoss), signCls(s.exp));
   tile('Max drawdown (closed)', money(-s.maxDD), 'Recovery factor ' + fmtNum(s.recovery, 2), s.maxDD > 0 ? 'neg' : '');
+  // equity drawdown including floating, per account (prop-firm style): show the worst account in view
+  const eqs = accountsInView().map(equityStats).filter((e) => e.n);
+  const worstDD = eqs.reduce((w, e) => (!w || e.maxDD > w.maxDD ? e : w), null);
+  const worstFl = eqs.reduce((w, e) => (Number.isFinite(e.worstFl) && (!w || e.worstFl < w.worstFl) ? e : w), null);
+  const multi = eqs.length > 1 ? ' (worst of ' + eqs.length + ' accounts)' : '';
+  tile('Max equity drawdown', worstDD && worstDD.maxDD > 0 ? money(-worstDD.maxDD) : '–',
+    worstDD && worstDD.maxDD > 0 ? pct(worstDD.maxDDPct) + ' · ' + fmtTime(worstDD.ddTime) + (eqs.length > 1 ? ' · ' + accLabel(worstDD.acc) : '') : 'needs account snapshots', worstDD && worstDD.maxDD > 0 ? 'neg' : '', false, 'Includes floating loss' + multi);
+  tile('Worst floating loss', worstFl ? money(worstFl.worstFl) : '–',
+    worstFl ? fmtTime(worstFl.worstFlTime) + (eqs.length > 1 ? ' · ' + accLabel(worstFl.acc) : '') : 'needs account snapshots', worstFl && worstFl.worstFl < 0 ? 'neg' : '');
+  tile('Net % of balance', Number.isFinite(s.netPct) ? fmtSigned(s.netPct, 2) + '%' : '–',
+    Number.isFinite(s.totR) ? 'Total ' + fmtSigned(s.totR, 1) + ' R over ' + s.rN.toLocaleString('en-US') + ' trades with SL' : 'per-trade net ÷ balance at entry', signCls(s.netPct));
+  const hm = healthModel();
+  const hs = hm.summary;
+  tile('Health', hs.critical ? hs.critical + ' critical' : hs.notSyncing ? hs.notSyncing + ' not syncing' : hs.errors ? hs.errors + ' errors' : hs.stale ? hs.stale + ' stale' : hs.warnings ? hs.warnings + ' warnings' : (hm.rows.length ? 'All OK' : '–'),
+    hm.rows.length ? [hs.errors + ' errors', hs.warnings + ' warnings', hs.stale + ' stale', hs.notSyncing + ' not syncing'].join(' · ') : 'needs health files from the build script',
+    hs.critical || hs.notSyncing ? 'neg' : '', false, 'Open the Health tab', () => { state.tab = 'health'; renderTabsNav(); renderTab(); $('#tabs').scrollIntoView({ behavior: 'smooth' }); });
   tile('Gross profit', money(s.gp), 'Largest win ' + money(s.maxWin), 'pos');
   tile('Gross loss', money(s.gl), 'Largest loss ' + money(s.maxLoss), s.gl < 0 ? 'neg' : '');
   tile('Commission + swap', money(s.comm + s.swap), 'Comm ' + money(s.comm) + ' · swap ' + money(s.swap), signCls(s.comm + s.swap));
@@ -791,12 +961,18 @@ function renderKPIs(T, s) {
   const op = openFiltered();
   const ol = op.reduce((a, p) => a + p.lots, 0);
   tile('Open positions', op.length.toLocaleString('en-US'), nfLots.format(ol) + ' lots, latest file per account');
-  // floating P/L: account level only (collector does not write per-position profit)
-  const accs = state.account ? [state.account] : [...DB.accounts.keys()];
-  let fl = 0, any = false;
-  for (const a of accs) { const sn = DB.snaps.get(a); if (sn && sn.length && (!state.campaign || (DB.accounts.get(a) || {}).campaign === state.campaign)) { const v = sn[sn.length - 1].floating; if (Number.isFinite(v)) { fl += v; any = true; } } }
+  // floating P/L: per position when the patched collector writes it, otherwise the account snapshot
   const dimFilter = state.magic || state.comment || state.symbol || state.side;
-  tile('Floating P/L', any ? money(fl) : '–', dimFilter ? 'account level, ignores magic/comment/symbol' : 'latest account snapshot', signCls(fl));
+  const withPnl = op.filter((p) => Number.isFinite(p.pnl));
+  let fl = 0, any = false, flNote = '';
+  if (dimFilter && withPnl.length) {
+    for (const p of withPnl) fl += p.pnl; any = true;
+    flNote = 'open positions in filter' + (withPnl.length < op.length ? ', ' + withPnl.length + ' of ' + op.length + ' have P/L data' : '');
+  } else {
+    for (const a of accountsInView()) { const sn = DB.snaps.get(a); if (sn && sn.length) { const v = sn[sn.length - 1].floating; if (Number.isFinite(v)) { fl += v; any = true; } } }
+    flNote = dimFilter ? 'account level: update the collector for per-magic P/L' : 'latest account snapshot';
+  }
+  tile('Floating P/L', any ? money(fl) : '–', flNote, signCls(fl));
 }
 function currencyNote(T) {
   const set = new Set(T.map((t) => t.currency).filter(Boolean));
@@ -1026,7 +1202,7 @@ function renderCharts(T, s) {
 /* ---------------- tables ---------------- */
 function dimRow(key, label, arr, extra) {
   const s = stats(arr);
-  const r = { key, label, s, n: s.n, winRate: s.winRate, net: s.net, gp: s.gp, gl: s.gl, pf: s.pf, exp: s.exp, avgWin: s.avgWin, avgLoss: s.avgLoss,
+  const r = { key, label, s, n: s.n, avgR: s.avgR, totR: s.totR, netPct: s.netPct, noTP: s.noTP, wideSL: s.wideSL, winRate: s.winRate, net: s.net, gp: s.gp, gl: s.gl, pf: s.pf, exp: s.exp, avgWin: s.avgWin, avgLoss: s.avgLoss,
     payoff: s.payoff, maxWin: s.maxWin, maxLoss: s.maxLoss, maxDD: s.maxDD, lots: s.lots, cs: s.comm + s.swap, sl: s.sl, tp: s.tp, oth: s.oth,
     avgDur: s.avgDur, mfe: s.avgMfe, mae: s.avgMae, mcl: s.mcl, sqn: s.sqn, buyNet: s.buyNet, sellNet: s.sellNet, first: s.first, last: s.last,
     accounts: s.accounts.size, symbols: s.symbols.size, comments: s.topComment, spread: s.spread };
@@ -1040,6 +1216,11 @@ const C = {
   gl: { label: 'Gross loss', num: true, f: money },
   pf: { label: 'PF', num: true, f: ratio },
   exp: { label: 'Expect.', num: true, f: money, cls: signCls },
+  avgR: { label: 'Avg R', num: true, f: (v) => fmtSigned(v, 2), cls: signCls },
+  totR: { label: 'Total R', num: true, f: (v) => fmtSigned(v, 1), cls: signCls },
+  netPct: { label: 'Net % bal', num: true, f: (v) => (Number.isFinite(v) ? fmtSigned(v, 2) + '%' : '–'), cls: signCls },
+  noTP: { label: 'No TP', num: true, f: (v) => v },
+  wideSL: { label: 'Wide SL', num: true, f: (v) => v },
   avgWin: { label: 'Avg win', num: true, f: money },
   avgLoss: { label: 'Avg loss', num: true, f: money },
   payoff: { label: 'Payoff', num: true, f: ratio },
@@ -1068,7 +1249,7 @@ const C = {
   basketWin: { label: 'Basket win %', num: true, f: pct },
   worstBasket: { label: 'Worst basket', num: true, f: money },
 };
-const STD_COLS = ['n', 'winRate', 'net', 'pf', 'exp', 'gp', 'gl', 'avgWin', 'avgLoss', 'payoff', 'maxWin', 'maxLoss', 'maxDD', 'mcl', 'lots', 'cs', 'sl', 'tp', 'oth', 'avgDur', 'mfe', 'mae', 'sqn', 'buyNet', 'sellNet', 'first', 'last'];
+const STD_COLS = ['n', 'winRate', 'net', 'pf', 'exp', 'avgR', 'totR', 'netPct', 'gp', 'gl', 'avgWin', 'avgLoss', 'payoff', 'maxWin', 'maxLoss', 'maxDD', 'mcl', 'lots', 'cs', 'sl', 'tp', 'oth', 'avgDur', 'mfe', 'mae', 'sqn', 'buyNet', 'sellNet', 'first', 'last'];
 
 function sortRows(rows, tabId, defKey, defDir) {
   const st = state.sort[tabId] || { key: defKey, dir: defDir };
@@ -1164,9 +1345,9 @@ function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({
 function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
 
 const TABS = [
-  ['magic', 'By magic'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
-  ['account', 'By account'], ['campaign', 'By campaign'], ['exit', 'Exit reasons'], ['baskets', 'Baskets'],
-  ['time', 'Hour / weekday'], ['trades', 'Trades'], ['open', 'Open positions'], ['accounts', 'Accounts'], ['files', 'Files'],
+  ['magic', 'By magic'], ['compare', 'Compare'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
+  ['account', 'By account'], ['campaign', 'By campaign'], ['exit', 'Exit reasons'], ['baskets', 'Baskets & depth'],
+  ['time', 'Hour / weekday'], ['trades', 'Trades'], ['open', 'Open positions'], ['accounts', 'Accounts'], ['health', 'Health'], ['files', 'Files'],
 ];
 function renderTabsNav() {
   const nav = $('#tabs'); nav.textContent = '';
@@ -1187,7 +1368,7 @@ function renderTab() {
       const bs = baskets(arr);
       return dimRow(k, k, arr, { baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
     });
-    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['accounts', 'symbols']), [{ key: 'label', label: 'Magic', num: false }]);
+    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), [{ key: 'label', label: 'Magic', num: false }]);
     table(host, cols, rows, { tabId: id, defKey: 'net', onRow: setF('magic'), footer: totalsFooter(T, 'label') });
   } else if (id === 'comment') {
     const g = groupBy(T, commentOf);
@@ -1218,11 +1399,15 @@ function renderTab() {
   else if (id === 'trades') renderTrades(host, T);
   else if (id === 'open') renderOpen(host);
   else if (id === 'accounts') renderAccounts(host, T);
+  else if (id === 'health') renderHealth(host);
+  else if (id === 'compare') renderCompare(host);
   else if (id === 'files') renderFiles(host);
 }
 function renderBaskets(host, T) {
   let rows = baskets(T);
   if (!rows.length) { host.appendChild(el('p', { class: 'muted' }, 'No basket ids in this selection. Basket ids are written by collector v2.04 and later.')); return; }
+  renderBasketDepth(host, T, rows);
+  host.appendChild(el('h2', { class: 'section-title' }, 'Baskets'));
   const q = state.basketSearch.trim().toLowerCase();
   if (q) rows = rows.filter((b) => (b.id + ' ' + b.account + ' ' + b.magic + ' ' + b.symbol + ' ' + b.comment).toLowerCase().includes(q));
   const net = rows.map((b) => b.net); const wins = net.filter((v) => v > 0).length;
@@ -1238,6 +1423,29 @@ function renderBaskets(host, T) {
     inp.addEventListener('input', debounce(() => { state.basketSearch = inp.value; state.page.baskets = 0; renderTab(); const i2 = document.querySelector('#tabBody input[type=search]'); if (i2) { i2.focus(); i2.setSelectionRange(i2.value.length, i2.value.length); } }, 250));
     tb.appendChild(inp);
   } });
+}
+function renderBasketDepth(host, T, all) {
+  host.appendChild(el('h2', null, 'Basket depth'));
+  host.appendChild(el('p', { class: 'sub' }, 'Baskets grouped by how many legs they had. "Reached" is the share of baskets that got at least this deep. Basket ids come from the collector (trades of one magic, symbol and direction opened within its gap window).'));
+  const total = all.length;
+  const byLegs = groupBy(all, (b) => b.legs);
+  const depth = [...byLegs].map(([legs, arr]) => {
+    let net = 0, lots = 0, dur = 0, worst = Infinity, wins = 0;
+    for (const b of arr) { net += b.net; lots += b.lots; dur += b.dur; if (b.net < worst) worst = b.net; if (b.net > 0) wins++; }
+    return { key: legs, legs, n: arr.length, share: arr.length / total, reach: all.filter((b) => b.legs >= legs).length / total,
+      winRate: wins / arr.length, avg: net / arr.length, net, worst, lots: lots / arr.length, dur: dur / arr.length };
+  });
+  const chart = el('div', { class: 'chart' }); host.appendChild(chart);
+  columnChart(chart, depth.slice().sort((a, b) => a.legs - b.legs).map((d) => ({ xl: String(d.legs), v: d.avg, title: d.legs + (d.legs === 1 ? ' leg' : ' legs') + ' · average basket result', sub: d.n + ' baskets' })), { height: 220, label: 'average basket result by number of legs' });
+  host.appendChild(el('p', { class: 'hint' }, 'Bars: average net result of a basket by number of legs.'));
+  const split = el('div', { class: 'split' }); const a = el('div'), b = el('div'); split.append(a, b); host.appendChild(split);
+  table(a, [{ key: 'legs', label: 'Legs', num: true }, { key: 'n', label: 'Baskets', num: true }, { key: 'share', label: 'Share', num: true, f: pct }, { key: 'reach', label: 'Reached', num: true, f: pct },
+    { key: 'winRate', label: 'Win %', num: true, f: pct }, { key: 'avg', label: 'Avg net', num: true, f: money, cls: signCls }, { key: 'net', label: 'Total net', num: true, f: money, cls: signCls },
+    { key: 'worst', label: 'Worst', num: true, f: money }, { key: 'lots', label: 'Avg lots', num: true, f: (v) => nfLots.format(v) }, { key: 'dur', label: 'Avg duration', num: true, f: fmtDur }],
+  depth, { tabId: 'depth', defKey: 'legs', defDir: 'asc' });
+  const legRows = [...groupBy(T.filter((t) => t.basket && Number.isFinite(t.leg)), (t) => t.leg)].map(([leg, arr]) => dimRow(leg, String(leg), arr, { leg }));
+  table(b, colsOf(['n', 'winRate', 'net', 'exp', 'avgR', 'lots'], [{ key: 'leg', label: 'Leg #', num: true }]), legRows, { tabId: 'legs', defKey: 'leg', defDir: 'asc' });
+  b.appendChild(el('p', { class: 'hint' }, 'Right: result of the trades opened as leg 1, leg 2 … across all baskets.'));
 }
 function renderTime(host, T) {
   const split = el('div', { class: 'split' });
@@ -1278,12 +1486,16 @@ function renderOpen(host) {
   const P = openFiltered();
   if (!DB.open.length) { host.appendChild(el('p', { class: 'muted' }, 'No *_open_now.csv files were loaded.')); return; }
   host.appendChild(el('h2', null, 'Open exposure by magic'));
-  host.appendChild(el('p', { class: 'sub' }, 'The collector does not write per-position profit, so floating P/L is only available per account (Accounts tab).'));
+  const withPnl = P.filter((p) => Number.isFinite(p.pnl)).length;
+  host.appendChild(el('p', { class: 'sub' }, withPnl === P.length && P.length ? 'Floating P/L = profit + swap + commission of each open position, as written by the collector.'
+    : withPnl ? withPnl + ' of ' + P.length + ' positions have P/L data. Terminals still on the old collector show –; update their collector to get P/L.'
+    : 'Floating P/L per position needs the updated collector (open P/L patch). Until then floating P/L is per account only (Accounts tab).'));
   const g = groupBy(P, (p) => p.magic);
-  const rows = [...g].map(([k, arr]) => ({ key: k, magic: k, n: arr.length, buyLots: arr.filter((p) => p.type === 'BUY').reduce((a, p) => a + p.lots, 0), sellLots: arr.filter((p) => p.type === 'SELL').reduce((a, p) => a + p.lots, 0),
+  const rows = [...g].map(([k, arr]) => ({ key: k, magic: k, n: arr.length, pnl: arr.some((p) => Number.isFinite(p.pnl)) ? arr.reduce((a, p) => a + (Number.isFinite(p.pnl) ? p.pnl : 0), 0) : NaN,
+    buyLots: arr.filter((p) => p.type === 'BUY').reduce((a, p) => a + p.lots, 0), sellLots: arr.filter((p) => p.type === 'SELL').reduce((a, p) => a + p.lots, 0),
     symbols: [...new Set(arr.map((p) => p.symbol))].join(', '), accounts: new Set(arr.map((p) => p.account)).size, oldest: Math.min(...arr.map((p) => p.openTime)),
     comments: [...new Set(arr.map((p) => (state.commentMode === 'raw' ? p.comment : p.base)))].slice(0, 3).join(', ') }));
-  table(host, [{ key: 'magic', label: 'Magic' }, { key: 'comments', label: 'Comments' }, { key: 'n', label: 'Positions', num: true }, { key: 'buyLots', label: 'Buy lots', num: true, f: (v) => nfLots.format(v) },
+  table(host, [{ key: 'magic', label: 'Magic' }, { key: 'comments', label: 'Comments' }, { key: 'n', label: 'Positions', num: true }, { key: 'pnl', label: 'Floating P/L', num: true, f: money, cls: signCls }, { key: 'buyLots', label: 'Buy lots', num: true, f: (v) => nfLots.format(v) },
     { key: 'sellLots', label: 'Sell lots', num: true, f: (v) => nfLots.format(v) }, { key: 'symbols', label: 'Symbols' }, { key: 'accounts', label: 'Accounts', num: true }, { key: 'oldest', label: 'Oldest open', f: fmtTime }],
   rows, { tabId: 'openMagic', defKey: 'n', onRow: (r) => { state.magic = r.magic; syncFilterInputs(); render(); } });
   host.appendChild(el('h2', { style: 'margin-top:16px' }, 'Positions'));
@@ -1293,7 +1505,9 @@ function renderOpen(host) {
     { key: 'account', label: 'Account' }, { key: 'terminal', label: 'Terminal' }, { key: 'ticket', label: 'Ticket' }, { key: 'symbol', label: 'Symbol' }, { key: 'type', label: 'Type' },
     { key: 'lots', label: 'Lots', num: true, f: (v) => nfLots.format(v) }, { key: 'openTime', label: 'Open time', f: fmtTime }, { key: 'openPrice', label: 'Open', num: true, f: (v) => (Number.isFinite(v) ? String(v) : '–') },
     { key: 'sl', label: 'SL', num: true, f: (v) => (Number.isFinite(v) && v ? String(v) : '–') }, { key: 'tp', label: 'TP', num: true, f: (v) => (Number.isFinite(v) && v ? String(v) : '–') },
-    { key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }, { key: 'mfe', label: 'MFE pts', num: true, f: (v) => fmtNum(v, 0) }, { key: 'mae', label: 'MAE pts', num: true, f: (v) => fmtNum(v, 0) },
+    { key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }, { key: 'pnl', label: 'Floating P/L', num: true, f: money, cls: signCls },
+    { key: 'profit', label: 'Profit', num: true, f: money }, { key: 'swap', label: 'Swap', num: true, f: money }, { key: 'commission', label: 'Comm', num: true, f: money },
+    { key: 'mfe', label: 'MFE pts', num: true, f: (v) => fmtNum(v, 0) }, { key: 'mae', label: 'MAE pts', num: true, f: (v) => fmtNum(v, 0) },
     { key: 'lastSeen', label: 'Last seen', render: (td, v, r) => { td.textContent = fmtTime(v) + ' '; if (r.stale) td.appendChild(el('span', { class: 'badge stale', title: 'Older than the newest open-positions file by more than 1 hour' }, 'stale')); } },
   ], rows2, { tabId: 'openPos', defKey: 'openTime', pageSize: 300 });
 }
@@ -1303,7 +1517,8 @@ function renderAccounts(host, T) {
     const sn = DB.snaps.get(a.account); const last = sn && sn.length ? sn[sn.length - 1] : null; const st = DB.status.get(a.account) || {};
     const tr = byAcc.get(a.account) || []; let net = 0; for (const t of tr) net += t.net;
     const om = DB.openMeta.get(a.account);
-    return { key: a.account, account: a.account, machine: a.machine, terminal: a.terminal, campaign: a.campaign, server: a.server || st['server'] || '',
+    const es = equityStats(a.account);
+    return { key: a.account, account: a.account, eqDD: es.maxDD > 0 ? -es.maxDD : NaN, eqDDPct: es.maxDDPct, eqDDTime: es.ddTime, worstFl: es.worstFl, machine: a.machine, terminal: a.terminal, campaign: a.campaign, server: a.server || st['server'] || '',
       balance: last ? last.balance : NaN, equity: last ? last.equity : NaN, floating: last ? last.floating : NaN, ml: last ? last.ml : NaN,
       snapTime: last ? last.t : NaN, open: om ? DB.open.filter((p) => p.account === a.account).length : NaN, trades: tr.length, net,
       version: st.version || '',
@@ -1312,6 +1527,8 @@ function renderAccounts(host, T) {
   table(host, [
     { key: 'account', label: 'Account' }, { key: 'machine', label: 'Machine' }, { key: 'terminal', label: 'Terminal' }, { key: 'campaign', label: 'Campaign' }, { key: 'server', label: 'Server' },
     { key: 'balance', label: 'Balance', num: true, f: money }, { key: 'equity', label: 'Equity', num: true, f: money }, { key: 'floating', label: 'Floating', num: true, f: money, cls: signCls },
+    { key: 'eqDD', label: 'Max equity DD', num: true, f: money, cls: signCls }, { key: 'eqDDPct', label: 'DD %', num: true, f: pct }, { key: 'eqDDTime', label: 'DD low at', f: fmtTime },
+    { key: 'worstFl', label: 'Worst floating', num: true, f: money, cls: signCls },
     { key: 'ml', label: 'Margin level %', num: true, f: (v) => (Number.isFinite(v) && v > 0 ? nf0.format(v) : '–') }, { key: 'snapTime', label: 'Snapshot time', f: fmtTime },
     { key: 'open', label: 'Open pos.', num: true, f: (v) => (Number.isFinite(v) ? v : '–') }, { key: 'trades', label: 'Trades (filter)', num: true }, { key: 'net', label: 'Net (filter)', num: true, f: money, cls: signCls },
     { key: 'version', label: 'Collector' }, { key: 'tag', label: 'File tag' }, { key: 'updated', label: 'Status updated', f: fmtTime }, { key: 'connected', label: 'Connected' }, { key: 'stalls', label: 'Timer stalls', num: true },
@@ -1337,6 +1554,16 @@ function renderAccounts(host, T) {
   const eq = downsample(sn.filter((p) => Number.isFinite(p.equity)).map((p) => [p.t, p.equity]), 1500);
   // equity first so the balance line stays visible on top of it
   lineChart(ch, [{ name: 'Equity', color: s2, pts: eq }, { name: 'Balance', color: s1, pts: bal }], { height: 260, label: 'balance and equity' });
+  // drawdown from the equity peak, using the lowest equity inside each slot (includes floating losses)
+  const dd = []; let peak = -Infinity;
+  for (const p of sn) {
+    if (peak > -Infinity && Number.isFinite(p.eqMin)) dd.push([p.t, Math.min(0, p.eqMin - peak)]);
+    if (Number.isFinite(p.eqMax) && p.eqMax > peak) peak = p.eqMax;
+  }
+  const es = equityStats(cur);
+  card.appendChild(el('div', { class: 'sub', style: 'margin-top:8px' }, 'Equity drawdown from peak, including floating loss' + (es.maxDD > 0 ? ': worst ' + money(-es.maxDD) + ' (' + pct(es.maxDDPct) + ') at ' + fmtTime(es.ddTime) : '')));
+  const ch2 = el('div', { class: 'chart' }); card.appendChild(ch2);
+  lineChart(ch2, [{ name: 'Equity drawdown', color: cssVar('--series-8'), pts: downsample(dd, 1500) }], { height: 130, zero: true, area: 'neg', label: 'equity drawdown' });
 }
 function renderFiles(host) {
   const rows = DB.files.map((f) => Object.assign({ key: f.path }, f));
@@ -1344,6 +1571,234 @@ function renderFiles(host) {
   table(host, [{ key: 'path', label: 'File' }, { key: 'kind', label: 'Type' }, { key: 'size', label: 'Size', num: true, f: (v) => (v / 1024).toFixed(0) + ' KB' },
     { key: 'rows', label: 'Rows', num: true }, { key: 'added', label: 'New trades', num: true }, { key: 'dups', label: 'Duplicates', num: true }, { key: 'other', label: 'Non-market rows', num: true }, { key: 'note', label: 'Note' }],
   rows, { tabId: 'files', defKey: 'path', defDir: 'asc' });
+}
+
+/* ---------------- health ---------------- */
+const SEV_RANK = { critical: 4, error: 3, warning: 2, info: 1, activity: 0 };
+const SEV_LEVEL = { critical: 'critical', error: 'serious', warning: 'warning', info: 'info', activity: 'info' };
+function pill(level, label) { const sp = el('span', { class: 'pill ' + level }); sp.appendChild(el('i')); sp.appendChild(document.createTextNode(label)); return sp; }
+function terminalAccounts() {
+  const map = new Map();
+  for (const [term, info] of DB.sync.terminals) if (info.account) map.set(term, info.account);
+  for (const [term, acc] of DB.sync.identity) if (!map.has(term)) map.set(term, acc);
+  for (const h of DB.health) if (h.account && !map.has(h.terminal)) map.set(h.terminal, h.account);
+  const mapped = new Set(map.values());
+  for (const a of DB.accounts.values()) {
+    if (mapped.has(a.account)) continue;
+    const label = a.terminal && !map.has(a.terminal) ? a.terminal : a.terminal ? a.terminal + ' (' + a.account + ')' : a.account;
+    map.set(label, a.account); mapped.add(a.account);
+  }
+  return map;
+}
+function buildHealthRows() {
+  const t2a = terminalAccounts();
+  const terms = new Set([...t2a.keys(), ...DB.health.map((h) => h.terminal)]);
+  const lastClose = new Map(); for (const t of DB.trades) { if (!(t.closeTime <= lastClose.get(t.account))) lastClose.set(t.account, t.closeTime); }
+  const rows = [];
+  for (const term of terms) {
+    const acc = t2a.get(term) || '';
+    const a = DB.accounts.get(acc) || {}; const st = DB.status.get(acc) || {}; const sync = DB.sync.terminals.get(term) || null;
+    const sn = DB.snaps.get(acc) || [];
+    const r = { key: term, terminal: term, account: acc, machine: a.machine || (sync && sync.profile) || '', sync: sync ? sync.status : '', syncDetail: sync ? sync.detail : '',
+      lastSnap: sn.length ? sn[sn.length - 1].t : NaN, lastTrade: lastClose.has(acc) ? lastClose.get(acc) : NaN, statusUpdated: st.updatedMs, version: st.version || '',
+      connected: st['connected'] || '', critical: 0, error: 0, warning: 0, conn: 0, logins: 0, pingMax: NaN, pingLast: NaN, stalls: 0, lastLog: NaN };
+    let pingT = -Infinity;
+    for (const h of DB.health) {
+      if (h.terminal !== term) continue;
+      if (h.severity in { critical: 1, error: 1, warning: 1 }) r[h.severity] += h.count;
+      if (h.category.startsWith('Connection failed')) r.conn += h.count;
+      if (h.category === 'Login') r.logins += h.count;
+      if (h.category === 'Ping (ms)') { if (!(h.max <= r.pingMax)) r.pingMax = h.max; if (h.last > pingT) { pingT = h.last; const m = /([\d.]+) ms/.exec(h.sample); r.pingLast = m ? +m[1] : NaN; } }
+      if (h.category === 'Collector timer stall') r.stalls += h.count;
+      if (Number.isFinite(h.last) && !(h.last <= r.lastLog)) r.lastLog = h.last;
+    }
+    rows.push(r);
+  }
+  // staleness: compare like with like (broker server time for snapshots)
+  const newestSnap = Math.max(-Infinity, ...rows.map((r) => r.lastSnap).filter(Number.isFinite));
+  for (const r of rows) {
+    r.lag = Number.isFinite(r.lastSnap) && Number.isFinite(newestSnap) ? (newestSnap - r.lastSnap) / 60000 : NaN;
+    r.stale = r.lag > 30;
+    if (SYNC_BAD(r.sync)) { r.level = 'critical'; r.label = 'Not syncing'; }
+    else if (r.critical) { r.level = 'critical'; r.label = 'Critical'; }
+    else if (/^no$/i.test(r.connected)) { r.level = 'serious'; r.label = 'Disconnected'; }
+    else if (r.stale) { r.level = 'serious'; r.label = 'Stale'; }
+    else if (r.error) { r.level = 'serious'; r.label = 'Errors'; }
+    else if (r.warning) { r.level = 'warning'; r.label = 'Warnings'; }
+    else { r.level = 'good'; r.label = 'OK'; }
+    r.rank = { critical: 4, serious: 3, warning: 2, good: 1 }[r.level];
+  }
+  return rows;
+}
+function healthModel() {
+  const all = buildHealthRows();
+  const rows = all.filter((r) => (!state.account || r.account === state.account) && (!state.campaign || (DB.accounts.get(r.account) || {}).campaign === state.campaign));
+  const terms = new Set(rows.map((r) => r.terminal));
+  const events = DB.health.filter((h) => terms.has(h.terminal) && (!state.magic || h.magic === state.magic));
+  const summary = { critical: 0, errors: 0, warnings: 0, stale: 0, notSyncing: 0 };
+  for (const h of events) { if (h.severity === 'critical') summary.critical += h.count; else if (h.severity === 'error') summary.errors += h.count; else if (h.severity === 'warning') summary.warnings += h.count; }
+  for (const r of rows) { if (r.stale) summary.stale++; if (SYNC_BAD(r.sync)) summary.notSyncing++; }
+  return { rows, events, summary };
+}
+function renderHealth(host) {
+  const hm = healthModel();
+  if (!DB.health.length && !DB.sync.terminals.size) {
+    host.appendChild(el('p', { class: 'muted' }, 'Health needs health_events.csv.gz and sync_all.txt, which the updated Build-DashboardData.ps1 writes into _DASHBOARD. Run it once, then refresh.'));
+  }
+  host.appendChild(el('h2', null, 'Terminals'));
+  host.appendChild(el('p', { class: 'sub' }, 'Worst problem first. Logs cover the last ' + ((SOURCE.manifest && SOURCE.manifest.logDays) || 'few') + ' days. "Behind" compares each account\'s last snapshot with the newest one (broker server time).'));
+  table(host, [
+    { key: 'rank', label: 'Status', render: (td, v, r) => td.appendChild(pill(r.level, r.label)) },
+    { key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'machine', label: 'Machine' },
+    { key: 'lag', label: 'Behind', num: true, f: (v) => (Number.isFinite(v) ? (v < 1 ? 'up to date' : fmtDur(v * 60)) : '–') },
+    { key: 'lastSnap', label: 'Last snapshot', f: fmtTime }, { key: 'lastTrade', label: 'Last close', f: fmtTime },
+    { key: 'critical', label: 'Critical', num: true }, { key: 'error', label: 'Errors', num: true }, { key: 'warning', label: 'Warnings', num: true },
+    { key: 'conn', label: 'Conn. failures', num: true }, { key: 'logins', label: 'Logins', num: true },
+    { key: 'pingLast', label: 'Ping (last)', num: true, f: (v) => (Number.isFinite(v) ? nf0.format(v) + ' ms' : '–') }, { key: 'pingMax', label: 'Ping (max)', num: true, f: (v) => (Number.isFinite(v) ? nf0.format(v) + ' ms' : '–') },
+    { key: 'stalls', label: 'Timer stalls', num: true }, { key: 'version', label: 'Collector' }, { key: 'connected', label: 'Connected' },
+    { key: 'sync', label: 'Sync', render: (td, v, r) => { td.textContent = v || '–'; if (r.syncDetail) td.title = r.syncDetail; } },
+  ], hm.rows, { tabId: 'healthTerm', defKey: 'rank', onRow: (r) => { if (r.account) { state.account = r.account; syncFilterInputs(); render(); } } });
+  if (DB.sync.unmapped.length) host.appendChild(el('p', { class: 'hint' }, 'Accounts the AutoSync identity map lists as UNMAPPED: ' + DB.sync.unmapped.map((u) => u.account + (u.profile ? ' (' + u.profile + ')' : '')).join(', ') + '. Give them a terminal label in the sync profile.'));
+
+  // problems from logs, aggregated over the log days
+  host.appendChild(el('h2', { class: 'section-title' }, 'Problems in the logs'));
+  const minSev = state.healthSev || 'warning';
+  const ctl = el('div', { class: 'controls' }); const lab = el('label', null, 'Show');
+  const sel = el('select', { id: 'healthSev' });
+  for (const [v, t] of [['critical', 'Critical only'], ['error', 'Errors and worse'], ['warning', 'Warnings and worse'], ['info', 'Everything incl. info']]) { const o = el('option', { value: v }, t); if (v === minSev) o.selected = true; sel.appendChild(o); }
+  sel.addEventListener('change', () => { state.healthSev = sel.value; renderTab(); });
+  lab.appendChild(sel); ctl.appendChild(lab); host.appendChild(ctl);
+  const agg = new Map();
+  for (const h of hm.events) {
+    if (h.category === '_activity' || h.category.startsWith('EA ') || h.category === 'Ping (ms)' || h.category === 'Login' && minSev !== 'info') continue;
+    if ((SEV_RANK[h.severity] || 0) < SEV_RANK[minSev]) continue;
+    if (h.category.startsWith('Order ') && h.severity === 'info') continue;
+    const k = h.terminal + '|' + h.source + '|' + h.chart + '|' + h.category;
+    let a = agg.get(k);
+    if (!a) { a = { key: k, terminal: h.terminal, source: h.source, chart: h.chart, magic: h.magic, category: h.category, severity: h.severity, rank: SEV_RANK[h.severity] || 0, count: 0, last: -Infinity, sample: '' }; agg.set(k, a); }
+    a.count += h.count; if (h.last > a.last) { a.last = h.last; a.sample = h.sample; } if (h.magic) a.magic = h.magic;
+  }
+  const probs = [...agg.values()];
+  if (!probs.length) host.appendChild(el('p', { class: 'muted' }, 'Nothing at this level in the loaded log days.'));
+  else table(host, [
+    { key: 'rank', label: 'Severity', render: (td, v, r) => td.appendChild(pill(SEV_LEVEL[r.severity] || 'info', r.severity)) },
+    { key: 'category', label: 'Problem' }, { key: 'count', label: 'Count', num: true }, { key: 'terminal', label: 'Terminal' }, { key: 'source', label: 'EA / source' },
+    { key: 'chart', label: 'Chart' }, { key: 'magic', label: 'Magic' }, { key: 'last', label: 'Last seen', f: fmtTime }, { key: 'sample', label: 'Latest message' },
+  ], probs, { tabId: 'healthProb', defKey: 'rank', pageSize: 200 });
+
+  // EA instances seen in the logs
+  host.appendChild(el('h2', { class: 'section-title' }, 'EAs running (from the logs)'));
+  const inst = new Map(); const lastLogByTerm = new Map();
+  for (const h of hm.events) { if (Number.isFinite(h.last) && !(h.last <= lastLogByTerm.get(h.terminal))) lastLogByTerm.set(h.terminal, h.last); }
+  for (const h of hm.events) {
+    if (h.kind !== 'experts' || !h.source) continue;
+    const k = h.terminal + '|' + h.source + '|' + h.chart;
+    let a = inst.get(k);
+    if (!a) { a = { key: k, terminal: h.terminal, source: h.source, chart: h.chart, magic: '', lines: 0, last: -Infinity, started: NaN, settings: '', errors: 0 }; inst.set(k, a); }
+    if (h.magic) a.magic = h.magic;
+    if (h.category === '_activity') { a.lines += h.count; if (h.last > a.last) a.last = h.last; }
+    if (h.category === 'EA started (inputs)' || h.category === 'EA loaded') { if (!(h.last <= a.started)) a.started = h.last; if (h.category === 'EA started (inputs)') a.settings = h.sample; }
+    if ((SEV_RANK[h.severity] || 0) >= 2) a.errors += h.count;
+  }
+  const insts = [...inst.values()].map((a) => Object.assign(a, { quietH: Number.isFinite(a.last) && lastLogByTerm.has(a.terminal) ? (lastLogByTerm.get(a.terminal) - a.last) / 3600000 : NaN }));
+  if (!insts.length) host.appendChild(el('p', { class: 'muted' }, 'No Experts log lines in the loaded files.'));
+  else table(host, [
+    { key: 'terminal', label: 'Terminal' }, { key: 'source', label: 'EA' }, { key: 'chart', label: 'Chart' }, { key: 'magic', label: 'Magic' },
+    { key: 'quietH', label: 'State', render: (td, v) => td.appendChild(Number.isFinite(v) && v > 2 ? pill('warning', 'quiet ' + fmtDur(v * 3600)) : pill('good', 'active')) },
+    { key: 'last', label: 'Last log line', f: fmtTime }, { key: 'lines', label: 'Log lines', num: true }, { key: 'errors', label: 'Warnings+', num: true },
+    { key: 'started', label: 'Last start', f: fmtTime }, { key: 'settings', label: 'Settings at start' },
+  ], insts, { tabId: 'healthEA', defKey: 'terminal', defDir: 'asc', onRow: (r) => { if (r.magic) { state.magic = r.magic; syncFilterInputs(); render(); } } });
+  host.appendChild(el('p', { class: 'hint' }, '"Quiet" means the EA wrote nothing for over 2 hours while other EAs on the same terminal did. Click a row to filter by its magic number.'));
+
+  // EA changes: loads, removals, restarts with new inputs
+  host.appendChild(el('h2', { class: 'section-title' }, 'EA changes (from the logs)'));
+  const changes = hm.events.filter((h) => h.category === 'EA loaded' || h.category === 'EA removed' || h.category === 'EA started (inputs)' || h.category.startsWith('EA stopped'))
+    .map((h, i) => ({ key: i, time: h.last, terminal: h.terminal, source: h.source, chart: h.chart, magic: h.magic, change: h.category.replace('EA started (inputs)', 'EA started'), count: h.count, details: h.sample }));
+  if (!changes.length) host.appendChild(el('p', { class: 'muted' }, 'No EA loads, removals or restarts in the loaded log days.'));
+  else table(host, [{ key: 'time', label: 'Time', f: fmtTime }, { key: 'change', label: 'Change' }, { key: 'count', label: 'Times', num: true }, { key: 'terminal', label: 'Terminal' },
+    { key: 'source', label: 'EA' }, { key: 'chart', label: 'Chart' }, { key: 'magic', label: 'Magic' }, { key: 'details', label: 'Details' }], changes, { tabId: 'healthChanges', defKey: 'time', pageSize: 200 });
+}
+
+/* ---------------- compare ---------------- */
+const CMP_DIMS = { magic: ['Magic', (t) => t.magic], comment: ['Comment', (t) => commentOf(t)], account: ['Account', (t) => t.account], campaign: ['Campaign', (t) => t.campaign], symbol: ['Symbol', (t) => t.symbol] };
+const CMP_UNITS = { money: ['Money', (t) => t.net, money], r: ['R multiples', (t) => t.r, (v) => fmtSigned(v, 2) + ' R'], pct: ['% of balance', (t) => t.pct, (v) => fmtSigned(v, 3) + '%'] };
+function matchExcept(t, key) { const saved = state[key]; state[key] = ''; const ok = matchDims(t, false); state[key] = saved; return ok; }
+// Resample whole baskets (legs of a pyramid move together), report a 90% range for the average per trade.
+function clusterBootstrap(trades, valueFn, seedText) {
+  const groups = new Map();
+  for (const t of trades) { const v = valueFn(t); if (!Number.isFinite(v)) continue; const k = t.basket ? t.account + '|' + t.basket : 't' + t.account + '|' + t.ticket; let g = groups.get(k); if (!g) { g = [0, 0]; groups.set(k, g); } g[0] += v; g[1]++; }
+  const cl = [...groups.values()]; const n = cl.length;
+  if (n < 10) return null;
+  let h = 2166136261; for (let i = 0; i < seedText.length; i++) h = Math.imul(h ^ seedText.charCodeAt(i), 16777619);
+  let a = h >>> 0;
+  const rnd = () => { a = (a + 0x6D2B79F5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+  const iters = Math.max(200, Math.min(1000, Math.floor(4e6 / n)));
+  const means = new Float64Array(iters); let pos = 0;
+  for (let k = 0; k < iters; k++) {
+    let sv = 0, sc = 0;
+    for (let i = 0; i < n; i++) { const g = cl[(rnd() * n) | 0]; sv += g[0]; sc += g[1]; }
+    const m = sv / sc; means[k] = m; if (m > 0) pos++;
+  }
+  means.sort();
+  return { lo: means[Math.floor(iters * 0.05)], hi: means[Math.min(iters - 1, Math.floor(iters * 0.95))], pPos: pos / iters, clusters: n };
+}
+function renderCompare(host) {
+  const cmp = state.cmp; const [dimLabel, dimFn] = CMP_DIMS[cmp.dim]; const [unitLabel, unitFn, unitFmt] = CMP_UNITS[cmp.unit];
+  const base = DB.trades.filter((t) => matchExcept(t, cmp.dim));
+  const counts = [...countBy(base, dimFn)].sort((a, b) => b[1] - a[1]);
+  const valid = new Set(counts.map((c) => c[0]));
+  let items = cmp.items.filter((v) => v && valid.has(v));
+  if (!items.length) items = counts.slice(0, 2).map((c) => c[0]);
+  cmp.items = items.slice();
+  const ctl = el('div', { class: 'controls' });
+  const mkSel = (label, id, opts, value, onChange) => {
+    const l = el('label', null, label); const sl = el('select', { id });
+    for (const [v, t] of opts) { const o = el('option', { value: v }, t); if (v === value) o.selected = true; sl.appendChild(o); }
+    sl.addEventListener('change', () => onChange(sl.value)); l.appendChild(sl); ctl.appendChild(l);
+  };
+  mkSel('Compare by', 'cmpDim', Object.entries(CMP_DIMS).map(([k, v]) => [k, v[0]]), cmp.dim, (v) => { cmp.dim = v; cmp.items = []; renderTab(); });
+  const optList = [['', '—']].concat(counts.map(([v, n]) => [v, (cmp.dim === 'account' ? accLabel(v) : v) + ' (' + n + ')']));
+  for (let i = 0; i < 4; i++) mkSel(dimLabel + ' ' + (i + 1), 'cmpItem' + i, optList, items[i] || '', (v) => { const next = cmp.items.slice(); next[i] = v; cmp.items = next.filter(Boolean); renderTab(); });
+  mkSel('Measure in', 'cmpUnit', Object.entries(CMP_UNITS).map(([k, v]) => [k, v[0]]), cmp.unit, (v) => { cmp.unit = v; renderTab(); });
+  host.appendChild(ctl);
+  if (!items.length) { host.appendChild(el('p', { class: 'muted' }, 'Nothing to compare in this selection.')); return; }
+  const colors = ['--series-1', '--series-2', '--series-3', '--series-4'].map(cssVar);
+  const label = (v) => (cmp.dim === 'account' ? accLabel(v) : v);
+  const legend = el('div', { class: 'legend' });
+  const series = items.map((v, i) => {
+    const arr = base.filter((t) => dimFn(t) === v);
+    const pts = []; let cum = 0;
+    for (const t of arr) { const x = unitFn(t); if (!Number.isFinite(x)) continue; cum += x; pts.push([t.closeTime, cum]); }
+    const sp = el('span'); const key = el('i'); key.style.background = colors[i]; sp.append(key, document.createTextNode(label(v))); legend.appendChild(sp);
+    return { name: label(v), color: colors[i], pts: downsample(pts, 1200), arr };
+  });
+  host.appendChild(el('h2', null, 'Cumulative result in ' + (cmp.unit === 'money' ? 'money' : unitLabel)));
+  host.appendChild(legend);
+  const ch = el('div', { class: 'chart' }); host.appendChild(ch);
+  lineChart(ch, series, { height: 300, zero: true, label: 'cumulative result by ' + dimLabel.toLowerCase(), tipFmt: unitFmt });
+  // side-by-side statistics with a resampled range for the average per trade
+  const st = series.map((s, i) => ({ s: stats(s.arr), boot: clusterBootstrap(s.arr, unitFn, cmp.dim + '|' + items[i] + '|' + cmp.unit + '|' + s.arr.length) }));
+  const metrics = [
+    ['Trades', (x) => x.s.n.toLocaleString('en-US')], ['Win %', (x) => pct(x.s.winRate)], ['Net', (x) => money(x.s.net), (x) => signCls(x.s.net)],
+    ['Profit factor', (x) => ratio(x.s.pf)], ['Expectancy per trade', (x) => money(x.s.exp), (x) => signCls(x.s.exp)], ['Avg R', (x) => fmtSigned(x.s.avgR, 2)],
+    ['Total R', (x) => fmtSigned(x.s.totR, 1)], ['Net % of balance', (x) => (Number.isFinite(x.s.netPct) ? fmtSigned(x.s.netPct, 2) + '%' : '–')],
+    ['Max drawdown (closed)', (x) => money(-x.s.maxDD)], ['SQN', (x) => fmtNum(x.s.sqn, 2)], ['Avg hold', (x) => fmtDur(x.s.avgDur)],
+    ['Average per trade, 90% range (' + (cmp.unit === 'money' ? 'money' : unitLabel) + ')', (x) => (x.boot ? unitFmt(x.boot.lo) + ' … ' + unitFmt(x.boot.hi) : 'too few trades')],
+    ['Chance the average is above 0', (x) => (x.boot ? pct(x.boot.pPos) : '–')],
+    ['Baskets resampled', (x) => (x.boot ? x.boot.clusters.toLocaleString('en-US') : '–')],
+  ];
+  const wrap = el('div', { class: 'tablewrap', style: 'margin-top:12px' }); const tbl = el('table', { class: 'cmp-table' });
+  const hr = el('tr'); hr.appendChild(el('th', null, ''));
+  items.forEach((v, i) => { const th = el('th', { class: 'num' }); const k = el('span', { class: 'cmp-key' }); k.style.background = colors[i]; th.append(k, document.createTextNode(label(v))); hr.appendChild(th); });
+  const thead = el('thead'); thead.appendChild(hr); tbl.appendChild(thead);
+  const tb = el('tbody');
+  for (const [name, fn, clsFn] of metrics) {
+    const tr = el('tr'); tr.appendChild(el('td', null, name));
+    st.forEach((x) => tr.appendChild(el('td', { class: 'num ' + (clsFn ? clsFn(x) : '') }, fn(x))));
+    tb.appendChild(tr);
+  }
+  tbl.appendChild(tb); wrap.appendChild(tbl); host.appendChild(wrap);
+  host.appendChild(el('p', { class: 'hint' }, 'The 90% range comes from resampling whole baskets 200–1000 times, because pyramid legs win and lose together. If two ranges overlap a lot, the difference between them may be luck. R uses each trade\'s initial stop; % uses the balance when the trade opened. Other filters (period, account, symbol…) still apply.'));
 }
 
 /* ---------------- render ---------------- */
@@ -1433,7 +1888,7 @@ async function loadFromDrive(keepFilters) {
       const page = await driveCall('search_files', q);
       files = files.concat(page.files || []); token = page.nextPageToken || '';
     } while (token && files.length < 5000);
-    files = files.filter((f) => /^(trades_.*\.csv\.gz|equity_.*\.csv\.gz|open_now\.csv\.gz|status_all\.txt|mt4dash_manifest\.json)$/i.test(f.title || ''));
+    files = files.filter((f) => /^(trades_.*\.csv\.gz|equity_.*\.csv\.gz|open_now\.csv\.gz|health_events\.csv\.gz|status_all\.txt|sync_all\.txt|mt4dash_manifest\.json)$/i.test(f.title || ''));
     let manifest = null;
     const items = []; let done = 0; const queue = files.slice();
     const worker = async () => {

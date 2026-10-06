@@ -53,6 +53,54 @@ Data is as fresh as the last script run plus Google Drive sync. The header
 shows when and where the data was built. New terminals appear automatically
 once their collector files are synced into `MT4_Terminals`.
 
+## Views
+
+- **Top tiles**: net profit, win rate, profit factor, expectancy in money and
+  R, closed-trade drawdown, **max equity drawdown including floating loss**
+  (worst account), **worst floating loss**, net % of balance, health,
+  open positions and floating P/L.
+- **By magic / comment / symbol / account / campaign / exit reason**: full
+  statistics per group, including Avg R, Total R and Net % of balance. The
+  magic table also counts trades without a TP and with a wide SL (collector
+  flags).
+- **Compare**: pick 2–4 magics, comments, accounts, campaigns or symbols and
+  see their curves on one chart, in money, R or % of balance, with a 90%
+  range for the average per trade. The range resamples whole baskets,
+  because pyramid legs win and lose together.
+- **Baskets & depth**: results by number of legs per basket, how often baskets
+  reach each depth, and results by leg number.
+- **Open positions**: exposure and floating P/L per magic (P/L per position
+  needs the updated collector, see below).
+- **Accounts**: balance, equity, equity drawdown chart, worst floating loss.
+- **Health**: per terminal status (critical, not syncing, stale, errors),
+  problems found in the Experts and Journal logs (AEP failures, emergency
+  exits, unknown tickets, error codes, connection failures, failed orders,
+  blocked mirror copier), ping, which EAs are running with their magic
+  number and fade settings, and EA loads/restarts.
+
+R = net result ÷ (initial SL distance × value of one point × lots). The value
+of one point is learned from your own closed trades per symbol. Trades
+without an initial SL, or with one under 10 points, have no R.
+
+## Update the collector for floating P/L per magic
+
+The patched MT4Collector_Quant v2.05 and v2.04 files were delivered
+separately (they are your own source code, so they are not stored in this
+repository). The only change: `open_now.csv` gets three columns at the end
+(profit, swap, commission of each open position), read with `OrderSelect`
+when the file is written. Same version number, same file tag, nothing else
+changes, and readers that use column names (your audit scripts, this
+dashboard) keep working.
+
+For each terminal:
+1. Copy the file with the same version the terminal runs over its
+   `MQL4\Experts\MT4Collector_Quant_v2.0x.mq4`.
+2. Open it in MetaEditor and compile (F7). Check the result says 0 errors.
+3. The running collector reloads by itself and keeps its inputs.
+
+Terminals you do not update keep working; their positions just show – for
+P/L.
+
 ## What it reads
 
 | File | Used for |
@@ -61,7 +109,9 @@ once their collector files are synced into `MT4_Terminals`.
 | `*_open_now.csv` | Open positions (latest file per account) |
 | `*_account_snapshots.csv` | Balance / equity chart and floating P/L |
 | `*_collector_status.txt` | Collector version and health on the Accounts tab |
-| `_DASHBOARD\*.csv.gz`, `status_all.txt` | The compact copies made by `Build-DashboardData.ps1` (the local page reads these too) |
+| `Experts\yyyymmdd.log`, `Journal\yyyymmdd.log` | Health tab (read by the build script, last 3 days by default: `-LogDays`) |
+| `_sync_status*.txt`, `_terminal_identity_map*.txt` | Not-syncing and unmapped-terminal warnings on the Health tab |
+| `_DASHBOARD\*.csv.gz`, `status_all.txt`, `sync_all.txt` | The compact copies made by `Build-DashboardData.ps1` (the local page reads these too) |
 
 - Column layouts from collector v1.11, v2.00 and v2.04+ are all supported;
   columns are matched by name.

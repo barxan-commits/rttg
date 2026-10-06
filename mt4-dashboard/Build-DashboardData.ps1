@@ -1,19 +1,22 @@
 <#
 .SYNOPSIS
-  Builds compact, gzip-compressed copies of MT4Collector_Quant data for the
-  online MT4 Dashboard.
+  Builds compact, gzip-compressed copies of MT4Collector_Quant data and MT4
+  logs for the online MT4 Dashboard.
 
 .DESCRIPTION
-  Reads (never modifies) every *_DetailedStatementLive.csv, *_open_now.csv,
-  *_account_snapshots.csv and *collector_status.txt under ProjectRoot and
-  writes into OutDir (default <ProjectRoot>\_DASHBOARD):
+  Reads (never modifies) everything under ProjectRoot and writes only into
+  OutDir (default <ProjectRoot>\_DASHBOARD):
 
     trades_<account>_<yyyy-MM>[_pN].csv.gz   closed trades, deduplicated by
                                              account + ticket (newest collector
                                              version wins)
     open_now.csv.gz                          open positions, newest file per account
-    equity_<account>.csv.gz                  balance/equity, one point per N minutes
+    equity_<account>.csv.gz                  balance/equity per N minutes, with the
+                                             lowest/highest equity inside each slot
+    health_events.csv.gz                     EA errors, warnings and activity from
+                                             the Experts and Journal logs
     status_all.txt                           all collector status files
+    sync_all.txt                             AutoSync status and identity-map files
     mt4dash_manifest.json                    build time and file list
 
   Files are rewritten only when their content changed, so Google Drive only
@@ -31,6 +34,8 @@ param(
   [int]$EquityMinutes = 15,
   [ValidateRange(1000, 100000)]
   [int]$MaxRowsPerFile = 10000,
+  [ValidateRange(1, 30)]
+  [int]$LogDays = 3,
   [string[]]$Exclude = @('ARCHIVE', '_DASHBOARD', '_MASTER', 'mastergpt')
 )
 
@@ -41,7 +46,7 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) { $OutDir = Join-Path $ProjectRoot '_
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 
-if (-not ('Mt4Dash.Builder' -as [type])) {
+if (-not ('Mt4DashV2.Builder' -as [type])) {
 Add-Type -Language CSharp -TypeDefinition @'
 using System;
 using System.Collections.Generic;
@@ -51,7 +56,7 @@ using System.IO.Compression;
 using System.Text;
 using System.Text.RegularExpressions;
 
-namespace Mt4Dash {
+namespace Mt4DashV2 {
   public class Csv {
     public string[] Header;
     public Dictionary<string, int> Index;
@@ -60,29 +65,40 @@ namespace Mt4Dash {
   }
 
   public static class Builder {
+    // New columns are always appended at the end; code below uses fixed indexes for the first ones.
     public static readonly string[] TradeCols = new string[] {
       "account","ticket","machine_label","terminal_label","campaign","account_currency","server",
       "open_time","close_time","type","lots","symbol","digits","open_price","close_price",
       "magic","comment","base_comment","exit_reason","profit","commission","swap","net_profit",
       "duration_seconds","avg_spread_points","max_spread_points","mfe_points","mae_points",
       "open_spread_cost_estimate_account_ccy","close_spread_cost_estimate_account_ccy",
-      "basket_id","basket_leg_seq","collector_version","recorded_at" };
+      "basket_id","basket_leg_seq","collector_version","recorded_at",
+      "initial_sl","initial_tp","initial_sl_points","initial_tp_points","point_size",
+      "flag_no_initial_tp","flag_wide_initial_sl","first_seen_balance" };
     public static readonly string[] OpenCols = new string[] {
       "account","machine_label","terminal_label","campaign","ticket","type","lots","symbol",
       "open_time","open_price","last_sl","last_tp","magic","comment","base_comment",
-      "mfe_points","mae_points","max_spread_points","last_seen" };
+      "mfe_points","mae_points","max_spread_points","last_seen",
+      "initial_sl_points","profit","swap","commission" };
     public static readonly string[] SnapCols = new string[] {
       "account","machine_label","terminal_label","campaign","server","time","balance","equity",
       "floating_net","margin_level_pct","open_market_orders","total_market_lots" };
 
     public static List<string> Log = new List<string>();
 
-    static string ReadAllText(string path) {
-      using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-      using (StreamReader sr = new StreamReader(fs, new UTF8Encoding(false), true)) {
-        return sr.ReadToEnd();
-      }
+    // ---------------- reading ----------------
+    static Encoding Detect(Stream s) {
+      byte[] b = new byte[4]; int n = s.Read(b, 0, 4); s.Position = 0;
+      if (n >= 2 && b[0] == 0xFF && b[1] == 0xFE) return Encoding.Unicode;
+      if (n >= 2 && b[0] == 0xFE && b[1] == 0xFF) return Encoding.BigEndianUnicode;
+      if (n >= 4 && b[1] == 0 && b[3] == 0 && b[0] != 0) return Encoding.Unicode;  // UTF-16LE without BOM
+      return new UTF8Encoding(false);
     }
+    static StreamReader OpenText(string path) {
+      FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+      return new StreamReader(fs, Detect(fs), true);
+    }
+    static string ReadAllText(string path) { using (StreamReader sr = OpenText(path)) return sr.ReadToEnd(); }
 
     public static string[] SplitLine(string line) {
       if (line.IndexOf('"') < 0) return line.Split(',');
@@ -120,27 +136,33 @@ namespace Mt4Dash {
       return o.ToArray();
     }
 
+    // Lines starting with '#' are collector trailers (#END,rows,...) and are skipped.
     public static Csv Read(string path) {
       Csv csv = new Csv();
-      string text = ReadAllText(path);
-      string[] lines = text.Split('\n');
-      int start = 0;
-      while (start < lines.Length && lines[start].Trim().Length == 0) start++;
-      if (start >= lines.Length) { csv.Header = new string[0]; csv.Index = new Dictionary<string, int>(); return csv; }
-      csv.Header = SplitLine(lines[start].TrimEnd('\r'));
       csv.Index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-      for (int i = 0; i < csv.Header.Length; i++) { string h = csv.Header[i].Trim(); if (!csv.Index.ContainsKey(h)) csv.Index[h] = i; }
-      int ci = csv.Get("comment"), bi = csv.Get("base_comment");
-      for (int k = start + 1; k < lines.Length; k++) {
-        string l = lines[k].TrimEnd('\r');
-        if (l.Trim().Length == 0) continue;
-        csv.Rows.Add(FixRow(SplitLine(l), csv.Header.Length, ci, bi));
+      int ci = -1, bi = -1;
+      using (StreamReader sr = OpenText(path)) {
+        string l;
+        while ((l = sr.ReadLine()) != null) {
+          if (l.Trim().Length == 0 || l.StartsWith("#")) continue;
+          if (csv.Header == null) {
+            csv.Header = SplitLine(l);
+            for (int i = 0; i < csv.Header.Length; i++) { string h = csv.Header[i].Trim(); if (!csv.Index.ContainsKey(h)) csv.Index[h] = i; }
+            ci = csv.Get("comment"); bi = csv.Get("base_comment");
+            continue;
+          }
+          csv.Rows.Add(FixRow(SplitLine(l), csv.Header.Length, ci, bi));
+        }
       }
+      if (csv.Header == null) csv.Header = new string[0];
       return csv;
     }
 
+    // ---------------- writing ----------------
     static string Cell(string[] r, int i) { return i < 0 || i >= r.Length ? "" : r[i].Trim(); }
     static double Num(string s) { double d; return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out d) ? d : 0; }
+    static bool TryNum(string s, out double d) { return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out d); }
+    static string F(double d) { return d.ToString("0.##", CultureInfo.InvariantCulture); }
     static string Esc(string s) {
       if (s.IndexOfAny(new char[] { ',', '"', '\n', '\r' }) < 0) return s;
       return "\"" + s.Replace("\"", "\"\"") + "\"";
@@ -182,6 +204,7 @@ namespace Mt4Dash {
       return m.Success ? m.Groups[1].Value : "untagged";
     }
 
+    // ---------------- closed trades ----------------
     class Rec { public string[] Out; public double Version; public string Recorded; }
 
     public static List<string> BuildTrades(string[] files, string outDir, int maxRows, out int total) {
@@ -212,7 +235,6 @@ namespace Mt4Dash {
         Log.Add("trades " + Path.GetFileName(f) + " rows=" + c.Rows.Count + " used=" + used);
       }
       total = map.Count;
-      // group by account + close month
       Dictionary<string, List<string[]>> groups = new Dictionary<string, List<string[]>>();
       foreach (Rec r in map.Values) {
         string acc = r.Out[0]; string close = r.Out[8];
@@ -238,6 +260,7 @@ namespace Mt4Dash {
       return produced;
     }
 
+    // ---------------- open positions ----------------
     public static List<string> BuildOpen(string[] files, string outDir) {
       Dictionary<string, List<string[]>> best = new Dictionary<string, List<string[]>>();
       Dictionary<string, string> bestSeen = new Dictionary<string, string>();
@@ -267,47 +290,228 @@ namespace Mt4Dash {
       return produced;
     }
 
+    // ---------------- equity ----------------
+    class Slot { public string[] Last; public double MinEq = double.MaxValue, MaxEq = double.MinValue, MinFloat = double.MaxValue; public string MinEqTime = ""; }
+
     public static List<string> BuildEquity(string[] files, string outDir, int minutes) {
-      Dictionary<string, SortedDictionary<string, string[]>> per = new Dictionary<string, SortedDictionary<string, string[]>>();
+      Dictionary<string, SortedDictionary<string, Slot>> per = new Dictionary<string, SortedDictionary<string, Slot>>();
       foreach (string f in files) {
         Csv c;
         try { c = Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
         int[] ix = new int[SnapCols.Length];
         for (int i = 0; i < SnapCols.Length; i++) ix[i] = c.Get(SnapCols[i]);
+        int iEq = ix[7], iFl = ix[8];
         foreach (string[] r in c.Rows) {
           string acc = Cell(r, ix[0]), t = Cell(r, ix[5]);
           if (acc.Length == 0 || t.Length < 16) continue;
           int hh, mm;
           if (!int.TryParse(t.Substring(11, 2), out hh) || !int.TryParse(t.Substring(14, 2), out mm)) continue;
-          int slot = (hh * 60 + mm) / minutes;
-          string bucket = t.Substring(0, 10) + "#" + slot.ToString("0000");
-          SortedDictionary<string, string[]> d;
-          if (!per.TryGetValue(acc, out d)) { d = new SortedDictionary<string, string[]>(StringComparer.Ordinal); per[acc] = d; }
-          string[] prev;
-          if (d.TryGetValue(bucket, out prev) && string.CompareOrdinal(prev[5], t) >= 0) continue;
-          string[] o = new string[SnapCols.Length];
-          for (int i = 0; i < SnapCols.Length; i++) o[i] = Cell(r, ix[i]);
-          d[bucket] = o;
+          int slotNo = (hh * 60 + mm) / minutes;
+          string bucket = t.Substring(0, 10) + "#" + slotNo.ToString("0000");
+          SortedDictionary<string, Slot> d;
+          if (!per.TryGetValue(acc, out d)) { d = new SortedDictionary<string, Slot>(StringComparer.Ordinal); per[acc] = d; }
+          Slot s;
+          if (!d.TryGetValue(bucket, out s)) { s = new Slot(); d[bucket] = s; }
+          double eq, fl;
+          if (TryNum(Cell(r, iEq), out eq)) {
+            if (eq < s.MinEq) { s.MinEq = eq; s.MinEqTime = t; }
+            if (eq > s.MaxEq) s.MaxEq = eq;
+          }
+          if (TryNum(Cell(r, iFl), out fl) && fl < s.MinFloat) s.MinFloat = fl;
+          if (s.Last == null || string.CompareOrdinal(s.Last[5], t) < 0) {
+            string[] o = new string[SnapCols.Length];
+            for (int i = 0; i < SnapCols.Length; i++) o[i] = Cell(r, ix[i]);
+            s.Last = o;
+          }
         }
         Log.Add("snapshots " + Path.GetFileName(f) + " rows=" + c.Rows.Count);
       }
+      string[] cols = new string[SnapCols.Length + 4];
+      Array.Copy(SnapCols, cols, SnapCols.Length);
+      cols[SnapCols.Length] = "equity_min"; cols[SnapCols.Length + 1] = "equity_min_time";
+      cols[SnapCols.Length + 2] = "equity_max"; cols[SnapCols.Length + 3] = "floating_min";
       List<string> produced = new List<string>();
-      foreach (KeyValuePair<string, SortedDictionary<string, string[]>> kv in per) {
+      foreach (KeyValuePair<string, SortedDictionary<string, Slot>> kv in per) {
+        List<string[]> rows = new List<string[]>();
+        foreach (Slot s in kv.Value.Values) {
+          if (s.Last == null) continue;
+          string[] o = new string[cols.Length];
+          Array.Copy(s.Last, o, SnapCols.Length);
+          o[SnapCols.Length] = s.MinEq == double.MaxValue ? "" : F(s.MinEq);
+          o[SnapCols.Length + 1] = s.MinEqTime;
+          o[SnapCols.Length + 2] = s.MaxEq == double.MinValue ? "" : F(s.MaxEq);
+          o[SnapCols.Length + 3] = s.MinFloat == double.MaxValue ? "" : F(s.MinFloat);
+          rows.Add(o);
+        }
         string name = "equity_" + kv.Key + ".csv.gz";
-        if (WriteIfChanged(Path.Combine(outDir, name), Gzip(Join(SnapCols, new List<string[]>(kv.Value.Values))))) Log.Add("wrote " + name);
+        if (WriteIfChanged(Path.Combine(outDir, name), Gzip(Join(cols, rows)))) Log.Add("wrote " + name);
         produced.Add(name);
       }
       return produced;
     }
 
-    public static List<string> BuildStatus(string[] files, string outDir) {
+    // ---------------- text bundles ----------------
+    public static List<string> BuildBundle(string[] files, string[] labels, string outDir, string name) {
       StringBuilder sb = new StringBuilder();
-      foreach (string f in files) {
-        try { sb.Append("#FILE: ").Append(Path.GetFileName(f)).Append('\n').Append(ReadAllText(f).Replace("\r", "")).Append('\n'); }
-        catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); }
+      for (int i = 0; i < files.Length; i++) {
+        try { sb.Append("#FILE: ").Append(labels[i]).Append('\n').Append(ReadAllText(files[i]).Replace("\r", "")).Append('\n'); }
+        catch (Exception e) { Log.Add("SKIP " + files[i] + " : " + e.Message); }
       }
-      if (WriteIfChanged(Path.Combine(outDir, "status_all.txt"), new UTF8Encoding(false).GetBytes(sb.ToString()))) Log.Add("wrote status_all.txt");
-      List<string> produced = new List<string>(); produced.Add("status_all.txt");
+      if (WriteIfChanged(Path.Combine(outDir, name), new UTF8Encoding(false).GetBytes(sb.ToString()))) Log.Add("wrote " + name);
+      List<string> produced = new List<string>(); produced.Add(name);
+      return produced;
+    }
+
+    // ---------------- logs: errors, warnings, activity ----------------
+    class Agg {
+      public string Terminal, Kind, Date, Source, Chart, Category, Severity, First = "", Last = "", Sample = "", Magic = "";
+      public long Count; public double Max = double.MinValue, Sum;
+    }
+    static readonly Regex RxLine = new Regex(@"^\s*(\d+)\s+(\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+(.*)$");
+    static readonly Regex RxChart = new Regex(@"^(.*?)\s+([^\s,]+),(M1|M5|M15|M30|H1|H4|D1|W1|MN1|MN)(:\s?|\s+inputs:\s?)(.*)$");
+    static readonly Regex RxMagic = new Regex(@"(?:^|;\s*)(?:MagicNumber|InpMagic|InpMagicNumber|Magic)=(\d+)", RegexOptions.IgnoreCase);
+    static readonly Regex RxFade = new Regex(@"(?:^|;\s*)(InpFadeBeforeFilters|InpReverseAfterFilters)=(\w+)", RegexOptions.IgnoreCase);
+    static readonly Regex RxErrCode = new Regex(@"\berror\b\W{0,3}(\d{1,5})\b", RegexOptions.IgnoreCase);
+    static readonly Regex RxUninit = new Regex(@"^uninit reason (\d+)", RegexOptions.IgnoreCase);
+    static readonly Regex RxFailed = new Regex(@"failed \[([^\]]+)\]", RegexOptions.IgnoreCase);
+    static readonly Regex RxPing = new Regex(@"ping to current access point (.+?) is ([\d.]+) ms", RegexOptions.IgnoreCase);
+    static readonly Regex RxAccount = new Regex(@"^'(\d+)':\s*(.*)$");
+    static readonly string[] UninitNames = new string[] { "program", "removed", "recompiled", "symbol or timeframe changed", "chart closed",
+      "inputs changed", "account changed", "template applied", "init failed", "terminal closed" };
+
+    static void Add(Dictionary<string, Agg> aggs, string terminal, string kind, string date, string source, string chart,
+                    string category, string severity, string time, string sample, double value, string magic) {
+      string key = terminal + "|" + kind + "|" + date + "|" + source + "|" + chart + "|" + category;
+      Agg a;
+      if (!aggs.TryGetValue(key, out a)) {
+        a = new Agg(); a.Terminal = terminal; a.Kind = kind; a.Date = date; a.Source = source; a.Chart = chart;
+        a.Category = category; a.Severity = severity; a.First = time; aggs[key] = a;
+      }
+      a.Count++; a.Last = time;
+      if (sample != null) a.Sample = sample.Length > 240 ? sample.Substring(0, 240) : sample;
+      if (!double.IsNaN(value)) { a.Sum += value; if (value > a.Max) a.Max = value; }
+      if (!string.IsNullOrEmpty(magic)) a.Magic = magic;
+    }
+
+    static void ClassifyExpert(Dictionary<string, Agg> aggs, Dictionary<string, string> magics, string term, string date,
+                               string level, string time, string rest) {
+      string source = "", chart = "", msg = rest; bool isInputs = false;
+      Match m = RxChart.Match(rest);
+      if (m.Success) {
+        source = m.Groups[1].Value.Trim(); chart = m.Groups[2].Value + "," + m.Groups[3].Value; msg = m.Groups[5].Value;
+        isInputs = m.Groups[4].Value.Contains("inputs");
+      }
+      bool isExpertTag = source.StartsWith("Expert ");
+      if (isExpertTag) source = source.Substring(7).Trim();
+      if (source.StartsWith("Custom indicator ")) source = source.Substring(17).Trim();
+      string instKey = term + "|" + source + "|" + chart;
+      string magic; magics.TryGetValue(instKey, out magic);
+      string cat = null, sev = "info";
+      if (isInputs) {
+        Match mm = RxMagic.Match(msg);
+        if (mm.Success) { magic = mm.Groups[1].Value; magics[instKey] = magic; }
+        StringBuilder sb = new StringBuilder();
+        if (mm.Success) sb.Append("MagicNumber=").Append(mm.Groups[1].Value);
+        foreach (Match fm in RxFade.Matches(msg)) { if (sb.Length > 0) sb.Append("; "); sb.Append(fm.Groups[1].Value).Append('=').Append(fm.Groups[2].Value); }
+        Add(aggs, term, "experts", date, source, chart, "EA started (inputs)", "info", time, sb.Length > 0 ? sb.ToString() : msg, double.NaN, magic);
+        return;
+      }
+      string low = msg.ToLowerInvariant();
+      Match um = RxUninit.Match(msg);
+      if (isExpertTag && low.StartsWith("loaded successfully")) cat = "EA loaded";
+      else if (isExpertTag && low.StartsWith("removed")) cat = "EA removed";
+      else if (um.Success) { int code = int.Parse(um.Groups[1].Value); cat = "EA stopped: " + (code >= 0 && code < UninitNames.Length ? UninitNames[code] : "reason " + code); }
+      else if (low.Contains("emergency exit")) { cat = "Emergency exit"; sev = "critical"; }
+      else if (low.Contains("aep close") && low.Contains("exhausted")) { cat = "AEP close exhausted"; sev = "critical"; }
+      else if (low.Contains("aep close retry")) { cat = "AEP close retry failed"; sev = "warning"; }
+      else if (low.Contains("aep sync") && low.Contains("exhausted")) { cat = "AEP sync exhausted"; sev = "warning"; }
+      else if (low.Contains("aep sync retry")) { cat = "AEP sync retry failed"; sev = "warning"; }
+      else if (low.Contains("unknown ticket")) { cat = "Unknown ticket"; sev = "warning"; }
+      else if (low.StartsWith("alert:")) { cat = "Alert"; sev = "warning"; }
+      else if (low.Contains("pair_blocked")) { cat = "Mirror copier blocked"; sev = "warning"; }
+      else if (low.Contains("spread too wide")) { cat = "Entry blocked: spread too wide"; sev = "info"; }
+      else if (low.Contains("timer gap")) { cat = "Collector timer stall"; sev = "info"; }
+      else if (low.StartsWith("open #")) cat = "Order opened";
+      else if (low.StartsWith("close #")) cat = "Order closed";
+      else if (low.StartsWith("modify #")) cat = "Order modified";
+      else if (low.StartsWith("delete #")) cat = "Order deleted";
+      else {
+        Match em = RxErrCode.Match(msg);
+        if (em.Success) { cat = "Error " + em.Groups[1].Value; sev = "error"; }
+        else if (level == "3") { cat = "Terminal error"; sev = "error"; }
+      }
+      if (cat != null) Add(aggs, term, "experts", date, source, chart, cat, sev, time, msg, double.NaN, magic);
+      Add(aggs, term, "experts", date, source, chart, "_activity", "activity", time, msg, double.NaN, magic);
+    }
+
+    static void ClassifyJournal(Dictionary<string, Agg> aggs, Dictionary<string, string> accounts, string term, string date,
+                                string level, string time, string rest) {
+      string msg = rest; string source = "terminal";
+      Match am = RxAccount.Match(rest);
+      if (am.Success) { accounts[term] = am.Groups[1].Value; source = am.Groups[1].Value; msg = am.Groups[2].Value; }
+      string low = msg.ToLowerInvariant();
+      Match pm = RxPing.Match(msg);
+      if (pm.Success) { double v = Num(pm.Groups[2].Value); Add(aggs, term, "journal", date, source, "", "Ping (ms)", "info", time, pm.Groups[1].Value + " " + F(v) + " ms", v, ""); return; }
+      Match fm = RxFailed.Match(msg);
+      if (low.Contains("connect failed") || (low.Contains("connection to") && low.Contains("lost"))) {
+        Add(aggs, term, "journal", date, source, "", "Connection failed" + (fm.Success ? ": " + fm.Groups[1].Value : ""), "warning", time, msg, double.NaN, "");
+      } else if (fm.Success) {
+        Add(aggs, term, "journal", date, source, "", "Order failed: " + fm.Groups[1].Value, "error", time, msg, double.NaN, "");
+      } else if (low.StartsWith("login on ")) {
+        Add(aggs, term, "journal", date, source, "", "Login", "info", time, msg, double.NaN, "");
+      } else if (low.Contains("requote")) {
+        Add(aggs, term, "journal", date, source, "", "Requote", "warning", time, msg, double.NaN, "");
+      } else if (low.Contains("trade context is busy")) {
+        Add(aggs, term, "journal", date, source, "", "Trade context busy", "warning", time, msg, double.NaN, "");
+      } else if (level == "2" || level == "3") {
+        Add(aggs, term, "journal", date, source, "", "Terminal error", "error", time, msg, double.NaN, "");
+      }
+    }
+
+    public static List<string> BuildHealth(string[] files, string[] terminals, string[] kinds, string outDir) {
+      Dictionary<string, Agg> aggs = new Dictionary<string, Agg>();
+      Dictionary<string, string> magics = new Dictionary<string, string>();
+      Dictionary<string, string> accounts = new Dictionary<string, string>();
+      // read oldest first so the latest MagicNumber per EA instance wins
+      int[] order = new int[files.Length];
+      for (int i = 0; i < order.Length; i++) order[i] = i;
+      Array.Sort(order, delegate(int a, int b) { return string.CompareOrdinal(Path.GetFileName(files[a]), Path.GetFileName(files[b])); });
+      foreach (int k in order) {
+        string f = files[k]; string fn = Path.GetFileNameWithoutExtension(f);
+        if (fn.Length != 8) continue;
+        string date = fn.Substring(0, 4) + "." + fn.Substring(4, 2) + "." + fn.Substring(6, 2);
+        long lines = 0;
+        try {
+          using (StreamReader sr = OpenText(f)) {
+            string l;
+            while ((l = sr.ReadLine()) != null) {
+              Match m = RxLine.Match(l);
+              if (!m.Success) continue;
+              lines++;
+              string time = date + " " + m.Groups[2].Value.Substring(0, 8);
+              if (kinds[k] == "journal") ClassifyJournal(aggs, accounts, terminals[k], date, m.Groups[1].Value, time, m.Groups[3].Value);
+              else ClassifyExpert(aggs, magics, terminals[k], date, m.Groups[1].Value, time, m.Groups[3].Value);
+            }
+          }
+        } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
+        Log.Add("log " + terminals[k] + "/" + kinds[k] + "/" + Path.GetFileName(f) + " lines=" + lines);
+      }
+      string[] cols = new string[] { "terminal","kind","date","source","chart","category","severity","count",
+        "first_time","last_time","value_max","value_sum","magic","account","sample" };
+      List<string[]> rows = new List<string[]>();
+      foreach (Agg a in aggs.Values) {
+        string acc; accounts.TryGetValue(a.Terminal, out acc);
+        string magic = a.Magic; string m2;
+        if (string.IsNullOrEmpty(magic) && magics.TryGetValue(a.Terminal + "|" + a.Source + "|" + a.Chart, out m2)) magic = m2;
+        rows.Add(new string[] { a.Terminal, a.Kind, a.Date, a.Source, a.Chart, a.Category, a.Severity, a.Count.ToString(CultureInfo.InvariantCulture),
+          a.First, a.Last, a.Max == double.MinValue ? "" : F(a.Max), a.Sum == 0 ? "" : F(a.Sum), magic ?? "", acc ?? "", a.Sample });
+      }
+      rows.Sort(delegate(string[] a, string[] b) {
+        int x = string.CompareOrdinal(a[0], b[0]); if (x != 0) return x;
+        x = string.CompareOrdinal(a[2], b[2]); if (x != 0) return x;
+        return string.CompareOrdinal(a[5] + a[3] + a[4], b[5] + b[3] + b[4]); });
+      if (WriteIfChanged(Path.Combine(outDir, "health_events.csv.gz"), Gzip(Join(cols, rows)))) Log.Add("wrote health_events.csv.gz");
+      List<string> produced = new List<string>(); produced.Add("health_events.csv.gz");
       return produced;
     }
   }
@@ -326,40 +530,74 @@ function Find-Files([string]$Pattern) {
   # stable order: older collector tags first (newest version wins anyway)
   return @($keep | Sort-Object)
 }
+function Get-RelativeParts([string]$Path) {
+  return @($Path.Substring($ProjectRoot.Length).TrimStart('\', '/') -split '[\\/]')
+}
 
 $started = Get-Date
-[Mt4Dash.Builder]::Log.Clear()
+[Mt4DashV2.Builder]::Log.Clear()
 $tradeFiles = Find-Files '*_DetailedStatementLive.csv'
 $openFiles = Find-Files '*_open_now.csv'
 $snapFiles = Find-Files '*_account_snapshots.csv'
 $statusFiles = Find-Files '*collector_status.txt'
-Write-Host ("Found {0} statement, {1} open, {2} snapshot, {3} status files" -f $tradeFiles.Count, $openFiles.Count, $snapFiles.Count, $statusFiles.Count)
+$syncFiles = @(Find-Files '_sync_status*.txt') + @(Find-Files '_terminal_identity_map*.txt')
+
+# MT4 logs: <terminal>\Experts\yyyymmdd.log and <terminal>\Journal\yyyymmdd.log (also MQL4\Logs and logs)
+$logCandidates = foreach ($f in (Find-Files '*.log')) {
+  $name = [System.IO.Path]::GetFileName($f)
+  if ($name -notmatch '^\d{8}\.log$') { continue }
+  $parts = Get-RelativeParts $f
+  if ($parts.Count -lt 3) { continue }
+  $folder = $parts[$parts.Count - 2]
+  $parentFolder = if ($parts.Count -ge 3) { $parts[$parts.Count - 3] } else { '' }
+  $kind = $null
+  if ($folder -ieq 'Experts') { $kind = 'experts' }
+  elseif ($folder -ieq 'Journal') { $kind = 'journal' }
+  elseif ($folder -ieq 'Logs' -and $parentFolder -ieq 'MQL4') { $kind = 'experts' }
+  elseif ($folder -ieq 'logs') { $kind = 'journal' }
+  if (-not $kind) { continue }
+  [pscustomobject]@{ Path = $f; Terminal = $parts[0]; Kind = $kind; Date = $name.Substring(0, 8) }
+}
+$logFiles = foreach ($g in @($logCandidates | Group-Object Terminal, Kind)) {
+  $newest = ($g.Group | Sort-Object Date | Select-Object -Last 1).Date
+  $cut = [datetime]::ParseExact($newest, 'yyyyMMdd', [Globalization.CultureInfo]::InvariantCulture).AddDays(1 - $LogDays).ToString('yyyyMMdd')
+  $g.Group | Where-Object { $_.Date -ge $cut }
+}
+$logFiles = @($logFiles)
+Write-Host ("Found {0} statement, {1} open, {2} snapshot, {3} status, {4} sync, {5} log files" -f `
+  $tradeFiles.Count, $openFiles.Count, $snapFiles.Count, $statusFiles.Count, $syncFiles.Count, $logFiles.Count)
 
 $total = 0
 $produced = New-Object System.Collections.Generic.List[string]
-$produced.AddRange([Mt4Dash.Builder]::BuildTrades([string[]]$tradeFiles, $OutDir, $MaxRowsPerFile, [ref]$total))
-$produced.AddRange([Mt4Dash.Builder]::BuildOpen([string[]]$openFiles, $OutDir))
-$produced.AddRange([Mt4Dash.Builder]::BuildEquity([string[]]$snapFiles, $OutDir, $EquityMinutes))
-$produced.AddRange([Mt4Dash.Builder]::BuildStatus([string[]]$statusFiles, $OutDir))
+$produced.AddRange([Mt4DashV2.Builder]::BuildTrades([string[]]$tradeFiles, $OutDir, $MaxRowsPerFile, [ref]$total))
+$produced.AddRange([Mt4DashV2.Builder]::BuildOpen([string[]]$openFiles, $OutDir))
+$produced.AddRange([Mt4DashV2.Builder]::BuildEquity([string[]]$snapFiles, $OutDir, $EquityMinutes))
+$statusLabels = @($statusFiles | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+$produced.AddRange([Mt4DashV2.Builder]::BuildBundle([string[]]$statusFiles, [string[]]$statusLabels, $OutDir, 'status_all.txt'))
+$syncLabels = @($syncFiles | ForEach-Object { (Get-RelativeParts $_) -join '/' })
+$produced.AddRange([Mt4DashV2.Builder]::BuildBundle([string[]]$syncFiles, [string[]]$syncLabels, $OutDir, 'sync_all.txt'))
+$produced.AddRange([Mt4DashV2.Builder]::BuildHealth([string[]]@($logFiles | ForEach-Object { $_.Path }),
+  [string[]]@($logFiles | ForEach-Object { $_.Terminal }), [string[]]@($logFiles | ForEach-Object { $_.Kind }), $OutDir))
 
 # remove outputs that are no longer produced (e.g. a month split differently)
 Get-ChildItem -LiteralPath $OutDir -File | Where-Object {
   ($_.Name -like 'trades_*.csv.gz' -or $_.Name -like 'equity_*.csv.gz' -or $_.Name -like '*.tmp') -and -not $produced.Contains($_.Name)
-} | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; [Mt4Dash.Builder]::Log.Add('removed ' + $_.Name) }
+} | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; [Mt4DashV2.Builder]::Log.Add('removed ' + $_.Name) }
 
 $manifest = [ordered]@{
   generatedAt = $started.ToString('yyyy-MM-dd HH:mm:ss')
   machine     = $env:COMPUTERNAME
   projectRoot = $ProjectRoot
   trades      = $total
-  sources     = [ordered]@{ statements = $tradeFiles.Count; open = $openFiles.Count; snapshots = $snapFiles.Count; status = $statusFiles.Count }
+  logDays     = $LogDays
+  sources     = [ordered]@{ statements = $tradeFiles.Count; open = $openFiles.Count; snapshots = $snapFiles.Count; status = $statusFiles.Count; sync = $syncFiles.Count; logs = $logFiles.Count }
   files       = @($produced)
 }
 $json = $manifest | ConvertTo-Json -Depth 4
-[void][Mt4Dash.Builder]::WriteIfChanged((Join-Path $OutDir 'mt4dash_manifest.json'), [System.Text.UTF8Encoding]::new($false).GetBytes($json))
+[void][Mt4DashV2.Builder]::WriteIfChanged((Join-Path $OutDir 'mt4dash_manifest.json'), [System.Text.UTF8Encoding]::new($false).GetBytes($json))
 
-$changed = @([Mt4Dash.Builder]::Log | Where-Object { $_ -like 'wrote *' -or $_ -like 'removed *' }).Count
-$skipped = @([Mt4Dash.Builder]::Log | Where-Object { $_ -like 'SKIP *' })
+$changed = @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'wrote *' -or $_ -like 'removed *' }).Count
+$skipped = @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'SKIP *' })
 Write-Host ("{0} unique closed trades. {1} output files, {2} changed. {3:n1}s" -f $total, $produced.Count, $changed, ((Get-Date) - $started).TotalSeconds)
 foreach ($s in $skipped) { Write-Warning $s }
-if ($VerbosePreference -eq 'Continue') { [Mt4Dash.Builder]::Log | ForEach-Object { Write-Verbose $_ } }
+if ($VerbosePreference -eq 'Continue') { [Mt4DashV2.Builder]::Log | ForEach-Object { Write-Verbose $_ } }
