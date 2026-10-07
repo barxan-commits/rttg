@@ -806,11 +806,12 @@ async function loadSources(files) {
 }
 let KEEP_FILTERS = false;
 const STALE_BUILD_MIN = 60;
-// minutes since the build script last wrote the Drive data (NaN when not loaded from Drive)
+// minutes since the build script last wrote the Drive data (NaN when not loaded from Drive). The later of
+// the build PC's own UTC stamp and Drive's file time, so a PC clock or time zone that is off never raises a false alarm.
 function buildAgeMinutes() {
   if (SOURCE.kind !== 'drive' || !SOURCE.manifest) return NaN;
-  const t = SOURCE.manifest.generatedUtc ? Date.parse(SOURCE.manifest.generatedUtc) : SOURCE.manifestTime;
-  return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 60000) : NaN;
+  const ts = [Date.parse(SOURCE.manifest.generatedUtc || ''), SOURCE.manifestTime].filter(Number.isFinite);
+  return ts.length ? Math.max(0, (Date.now() - Math.max(...ts)) / 60000) : NaN;
 }
 function showProgress(t) { const p = $('#progress'); p.hidden = false; p.textContent = t; }
 function hideProgress() { $('#progress').hidden = true; }
