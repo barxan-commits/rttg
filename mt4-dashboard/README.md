@@ -23,6 +23,11 @@ browser; no data is uploaded and nothing needs to be installed.
 3. Use the filters at the top (period, account, campaign, magic, comment,
    symbol, side). Click any row in the magic / comment / symbol / account
    tables, or any bar in the magic chart, to filter by it.
+   The account, magic and comment lists are split into *Active* (data in the
+   last 3 days: a snapshot, closed trade or status for an account; a closed
+   trade or an open position on an active account for a magic or comment)
+   and *Not active*. *All active* and *All not active* at the top of each
+   list filter everything to that group. Accounts are sorted by terminal.
 
 To refresh after new trades, choose the folder again.
 

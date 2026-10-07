@@ -786,6 +786,7 @@ async function loadSources(files) {
     if (!a) { a = { account: acc, machine: s['machine'] || '', terminal: s['terminal'] || '', campaign: s['campaign'] || '', server: s['server'] || '', currency: '', lastSeen: 0 }; DB.accounts.set(acc, a); }
   }
   for (const p of DB.open) noteAccount({ account: p.account, machine: p.machine, terminal: p.terminal, campaign: p.campaign, time: p.lastSeen });
+  computeActivity();
   hideProgress();
   if (!DB.trades.length && !DB.open.length && !DB.snaps.size) { showProgress('Files were read but contained no usable rows. See the console for details.'); return; }
   $('#empty').hidden = true; $('#app').hidden = false;
@@ -817,6 +818,64 @@ function showProgress(t) { const p = $('#progress'); p.hidden = false; p.textCon
 function hideProgress() { $('#progress').hidden = true; }
 
 /* ---------------- filters ---------------- */
+// Account, magic and comment lists are split into active and not active. Active: an account with any data
+// (snapshot, closed trade, open-positions file, collector status), or a magic/comment with a closed trade,
+// in the last ACTIVE_DAYS before the newest data, or an open position on an active account.
+const ACTIVE_DAYS = 3;
+const ALL_ACTIVE = '@active', ALL_IDLE = '@inactive';
+function computeActivity() {
+  const last = new Map();
+  const note = (acc, t) => { if (acc && Number.isFinite(t) && !(t <= last.get(acc))) last.set(acc, t); };
+  for (const t of DB.trades) note(t.account, t.closeTime);
+  for (const [acc, sn] of DB.snaps) if (sn.length) note(acc, sn[sn.length - 1].t);
+  for (const [acc, m] of DB.openMeta) note(acc, m.lastSeen);
+  for (const [acc, st] of DB.status) note(acc, st.updatedMs);
+  const newest = Math.max(-Infinity, ...last.values());
+  const account = new Set([...DB.accounts.keys()].filter((a) => last.get(a) >= newest - ACTIVE_DAYS * DAY));
+  DB.activeCut = dataMaxTime() - ACTIVE_DAYS * DAY;
+  DB.active = { account, magic: new Set(), comment: null };
+  DB.active.magic = activeValues((t) => t.magic);
+}
+// values of fn among recent closed trades and among open positions on active accounts
+function activeValues(fn) {
+  const out = new Set();
+  for (let i = DB.trades.length - 1; i >= 0 && DB.trades[i].closeTime >= DB.activeCut; i--) out.add(fn(DB.trades[i]));
+  for (const p of DB.open) if (DB.active.account.has(p.account)) out.add(fn(p));
+  return out;
+}
+function dimOk(dim, v) {
+  const want = state[dim];
+  if (!want) return true;
+  if (want === ALL_ACTIVE || want === ALL_IDLE) { const act = DB.active && DB.active[dim] ? DB.active[dim].has(v) : true; return want === ALL_ACTIVE ? act : !act; }
+  return v === want;
+}
+// "All", "All active", "All not active", then the two groups; counts are closed trades
+function fillActiveSelect(sel, dim, counts, labelFn, sortFn, noun) {
+  const act = DB.active && DB.active[dim] ? DB.active[dim] : new Set(counts.keys());
+  const on = [...counts.keys()].filter((v) => act.has(v)).sort(sortFn), off = [...counts.keys()].filter((v) => !act.has(v)).sort(sortFn);
+  const opt = (v, text) => el('option', { value: v }, text);
+  const item = (v) => { const n = counts.get(v); return opt(v, labelFn(v) + (n ? '  (' + n + ')' : '  (open only)')); };
+  sel.textContent = '';
+  sel.appendChild(opt('', 'All ' + noun + ' (' + counts.size + ')'));
+  if (on.length && off.length) { sel.appendChild(opt(ALL_ACTIVE, 'All active (' + on.length + ')')); sel.appendChild(opt(ALL_IDLE, 'All not active (' + off.length + ')')); }
+  for (const [label, list] of [['Active: data in the last ' + ACTIVE_DAYS + ' days', on], ['Not active', off]]) {
+    if (!list.length) continue;
+    const g = el('optgroup', { label: label + ' · ' + list.length });
+    for (const v of list) g.appendChild(item(v));
+    sel.appendChild(g);
+  }
+  const ok = state[dim] === '' || counts.has(state[dim]) || ((state[dim] === ALL_ACTIVE || state[dim] === ALL_IDLE) && on.length && off.length);
+  if (!ok) state[dim] = '';
+  sel.value = state[dim];
+}
+// account list entries: terminal first, so the list reads like the terminals on screen
+function accOption(acc) {
+  const a = DB.accounts.get(acc);
+  if (!a) return acc;
+  return [a.terminal, a.machine, acc].filter(Boolean).join(' · ');
+}
+const naturalCmp = (a, b) => String(a).localeCompare(String(b), 'en', { numeric: true, sensitivity: 'base' });
+function accSortKey(acc) { const a = DB.accounts.get(acc) || {}; return (a.terminal || 'zzz') + '|' + (a.machine || '') + '|' + acc; }
 function accLabel(acc) {
   const a = DB.accounts.get(acc);
   if (!a) return acc;
@@ -834,12 +893,15 @@ function countBy(arr, fn) { const m = new Map(); for (const x of arr) { const k 
 function buildFilterOptions() {
   const T = DB.trades;
   const accs = countBy(T, (t) => t.account); for (const a of DB.accounts.keys()) if (!accs.has(a)) accs.set(a, 0);
-  fillSelect($('#fAccount'), [...accs].sort((a, b) => a[0].localeCompare(b[0])), state.account, accLabel);
+  fillActiveSelect($('#fAccount'), 'account', accs, accOption, (a, b) => naturalCmp(accSortKey(a), accSortKey(b)), 'accounts');
   fillSelect($('#fCampaign'), [...countBy(T, (t) => t.campaign)].sort((a, b) => b[1] - a[1]), state.campaign);
   // strategies with open positions but no closed trade yet are listed too
   const withOpen = (m, fn) => { for (const p of DB.open) { const k = fn(p); if (!m.has(k)) m.set(k, 0); } return m; };
-  fillSelect($('#fMagic'), [...withOpen(countBy(T, (t) => t.magic), (p) => p.magic)].sort((a, b) => (+a[0]) - (+b[0]) || a[0].localeCompare(b[0])), state.magic);
-  fillSelect($('#fComment'), [...withOpen(countBy(T, commentOf), commentOf)].sort((a, b) => b[1] - a[1]), state.comment);
+  if (DB.active) DB.active.comment = activeValues(commentOf); // depends on "Group comments by"
+  const magics = withOpen(countBy(T, (t) => t.magic), (p) => p.magic);
+  fillActiveSelect($('#fMagic'), 'magic', magics, (v) => v, (a, b) => (+a) - (+b) || a.localeCompare(b), 'magics');
+  const comments = withOpen(countBy(T, commentOf), commentOf);
+  fillActiveSelect($('#fComment'), 'comment', comments, (v) => v, (a, b) => comments.get(b) - comments.get(a) || a.localeCompare(b), 'comments');
   fillSelect($('#fSymbol'), [...withOpen(countBy(T, (t) => t.symbol), (p) => p.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
 }
 function resetFilters(doRender = true) {
@@ -849,12 +911,12 @@ function resetFilters(doRender = true) {
   if (doRender) { buildFilterOptions(); render(); }
 }
 function matchDims(t, skipDate) {
-  if (state.account && t.account !== state.account) return false;
+  if (!dimOk('account', t.account)) return false;
   if (state.campaign && t.campaign !== state.campaign) return false;
-  if (state.magic && t.magic !== state.magic) return false;
+  if (!dimOk('magic', t.magic)) return false;
   if (state.symbol && t.symbol !== state.symbol) return false;
   if (state.side && t.type !== state.side) return false;
-  if (state.comment && commentOf(t) !== state.comment) return false;
+  if (state.comment && !dimOk('comment', commentOf(t))) return false;
   if (!skipDate) {
     if (state.from !== null && t.closeTime < state.from) return false;
     if (state.to !== null && t.closeTime >= state.to) return false;
@@ -931,7 +993,7 @@ function equityStats(acc) {
   return r;
 }
 function accountsInView() {
-  return [...DB.accounts.keys()].filter((a) => (!state.account || a === state.account) && (!state.campaign || (DB.accounts.get(a) || {}).campaign === state.campaign));
+  return [...DB.accounts.keys()].filter((a) => dimOk('account', a) && (!state.campaign || (DB.accounts.get(a) || {}).campaign === state.campaign));
 }
 function groupBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); let a = m.get(k); if (!a) { a = []; m.set(k, a); } a.push(x); } return m; }
 function baskets(arr) {
@@ -1531,8 +1593,8 @@ function renderTrades(host, T) {
   } });
 }
 function openFiltered() {
-  return DB.open.filter((p) => (!state.account || p.account === state.account) && (!state.campaign || p.campaign === state.campaign) && (!state.magic || p.magic === state.magic)
-    && (!state.symbol || p.symbol === state.symbol) && (!state.side || p.type === state.side) && (!state.comment || (state.commentMode === 'raw' ? (p.comment || '(empty)') : (p.base || '(empty)')) === state.comment));
+  return DB.open.filter((p) => dimOk('account', p.account) && (!state.campaign || p.campaign === state.campaign) && dimOk('magic', p.magic)
+    && (!state.symbol || p.symbol === state.symbol) && (!state.side || p.type === state.side) && dimOk('comment', commentOf(p)));
 }
 function renderOpen(host) {
   const P = openFiltered();
@@ -1565,7 +1627,7 @@ function renderOpen(host) {
 }
 function renderAccounts(host, T) {
   const byAcc = groupBy(T, (t) => t.account);
-  const rows = [...DB.accounts.values()].filter((a) => (!state.account || a.account === state.account) && (!state.campaign || a.campaign === state.campaign)).map((a) => {
+  const rows = [...DB.accounts.values()].filter((a) => dimOk('account', a.account) && (!state.campaign || a.campaign === state.campaign)).map((a) => {
     const sn = DB.snaps.get(a.account); const last = sn && sn.length ? sn[sn.length - 1] : null; const st = DB.status.get(a.account) || {};
     const tr = byAcc.get(a.account) || []; let net = 0; for (const t of tr) net += t.net;
     const om = DB.openMeta.get(a.account);
@@ -1736,9 +1798,9 @@ function renderHealthTodo(host, rows) {
 }
 function healthModel() {
   const all = buildHealthRows();
-  const rows = all.filter((r) => (!state.account || r.account === state.account) && (!state.campaign || (DB.accounts.get(r.account) || {}).campaign === state.campaign));
+  const rows = all.filter((r) => dimOk('account', r.account) && (!state.campaign || (DB.accounts.get(r.account) || {}).campaign === state.campaign));
   const terms = new Set(rows.map((r) => r.terminal));
-  const events = DB.health.filter((h) => terms.has(h.terminal) && (!state.magic || h.magic === state.magic));
+  const events = DB.health.filter((h) => terms.has(h.terminal) && dimOk('magic', h.magic));
   const summary = { critical: 0, errors: 0, warnings: 0, stale: 0, notSyncing: 0, inactive: 0 };
   for (const h of events) { if (h.severity === 'critical') summary.critical += h.count; else if (h.severity === 'error') summary.errors += h.count; else if (h.severity === 'warning') summary.warnings += h.count; }
   for (const r of rows) { if (r.stale || r.collectorWarn) summary.stale++; if (SYNC_BAD(r.sync)) summary.notSyncing++; if (r.idle) summary.inactive++; }
