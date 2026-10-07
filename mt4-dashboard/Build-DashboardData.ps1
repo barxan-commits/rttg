@@ -49,11 +49,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$BuilderVersion = '2026-10-07'
+$BuilderVersion = '2026-10-07c'
 $pc = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
 $here = $PSScriptRoot
 $runLog = if ($here) { Join-Path $here ('last_build_' + $pc + '.txt') } else { '' }
 $started = Get-Date
+$sw = [System.Diagnostics.Stopwatch]::StartNew()
+$timing = New-Object System.Collections.Generic.List[string]
+function Add-Timing([string]$Step) { $timing.Add(('{0} {1:n0}s' -f $Step, $sw.Elapsed.TotalSeconds)); $sw.Reset(); $sw.Start() }
 
 # every run leaves a short note next to the script, so a failing scheduled run is visible on Drive
 function Write-RunLog([string]$Result, [string[]]$More) {
@@ -79,6 +82,24 @@ if (-not $Force -and $buildPcFile -and (Test-Path -LiteralPath $buildPcFile)) {
   if ($buildPc -and $buildPc -ine $pc) {
     Write-Host ('Skipped: the dashboard data is built on {0} (BUILD_PC.txt), not on {1}. Run INSTALL_AUTO_UPDATE.bat here to move the build to this PC.' -f $buildPc, $pc)
     exit 0
+  }
+}
+# scheduled runs (AUTO_BUILD.vbs passes -NonInteractive) leave the PC idle at least twice as long as
+# the last build took, so a slow build never keeps the VPS busy more than about a third of the time
+$scheduled = @([Environment]::GetCommandLineArgs() | Where-Object { $_ -ieq '-NonInteractive' }).Count -gt 0
+if ($scheduled -and -not $Force -and $runLog -and (Test-Path -LiteralPath $runLog)) {
+  $prev = @{}
+  foreach ($l in @(Get-Content -LiteralPath $runLog -TotalCount 8)) { if ($l -match '^(Started|Finished|Result):\s+(.*)$') { $prev[$Matches[1]] = $Matches[2].Trim() } }
+  $inv = [Globalization.CultureInfo]::InvariantCulture
+  $s0 = [datetime]::MinValue; $f0 = [datetime]::MinValue
+  if ([string]$prev['Result'] -like 'OK*' -and
+      [datetime]::TryParseExact([string]$prev['Started'], 'yyyy-MM-dd HH:mm:ss', $inv, [Globalization.DateTimeStyles]::None, [ref]$s0) -and
+      [datetime]::TryParseExact([string]$prev['Finished'], 'yyyy-MM-dd HH:mm:ss', $inv, [Globalization.DateTimeStyles]::None, [ref]$f0)) {
+    $took = ($f0 - $s0).TotalSeconds; $idle = ($started - $f0).TotalSeconds
+    if ($took -gt 0 -and $idle -ge 0 -and $idle -lt 2 * $took) {
+      Write-Host ('Skipped: the last build took {0:n0}s and ended {1:n0}s ago.' -f $took, $idle)
+      exit 0
+    }
   }
 }
 # one build at a time on this PC (the scheduled task and a manual run could overlap)
@@ -148,6 +169,12 @@ namespace Mt4DashV2 {
       "floating_net","margin_level_pct","open_market_orders","total_market_lots" };
 
     public static List<string> Log = new List<string>();
+    // ticket -> close time of every closed trade, filled by BuildTrades and used by BuildHealth
+    public static Dictionary<string, DateTime> ClosedAt = new Dictionary<string, DateTime>();
+    static readonly string[] TimeFormats = new string[] { "yyyy.MM.dd HH:mm:ss", "yyyy.MM.dd HH:mm", "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm" };
+    static bool TryTime(string s, out DateTime t) {
+      return DateTime.TryParseExact(s, TimeFormats, CultureInfo.InvariantCulture, DateTimeStyles.None, out t);
+    }
 
     // ---------------- reading ----------------
     static Encoding Detect(Stream s) {
@@ -298,6 +325,8 @@ namespace Mt4DashV2 {
         Log.Add("trades " + Path.GetFileName(f) + " rows=" + c.Rows.Count + " used=" + used);
       }
       total = map.Count;
+      ClosedAt.Clear();
+      foreach (Rec r in map.Values) { DateTime ct; if (TryTime(r.Out[8], out ct)) ClosedAt[r.Out[1]] = ct; }
       Dictionary<string, List<string[]>> groups = new Dictionary<string, List<string[]>>();
       foreach (Rec r in map.Values) {
         string acc = r.Out[0]; string close = r.Out[8];
@@ -439,6 +468,16 @@ namespace Mt4DashV2 {
     static readonly Regex RxFailed = new Regex(@"failed \[([^\]]+)\]", RegexOptions.IgnoreCase);
     static readonly Regex RxPing = new Regex(@"ping to current access point (.+?) is ([\d.]+) ms", RegexOptions.IgnoreCase);
     static readonly Regex RxAccount = new Regex(@"^'(\d+)':\s*(.*)$");
+    static readonly Regex RxTicket = new Regex(@"ticket #?(\d{5,})", RegexOptions.IgnoreCase);
+    static readonly Regex RxOrderClose = new Regex(@"^order #(\d{5,})\b.*\bclosing\b", RegexOptions.IgnoreCase);
+    const string LateClose = "Late close attempt (order already closed)";
+    // An EA that closes a ticket the broker already closed by SL/TP gets "unknown ticket" (4108) or a close at
+    // price 0. True when the trade's close time (broker time) is at most 2 minutes after the log line (PC time).
+    static bool ClosedBefore(string ticket, string time) {
+      DateTime closed, at;
+      return !string.IsNullOrEmpty(ticket) && ClosedAt.TryGetValue(ticket, out closed) && TryTime(time, out at) && closed <= at.AddMinutes(2);
+    }
+    static string TicketOf(string msg) { Match m = RxTicket.Match(msg); return m.Success ? m.Groups[1].Value : ""; }
     static readonly string[] UninitNames = new string[] { "program", "removed", "recompiled", "symbol or timeframe changed", "chart closed",
       "inputs changed", "account changed", "template applied", "init failed", "terminal closed" };
 
@@ -484,16 +523,22 @@ namespace Mt4DashV2 {
       if (isExpertTag && low.StartsWith("loaded successfully")) cat = "EA loaded";
       else if (isExpertTag && low.StartsWith("removed")) cat = "EA removed";
       else if (um.Success) { int code = int.Parse(um.Groups[1].Value); cat = "EA stopped: " + (code >= 0 && code < UninitNames.Length ? UninitNames[code] : "reason " + code); }
-      // the EA's own hard-stop exit: a loss event worth seeing, not a terminal fault
-      else if (low.Contains("emergency exit")) { cat = "Emergency exit"; sev = "warning"; }
-      else if (low.Contains("aep close") && low.Contains("exhausted")) { cat = "AEP close exhausted"; sev = "critical"; }
-      else if (low.Contains("aep close retry")) { cat = "AEP close retry failed"; sev = "warning"; }
+      // the EA's own hard-stop exit: a stop-out, not a terminal fault (shown with "Everything incl. info")
+      else if (low.Contains("emergency exit")) { cat = "Emergency exit"; sev = "info"; }
+      else if (low.Contains("aep close") && (low.Contains("exhausted") || low.Contains("retry"))) {
+        if (ClosedBefore(TicketOf(msg), time)) { cat = LateClose; sev = "info"; }
+        else if (low.Contains("exhausted")) { cat = "AEP close exhausted"; sev = "critical"; }
+        else { cat = "AEP close retry failed"; sev = "warning"; }
+      }
       else if (low.Contains("aep sync") && low.Contains("exhausted")) { cat = "AEP sync exhausted"; sev = "warning"; }
       else if (low.Contains("aep sync retry")) { cat = "AEP sync retry failed"; sev = "warning"; }
-      else if (low.Contains("unknown ticket")) { cat = "Unknown ticket"; sev = "warning"; }
+      else if (low.Contains("unknown ticket")) {
+        if (ClosedBefore(TicketOf(msg), time)) { cat = LateClose; sev = "info"; } else { cat = "Unknown ticket"; sev = "warning"; }
+      }
       else if (low.StartsWith("alert:") && low.Contains("take profit hit")) { cat = "Take profit hit"; sev = "info"; }
       else if (low.StartsWith("alert:")) { cat = "Alert"; sev = "warning"; }
-      else if (low.Contains("pair_blocked")) { cat = "Mirror copier blocked"; sev = "warning"; }
+      else if (low.Contains("pair_blocked") && low.Contains("not connected")) { cat = "Mirror copier blocked: terminal not connected"; sev = "warning"; }
+      else if (low.Contains("pair_blocked")) { cat = "Mirror copier waiting"; sev = "info"; }
       else if (low.Contains("spread too wide")) { cat = "Entry blocked: spread too wide"; sev = "info"; }
       else if (low.Contains("timer gap")) { cat = "Collector timer stall"; sev = "info"; }
       else if (low.StartsWith("open #")) cat = "Order opened";
@@ -523,7 +568,9 @@ namespace Mt4DashV2 {
       if (low.Contains("connect failed") || (low.Contains("connection to") && low.Contains("lost"))) {
         Add(aggs, term, "journal", date, source, "", "Connection failed" + (fm.Success ? ": " + fm.Groups[1].Value : ""), "warning", time, msg, double.NaN, "");
       } else if (fm.Success) {
-        Add(aggs, term, "journal", date, source, "", "Order failed: " + fm.Groups[1].Value, "error", time, msg, double.NaN, "");
+        Match om = RxOrderClose.Match(msg);
+        if (om.Success && ClosedBefore(om.Groups[1].Value, time)) Add(aggs, term, "journal", date, source, "", LateClose, "info", time, msg, double.NaN, "");
+        else Add(aggs, term, "journal", date, source, "", "Order failed: " + fm.Groups[1].Value, "error", time, msg, double.NaN, "");
       } else if (low.StartsWith("login on ")) {
         Add(aggs, term, "journal", date, source, "", "Login", "info", time, msg, double.NaN, "");
       } else if (low.Contains("requote")) {
@@ -595,30 +642,47 @@ namespace Mt4DashV2 {
   ('Project:  ' + $ProjectRoot),
   ('Builder:  ' + $BuilderVersion)) -join "`r`n") + "`r`n")
 
-function Find-Files([string]$Pattern) {
-  $all = [System.IO.Directory]::EnumerateFiles($ProjectRoot, $Pattern, [System.IO.SearchOption]::AllDirectories)
-  $keep = foreach ($f in $all) {
-    $rel = $f.Substring($ProjectRoot.Length)
-    $skip = $false
-    foreach ($x in $Exclude) { if ($rel -like "*\$x*" -or $rel -like "*/$x*") { $skip = $true; break } }
-    if (-not $skip) { $f }
-  }
-  # stable order: older collector tags first (newest version wins anyway)
-  return @($keep | Sort-Object)
+Add-Timing 'start'
+[Mt4DashV2.Builder]::Log.Clear()
+
+# One walk over the project instead of one per file type (listing folders on Google Drive is slow).
+# Folders and files whose name starts with an -Exclude entry are skipped; an unreadable folder is skipped.
+$excludeRx = '^(' + (@($Exclude | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')'
+$found = @{}
+foreach ($k in @('trades', 'open', 'snaps', 'status', 'sync', 'map', 'logs')) { $found[$k] = New-Object System.Collections.Generic.List[string] }
+$dirs = New-Object System.Collections.Generic.Stack[string]
+$dirs.Push($ProjectRoot)
+while ($dirs.Count -gt 0) {
+  $d = $dirs.Pop()
+  try {
+    foreach ($f in [System.IO.Directory]::EnumerateFiles($d)) {
+      $n = [System.IO.Path]::GetFileName($f)
+      if ($n -match $excludeRx) { continue }
+      if ($n -like '*_DetailedStatementLive.csv') { $found['trades'].Add($f) }
+      elseif ($n -like '*_open_now.csv') { $found['open'].Add($f) }
+      elseif ($n -like '*_account_snapshots.csv') { $found['snaps'].Add($f) }
+      elseif ($n -like '*collector_status.txt') { $found['status'].Add($f) }
+      elseif ($n -like '_sync_status*.txt') { $found['sync'].Add($f) }
+      elseif ($n -like '_terminal_identity_map*.txt') { $found['map'].Add($f) }
+      elseif ($n -like '*.log') { $found['logs'].Add($f) }
+    }
+    foreach ($s in [System.IO.Directory]::EnumerateDirectories($d)) { if ([System.IO.Path]::GetFileName($s) -notmatch $excludeRx) { $dirs.Push($s) } }
+  } catch { [Mt4DashV2.Builder]::Log.Add('SKIP ' + $d + ' : ' + $_.Exception.Message) }
 }
+# stable order: older collector tags first (newest version wins anyway)
+function Get-Found([string]$Kind) { return @($found[$Kind] | Sort-Object) }
 function Get-RelativeParts([string]$Path) {
   return @($Path.Substring($ProjectRoot.Length).TrimStart('\', '/') -split '[\\/]')
 }
 
-[Mt4DashV2.Builder]::Log.Clear()
-$tradeFiles = Find-Files '*_DetailedStatementLive.csv'
-$openFiles = Find-Files '*_open_now.csv'
-$snapFiles = Find-Files '*_account_snapshots.csv'
-$statusFiles = Find-Files '*collector_status.txt'
-$syncFiles = @(Find-Files '_sync_status*.txt') + @(Find-Files '_terminal_identity_map*.txt')
+$tradeFiles = Get-Found 'trades'
+$openFiles = Get-Found 'open'
+$snapFiles = Get-Found 'snaps'
+$statusFiles = Get-Found 'status'
+$syncFiles = @(Get-Found 'sync') + @(Get-Found 'map')
 
 # MT4 logs: <terminal>\Experts\yyyymmdd.log and <terminal>\Journal\yyyymmdd.log (also MQL4\Logs and logs)
-$logCandidates = foreach ($f in (Find-Files '*.log')) {
+$logCandidates = foreach ($f in (Get-Found 'logs')) {
   $name = [System.IO.Path]::GetFileName($f)
   if ($name -notmatch '^\d{8}\.log$') { continue }
   $parts = Get-RelativeParts $f
@@ -638,18 +702,24 @@ $logCut = $started.AddDays(1 - $LogDays).ToString('yyyyMMdd')
 $logFiles = @($logCandidates | Where-Object { $_.Date -ge $logCut })
 Write-Host ("Found {0} statement, {1} open, {2} snapshot, {3} status, {4} sync, {5} log files" -f `
   $tradeFiles.Count, $openFiles.Count, $snapFiles.Count, $statusFiles.Count, $syncFiles.Count, $logFiles.Count)
+Add-Timing 'scan'
 
 $total = 0
 $produced = New-Object System.Collections.Generic.List[string]
 $produced.AddRange([Mt4DashV2.Builder]::BuildTrades([string[]]$tradeFiles, $OutDir, $MaxRowsPerFile, [ref]$total))
+Add-Timing 'trades'
 $produced.AddRange([Mt4DashV2.Builder]::BuildOpen([string[]]$openFiles, $OutDir))
+Add-Timing 'open'
 $produced.AddRange([Mt4DashV2.Builder]::BuildEquity([string[]]$snapFiles, $OutDir, $EquityMinutes))
+Add-Timing 'equity'
 $statusLabels = @($statusFiles | ForEach-Object { [System.IO.Path]::GetFileName($_) })
 $produced.AddRange([Mt4DashV2.Builder]::BuildBundle([string[]]$statusFiles, [string[]]$statusLabels, $OutDir, 'status_all.txt'))
 $syncLabels = @($syncFiles | ForEach-Object { (Get-RelativeParts $_) -join '/' })
 $produced.AddRange([Mt4DashV2.Builder]::BuildBundle([string[]]$syncFiles, [string[]]$syncLabels, $OutDir, 'sync_all.txt'))
+Add-Timing 'status+sync'
 $produced.AddRange([Mt4DashV2.Builder]::BuildHealth([string[]]@($logFiles | ForEach-Object { $_.Path }),
   [string[]]@($logFiles | ForEach-Object { $_.Terminal }), [string[]]@($logFiles | ForEach-Object { $_.Kind }), $OutDir))
+Add-Timing 'logs'
 
 # remove outputs that are no longer produced (e.g. a month split differently)
 Get-ChildItem -LiteralPath $OutDir -File | Where-Object {
@@ -675,6 +745,7 @@ $skipped = @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'SKIP *' })
 $result = '{0} unique closed trades. {1} output files, {2} changed. {3:n1}s' -f $total, $produced.Count, $changed, ((Get-Date) - $started).TotalSeconds
 Write-Host $result
 foreach ($s in $skipped) { Write-Warning $s }
-Write-RunLog ('OK - ' + $result) @($skipped)
+Add-Timing 'write'
+Write-RunLog ('OK - ' + $result) (@('Timing:   ' + ($timing -join ', ')) + @($skipped))
 $mutex.ReleaseMutex()
 if ($VerbosePreference -eq 'Continue') { [Mt4DashV2.Builder]::Log | ForEach-Object { Write-Verbose $_ } }

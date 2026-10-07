@@ -45,8 +45,11 @@ the page reads those.
      the script skips the build on every other PC, so two PCs never write
      the same files. Running the installer on another PC asks before moving
      the build there.
-   - Every run writes `last_build_<PC>.txt` next to the script: when it ran
-     and whether it worked. A run that hangs stops itself after 30 minutes.
+   - Every run writes `last_build_<PC>.txt` next to the script: when it ran,
+     whether it worked and the time per step. A run that hangs stops itself
+     after 30 minutes. After a slow build the scheduled runs wait at least
+     twice as long as it took, so the build never keeps the PC busy more
+     than about a third of the time.
    - Because the script runs from Google Drive, a newer
      `Build-DashboardData.ps1` placed there is used from the next run.
    - `RUN_BUILD_DASHBOARD.bat` builds once now and shows the result;
@@ -97,6 +100,12 @@ once their collector files are synced into `MT4_Terminals`.
   snapshot and no log line for over a day show as *Inactive* (retired or
   switched off) instead of an alarm. Logs cover the last 3 days up to the
   build, so old problems of retired terminals drop out.
+  Not counted as problems (shown with *Everything incl. info*): an EA trying
+  to close an order the broker had already closed by SL/TP (the trade's
+  close time is at most 2 minutes after the log line; the EA then logs
+  "unknown ticket", "closing at 0.00000 failed" or "AEP close EXHAUSTED"),
+  take-profit and emergency-exit alerts, the mirror copier waiting for a
+  leg, and EA load/unload lines in the journal.
 
 R = net result ÷ (initial SL distance × value of one point × lots). The value
 of one point is learned from your own closed trades per symbol. Trades
