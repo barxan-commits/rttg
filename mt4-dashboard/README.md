@@ -57,6 +57,12 @@ the page reads those.
      than about a third of the time.
    - Because the script runs from Google Drive, a newer
      `Build-DashboardData.ps1` placed there is used from the next run.
+   - Data folders outside `MT4_Terminals` (for example another EA's
+     terminal, `MT4 RSI EA Data\VPS\M15_Terminal`) go in
+     `EXTRA_FOLDERS.txt` next to the script, one per line: a full path or a
+     path inside My Drive. A folder can be one terminal (it has Reports,
+     Experts or Journal inside) or a folder of terminals. A folder that is
+     not found is noted in `last_build_<PC>.txt`.
    - `RUN_BUILD_DASHBOARD.bat` builds once now and shows the result;
      `REMOVE_AUTO_UPDATE.bat` turns the automatic build off.
 3. Open the online page. The first time, allow Google Drive when claude.ai

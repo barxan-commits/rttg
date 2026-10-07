@@ -682,7 +682,7 @@ function ingestSync(text, label) {
   }
   const logical = field(/^Logical terminal:\s*(.+)$/i);
   if (logical) {
-    upsertSync(logical, { account: field(/^Expected account:\s*(\d+)/i), status: field(/^STATUS:\s*(.+)$/i) || 'OK', detail: field(/^Hint:\s*(.+)$/i), run: field(/^Run started:\s*(.+)$/i) });
+    upsertSync(logical, { account: field(/^Expected account:\s*(\d+)/i) || field(/^Account:\s*(\d+)/i), status: field(/^STATUS:\s*(.+)$/i) || 'OK', detail: field(/^Hint:\s*(.+)$/i), run: field(/^Run started:\s*(.+)$/i) });
     return;
   }
   const profile = field(/^Sync profile:\s*(.+)$/i), run = field(/^Run:\s*(.+)$/i);
@@ -1826,7 +1826,9 @@ function renderHealth(host) {
     { key: 'sync', label: 'Sync', render: (td, v, r) => { td.textContent = v || '–'; if (r.syncDetail) td.title = r.syncDetail; } },
     { key: 'todo', label: 'What to do' },
   ], hm.rows, { tabId: 'healthTerm', defKey: 'rank', onRow: (r) => { if (r.account) { state.account = r.account; syncFilterInputs(); render(); } } });
-  if (DB.sync.unmapped.length) host.appendChild(el('p', { class: 'hint' }, 'Accounts the AutoSync identity map lists as UNMAPPED: ' + DB.sync.unmapped.map((u) => u.account + (u.profile ? ' (' + u.profile + ')' : '')).join(', ') + '. Give them a terminal label in the sync profile.'));
+  const synced = new Set([...DB.sync.terminals.values()].map((t) => t.account).filter(Boolean));
+  const unmapped = DB.sync.unmapped.filter((u) => !synced.has(u.account));
+  if (unmapped.length) host.appendChild(el('p', { class: 'hint' }, 'Accounts the AutoSync identity map lists as UNMAPPED: ' + unmapped.map((u) => u.account + (u.profile ? ' (' + u.profile + ')' : '')).join(', ') + '. Give them a terminal label in the sync profile.'));
 
   // problems from logs, aggregated over the log days
   host.appendChild(el('h2', { class: 'section-title' }, 'Problems in the logs'));

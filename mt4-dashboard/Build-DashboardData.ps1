@@ -30,6 +30,10 @@
   Drive and run INSTALL_AUTO_UPDATE.bat from there once on the build PC. It
   writes BUILD_PC.txt (other PCs then skip the build), and every run writes
   last_build_<PC>.txt next to this script.
+
+  More folders (e.g. another EA's terminals): -ExtraFolders, or one per line in
+  EXTRA_FOLDERS.txt next to this script. A folder can be one terminal (it has
+  Reports, Experts or Journal inside) or a folder of terminals.
 #>
 [CmdletBinding()]
 param(
@@ -44,12 +48,14 @@ param(
   [ValidateRange(1, 30)]
   [int]$LogDays = 3,
   [string[]]$Exclude = @('ARCHIVE', '_DASHBOARD', '_MASTER', 'mastergpt'),
+  # more data folders; a relative path is taken inside the folder that holds ProjectRoot (My Drive)
+  [string[]]$ExtraFolders = @(),
   # build even when BUILD_PC.txt names another PC
   [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
-$BuilderVersion = '2026-10-07c'
+$BuilderVersion = '2026-10-08'
 $pc = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
 $here = $PSScriptRoot
 $runLog = if ($here) { Join-Path $here ('last_build_' + $pc + '.txt') } else { '' }
@@ -119,6 +125,26 @@ $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 if ([string]::IsNullOrWhiteSpace($OutDir)) { $OutDir = Join-Path $ProjectRoot '_DASHBOARD' }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
+
+# folders to scan: the project, plus -ExtraFolders and EXTRA_FOLDERS.txt (one per line, # starts a comment).
+# Base is where the relative path starts, so its first part names the terminal (used for logs and sync files).
+$roots = New-Object System.Collections.Generic.List[object]
+$roots.Add([pscustomobject]@{ Path = $ProjectRoot.TrimEnd('\', '/'); Base = $ProjectRoot.TrimEnd('\', '/') })
+$extraList = @($ExtraFolders)
+$extraFile = if ($here) { Join-Path $here 'EXTRA_FOLDERS.txt' } else { '' }
+if ($extraFile -and (Test-Path -LiteralPath $extraFile)) {
+  $extraList += @(Get-Content -LiteralPath $extraFile | ForEach-Object { $_.Trim().Trim('"').Trim() } | Where-Object { $_ -and -not $_.StartsWith('#') })
+}
+$extraNotes = New-Object System.Collections.Generic.List[string]
+foreach ($x in $extraList) {
+  $p = if ([System.IO.Path]::IsPathRooted($x)) { $x } else { Join-Path (Split-Path -Parent $ProjectRoot) $x }
+  if (-not (Test-Path -LiteralPath $p -PathType Container)) { $extraNotes.Add('SKIP extra folder not found: ' + $x); continue }
+  $p = (Resolve-Path -LiteralPath $p).Path.TrimEnd('\', '/')
+  if (@($roots | Where-Object { ($p + '\').StartsWith($_.Path + '\', [StringComparison]::OrdinalIgnoreCase) -or ($p + '/').StartsWith($_.Path + '/', [StringComparison]::OrdinalIgnoreCase) }).Count) { continue }
+  # one terminal (Reports, Experts, Journal, MQL4 or logs inside): name it after the folder; else a folder of terminals
+  $isTerminal = @(Get-ChildItem -LiteralPath $p -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^(Reports|Experts|Journal|MQL4|logs)$' }).Count -gt 0
+  $roots.Add([pscustomobject]@{ Path = $p; Base = $(if ($isTerminal) { Split-Path -Parent $p } else { $p }) })
+}
 
 if (-not ('Mt4DashV2.Builder' -as [type])) {
 Add-Type -Language CSharp -TypeDefinition @'
@@ -651,7 +677,7 @@ $excludeRx = '^(' + (@($Exclude | ForEach-Object { [regex]::Escape($_) }) -join 
 $found = @{}
 foreach ($k in @('trades', 'open', 'snaps', 'status', 'sync', 'map', 'logs')) { $found[$k] = New-Object System.Collections.Generic.List[string] }
 $dirs = New-Object System.Collections.Generic.Stack[string]
-$dirs.Push($ProjectRoot)
+foreach ($r in $roots) { $dirs.Push($r.Path) }
 while ($dirs.Count -gt 0) {
   $d = $dirs.Pop()
   try {
@@ -672,7 +698,13 @@ while ($dirs.Count -gt 0) {
 # stable order: older collector tags first (newest version wins anyway)
 function Get-Found([string]$Kind) { return @($found[$Kind] | Sort-Object) }
 function Get-RelativeParts([string]$Path) {
-  return @($Path.Substring($ProjectRoot.Length).TrimStart('\', '/') -split '[\\/]')
+  $best = $null
+  foreach ($r in $roots) {
+    $inside = $Path.StartsWith($r.Path + '\', [StringComparison]::OrdinalIgnoreCase) -or $Path.StartsWith($r.Path + '/', [StringComparison]::OrdinalIgnoreCase)
+    if ($inside -and (-not $best -or $r.Path.Length -gt $best.Path.Length)) { $best = $r }
+  }
+  $base = if ($best) { $best.Base } else { $ProjectRoot }
+  return @($Path.Substring($base.Length).TrimStart('\', '/') -split '[\\/]')
 }
 
 $tradeFiles = Get-Found 'trades'
@@ -732,6 +764,7 @@ $manifest = [ordered]@{
   builder     = $BuilderVersion
   machine     = $pc
   projectRoot = $ProjectRoot
+  extraFolders = @($roots | Select-Object -Skip 1 | ForEach-Object { $_.Path })
   trades      = $total
   logDays     = $LogDays
   sources     = [ordered]@{ statements = $tradeFiles.Count; open = $openFiles.Count; snapshots = $snapFiles.Count; status = $statusFiles.Count; sync = $syncFiles.Count; logs = $logFiles.Count }
@@ -741,7 +774,7 @@ $json = $manifest | ConvertTo-Json -Depth 4
 [void][Mt4DashV2.Builder]::WriteIfChanged((Join-Path $OutDir 'mt4dash_manifest.json'), [System.Text.UTF8Encoding]::new($false).GetBytes($json))
 
 $changed = @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'wrote *' -or $_ -like 'removed *' }).Count
-$skipped = @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'SKIP *' })
+$skipped = @($extraNotes) + @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'SKIP *' })
 $result = '{0} unique closed trades. {1} output files, {2} changed. {3:n1}s' -f $total, $produced.Count, $changed, ((Get-Date) - $started).TotalSeconds
 Write-Host $result
 foreach ($s in $skipped) { Write-Warning $s }
