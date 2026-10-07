@@ -33,24 +33,32 @@ the Google Drive connector passes about 1 MB per file). So a small script
 writes compact, gzip-compressed copies into `MT4_Terminals\_DASHBOARD`, and
 the page reads those.
 
-1. Copy `Build-DashboardData.ps1` and `RUN_BUILD_DASHBOARD.bat` to **one**
-   machine that has `I:\My Drive\MT4_Terminals` (the VPS is best: it is
-   always on). Run it on one machine only.
-2. Run `RUN_BUILD_DASHBOARD.bat` once and check it prints the number of
-   trades. It only reads MT4 data; it writes only inside `_DASHBOARD`.
-3. Schedule it every 10 minutes (Command Prompt, adjust the path):
-
-   ```
-   schtasks /Create /TN "MT4 Dashboard build" /SC MINUTE /MO 10 /TR "\"C:\path\to\RUN_BUILD_DASHBOARD.bat\"" /F
-   ```
-
-4. Open the online page. The first time, allow Google Drive when claude.ai
+1. Put these files in `MT4_Terminals\_DASHBOARD_BUILD` on Google Drive:
+   `Build-DashboardData.ps1`, `AUTO_BUILD.vbs`, `INSTALL_AUTO_UPDATE.bat`,
+   `REMOVE_AUTO_UPDATE.bat`, `RUN_BUILD_DASHBOARD.bat`.
+2. On the VPS (it is always on), double-click `INSTALL_AUTO_UPDATE.bat` in
+   that folder, once. It builds the data while you watch, then creates the
+   scheduled task *MT4 Dashboard build*: every 10 minutes, hidden, at low
+   priority, while you are logged in (a disconnected Remote Desktop session
+   is fine). It only reads MT4 data and writes only inside `_DASHBOARD`.
+   - `BUILD_PC.txt` (written by the installer) names the PC that builds;
+     the script skips the build on every other PC, so two PCs never write
+     the same files. Running the installer on another PC asks before moving
+     the build there.
+   - Every run writes `last_build_<PC>.txt` next to the script: when it ran
+     and whether it worked. A run that hangs stops itself after 30 minutes.
+   - Because the script runs from Google Drive, a newer
+     `Build-DashboardData.ps1` placed there is used from the next run.
+   - `RUN_BUILD_DASHBOARD.bat` builds once now and shows the result;
+     `REMOVE_AUTO_UPDATE.bat` turns the automatic build off.
+3. Open the online page. The first time, allow Google Drive when claude.ai
    asks. The page refreshes itself every 15 minutes while open; the
    **Refresh from Drive** button reloads now. Files that did not change
    come from your browser's cache, so refreshes are quick.
 
 Data is as fresh as the last script run plus Google Drive sync. The header
-shows when and where the data was built. New terminals appear automatically
+shows how long ago and where the data was built, and a warning appears when
+it is more than an hour old. New terminals appear automatically
 once their collector files are synced into `MT4_Terminals`.
 
 ## Views
@@ -80,11 +88,15 @@ once their collector files are synced into `MT4_Terminals`.
 - **Open positions**: exposure and floating P/L per magic (P/L per position
   needs the updated collector, see below).
 - **Accounts**: balance, equity, equity drawdown chart, worst floating loss.
-- **Health**: per terminal status (critical, not syncing, stale, errors),
-  problems found in the Experts and Journal logs (AEP failures, emergency
-  exits, unknown tickets, error codes, connection failures, failed orders,
+- **Health**: a *What to do* list, then per terminal status (not syncing,
+  critical, disconnected, stale, errors, inactive), problems found in the
+  Experts and Journal logs (AEP failures, emergency exits, unknown tickets,
+  MT4 error codes in plain words, connection failures, failed orders,
   blocked mirror copier), ping, which EAs are running with their magic
-  number and fade settings, and EA loads/restarts.
+  number and fade settings, and EA loads/restarts. Terminals with no
+  snapshot and no log line for over a day show as *Inactive* (retired or
+  switched off) instead of an alarm. Logs cover the last 3 days up to the
+  build, so old problems of retired terminals drop out.
 
 R = net result ÷ (initial SL distance × value of one point × lots). The value
 of one point is learned from your own closed trades per symbol. Trades
@@ -117,7 +129,7 @@ P/L.
 | `*_open_now.csv` | Open positions (latest file per account) |
 | `*_account_snapshots.csv` | Balance / equity chart and floating P/L |
 | `*_collector_status.txt` | Collector version and health on the Accounts tab |
-| `Experts\yyyymmdd.log`, `Journal\yyyymmdd.log` | Health tab (read by the build script, last 3 days by default: `-LogDays`) |
+| `Experts\yyyymmdd.log`, `Journal\yyyymmdd.log` | Health tab (read by the build script: the last 3 days up to the build, `-LogDays`) |
 | `_sync_status*.txt`, `_terminal_identity_map*.txt` | Not-syncing and unmapped-terminal warnings on the Health tab |
 | `_DASHBOARD\*.csv.gz`, `status_all.txt`, `sync_all.txt` | The compact copies made by `Build-DashboardData.ps1` (the local page reads these too) |
 
@@ -128,8 +140,11 @@ P/L.
   Trades are merged by account + ticket, keeping the row from the newest
   collector version. The **Files** tab shows how many rows each file
   contributed.
-- "Base comment" groups `X`, `X[sl]` and `X[tp]` together. Switch
-  **Group comments by** to *Raw comment* to split them.
+- "Base comment" groups `X`, `X[sl]` and `X[tp]` together, and copier
+  comments that end in a ticket (`MP T10 #2052488935`) under `MP T10`.
+  Switch **Group comments by** to *Raw comment* to split them. Comments,
+  magics and symbols that only have open positions so far are listed in the
+  filters as *(open only)*.
 - Net profit = profit + commission + swap. Max drawdown is measured on
   closed-trade cumulative profit. Times are MT4 server time.
 - Floating P/L per open position needs the updated collector (see above).

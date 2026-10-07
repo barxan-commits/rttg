@@ -25,10 +25,17 @@
 
   Run it on ONE machine only (the VPS is best: it is always on), e.g. every
   10 minutes with Task Scheduler. Works with Windows PowerShell 5.1 and 7.
+
+  Automatic build: put this script in MT4_Terminals\_DASHBOARD_BUILD on Google
+  Drive and run INSTALL_AUTO_UPDATE.bat from there once on the build PC. It
+  writes BUILD_PC.txt (other PCs then skip the build), and every run writes
+  last_build_<PC>.txt next to this script.
 #>
 [CmdletBinding()]
 param(
-  [string]$ProjectRoot = 'I:\My Drive\MT4_Terminals',
+  # default: the parent folder when this script is in MT4_Terminals\_DASHBOARD_BUILD,
+  # otherwise I:\My Drive\MT4_Terminals
+  [string]$ProjectRoot = '',
   [string]$OutDir = '',
   [ValidateRange(1, 240)]
   [int]$EquityMinutes = 15,
@@ -36,10 +43,56 @@ param(
   [int]$MaxRowsPerFile = 10000,
   [ValidateRange(1, 30)]
   [int]$LogDays = 3,
-  [string[]]$Exclude = @('ARCHIVE', '_DASHBOARD', '_MASTER', 'mastergpt')
+  [string[]]$Exclude = @('ARCHIVE', '_DASHBOARD', '_MASTER', 'mastergpt'),
+  # build even when BUILD_PC.txt names another PC
+  [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
+$BuilderVersion = '2026-10-07'
+$pc = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
+$here = $PSScriptRoot
+$runLog = if ($here) { Join-Path $here ('last_build_' + $pc + '.txt') } else { '' }
+$started = Get-Date
+
+# every run leaves a short note next to the script, so a failing scheduled run is visible on Drive
+function Write-RunLog([string]$Result, [string[]]$More) {
+  if (-not $runLog) { return }
+  $lines = @(
+    ('MT4 Dashboard build on ' + $pc),
+    ('Started:  ' + $started.ToString('yyyy-MM-dd HH:mm:ss')),
+    ('Finished: ' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')),
+    ('Result:   ' + $Result),
+    ('Project:  ' + $ProjectRoot),
+    ('Builder:  ' + $BuilderVersion)) + @($More)
+  try { [System.IO.File]::WriteAllText($runLog, ($lines -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding($false))) } catch { }
+}
+trap {
+  Write-RunLog ('FAILED - ' + $_.Exception.Message) @($_.InvocationInfo.PositionMessage)
+  break
+}
+
+# only one PC builds: the one named in BUILD_PC.txt (written by INSTALL_AUTO_UPDATE.bat)
+$buildPcFile = if ($here) { Join-Path $here 'BUILD_PC.txt' } else { '' }
+if (-not $Force -and $buildPcFile -and (Test-Path -LiteralPath $buildPcFile)) {
+  $buildPc = @(Get-Content -LiteralPath $buildPcFile | ForEach-Object { $_.Trim() } | Where-Object { $_ }) | Select-Object -First 1
+  if ($buildPc -and $buildPc -ine $pc) {
+    Write-Host ('Skipped: the dashboard data is built on {0} (BUILD_PC.txt), not on {1}. Run INSTALL_AUTO_UPDATE.bat here to move the build to this PC.' -f $buildPc, $pc)
+    exit 0
+  }
+}
+# one build at a time on this PC (the scheduled task and a manual run could overlap)
+$mutex = $null
+try { $mutex = New-Object System.Threading.Mutex($false, 'Global\MT4DashboardBuild') } catch { $mutex = New-Object System.Threading.Mutex($false, 'MT4DashboardBuild') }
+$owned = $false
+try { $owned = $mutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
+if (-not $owned) { Write-Host 'Another dashboard build is running on this PC; this run was skipped.'; exit 0 }
+# keep the MT4 terminals responsive
+try { [System.Diagnostics.Process]::GetCurrentProcess().PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal } catch { }
+
+if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
+  $ProjectRoot = if ($here -and (Split-Path -Leaf $here) -ieq '_DASHBOARD_BUILD') { Split-Path -Parent $here } else { 'I:\My Drive\MT4_Terminals' }
+}
 if (-not (Test-Path -LiteralPath $ProjectRoot)) { throw "ProjectRoot does not exist: $ProjectRoot" }
 $ProjectRoot = (Resolve-Path -LiteralPath $ProjectRoot).Path
 if ([string]::IsNullOrWhiteSpace($OutDir)) { $OutDir = Join-Path $ProjectRoot '_DASHBOARD' }
@@ -57,6 +110,16 @@ using System.Text;
 using System.Text.RegularExpressions;
 
 namespace Mt4DashV2 {
+  // ends a run that hangs (e.g. a file Google Drive cannot fetch), so the next scheduled run can start
+  public static class Watchdog {
+    static System.Threading.Timer timer;
+    public static void Start(int minutes, string logPath, string logText) {
+      timer = new System.Threading.Timer(delegate(object o) {
+        try { if (!string.IsNullOrEmpty(logPath)) File.WriteAllText(logPath, logText); } catch (Exception) { }
+        Environment.Exit(3);
+      }, null, (long)minutes * 60000L, System.Threading.Timeout.Infinite);
+    }
+  }
   public class Csv {
     public string[] Header;
     public Dictionary<string, int> Index;
@@ -421,12 +484,14 @@ namespace Mt4DashV2 {
       if (isExpertTag && low.StartsWith("loaded successfully")) cat = "EA loaded";
       else if (isExpertTag && low.StartsWith("removed")) cat = "EA removed";
       else if (um.Success) { int code = int.Parse(um.Groups[1].Value); cat = "EA stopped: " + (code >= 0 && code < UninitNames.Length ? UninitNames[code] : "reason " + code); }
-      else if (low.Contains("emergency exit")) { cat = "Emergency exit"; sev = "critical"; }
+      // the EA's own hard-stop exit: a loss event worth seeing, not a terminal fault
+      else if (low.Contains("emergency exit")) { cat = "Emergency exit"; sev = "warning"; }
       else if (low.Contains("aep close") && low.Contains("exhausted")) { cat = "AEP close exhausted"; sev = "critical"; }
       else if (low.Contains("aep close retry")) { cat = "AEP close retry failed"; sev = "warning"; }
       else if (low.Contains("aep sync") && low.Contains("exhausted")) { cat = "AEP sync exhausted"; sev = "warning"; }
       else if (low.Contains("aep sync retry")) { cat = "AEP sync retry failed"; sev = "warning"; }
       else if (low.Contains("unknown ticket")) { cat = "Unknown ticket"; sev = "warning"; }
+      else if (low.StartsWith("alert:") && low.Contains("take profit hit")) { cat = "Take profit hit"; sev = "info"; }
       else if (low.StartsWith("alert:")) { cat = "Alert"; sev = "warning"; }
       else if (low.Contains("pair_blocked")) { cat = "Mirror copier blocked"; sev = "warning"; }
       else if (low.Contains("spread too wide")) { cat = "Entry blocked: spread too wide"; sev = "info"; }
@@ -438,6 +503,8 @@ namespace Mt4DashV2 {
       else {
         Match em = RxErrCode.Match(msg);
         if (em.Success) { cat = "Error " + em.Groups[1].Value; sev = "error"; }
+        else if (low.Contains("cannot open file")) { cat = "Cannot open file"; sev = "error"; }
+        else if (low.Contains("trade operations not allowed")) { cat = "Trading not allowed (AutoTrading off or not allowed in EA settings)"; sev = "error"; }
         else if (level == "3") { cat = "Terminal error"; sev = "error"; }
       }
       if (cat != null) Add(aggs, term, "experts", date, source, chart, cat, sev, time, msg, double.NaN, magic);
@@ -463,6 +530,8 @@ namespace Mt4DashV2 {
         Add(aggs, term, "journal", date, source, "", "Requote", "warning", time, msg, double.NaN, "");
       } else if (low.Contains("trade context is busy")) {
         Add(aggs, term, "journal", date, source, "", "Trade context busy", "warning", time, msg, double.NaN, "");
+      } else if (low.Contains(": loaded successfully") || low.EndsWith(": removed") || low.Contains(": initialized") || low.Contains(": uninit reason")) {
+        // EA and indicator load/unload lines carry a high level in the journal but are not errors
       } else if (level == "2" || level == "3") {
         Add(aggs, term, "journal", date, source, "", "Terminal error", "error", time, msg, double.NaN, "");
       }
@@ -519,6 +588,13 @@ namespace Mt4DashV2 {
 '@
 }
 
+[Mt4DashV2.Watchdog]::Start(30, $runLog, (@(
+  ('MT4 Dashboard build on ' + $pc),
+  ('Started:  ' + $started.ToString('yyyy-MM-dd HH:mm:ss')),
+  'Result:   FAILED - stopped after 30 minutes. Is Google Drive running and online on this PC?',
+  ('Project:  ' + $ProjectRoot),
+  ('Builder:  ' + $BuilderVersion)) -join "`r`n") + "`r`n")
+
 function Find-Files([string]$Pattern) {
   $all = [System.IO.Directory]::EnumerateFiles($ProjectRoot, $Pattern, [System.IO.SearchOption]::AllDirectories)
   $keep = foreach ($f in $all) {
@@ -534,7 +610,6 @@ function Get-RelativeParts([string]$Path) {
   return @($Path.Substring($ProjectRoot.Length).TrimStart('\', '/') -split '[\\/]')
 }
 
-$started = Get-Date
 [Mt4DashV2.Builder]::Log.Clear()
 $tradeFiles = Find-Files '*_DetailedStatementLive.csv'
 $openFiles = Find-Files '*_open_now.csv'
@@ -558,12 +633,9 @@ $logCandidates = foreach ($f in (Find-Files '*.log')) {
   if (-not $kind) { continue }
   [pscustomobject]@{ Path = $f; Terminal = $parts[0]; Kind = $kind; Date = $name.Substring(0, 8) }
 }
-$logFiles = foreach ($g in @($logCandidates | Group-Object Terminal, Kind)) {
-  $newest = ($g.Group | Sort-Object Date | Select-Object -Last 1).Date
-  $cut = [datetime]::ParseExact($newest, 'yyyyMMdd', [Globalization.CultureInfo]::InvariantCulture).AddDays(1 - $LogDays).ToString('yyyyMMdd')
-  $g.Group | Where-Object { $_.Date -ge $cut }
-}
-$logFiles = @($logFiles)
+# the last LogDays calendar days up to today, so terminals that stopped logging drop out
+$logCut = $started.AddDays(1 - $LogDays).ToString('yyyyMMdd')
+$logFiles = @($logCandidates | Where-Object { $_.Date -ge $logCut })
 Write-Host ("Found {0} statement, {1} open, {2} snapshot, {3} status, {4} sync, {5} log files" -f `
   $tradeFiles.Count, $openFiles.Count, $snapFiles.Count, $statusFiles.Count, $syncFiles.Count, $logFiles.Count)
 
@@ -586,7 +658,9 @@ Get-ChildItem -LiteralPath $OutDir -File | Where-Object {
 
 $manifest = [ordered]@{
   generatedAt = $started.ToString('yyyy-MM-dd HH:mm:ss')
-  machine     = $env:COMPUTERNAME
+  generatedUtc = $started.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+  builder     = $BuilderVersion
+  machine     = $pc
   projectRoot = $ProjectRoot
   trades      = $total
   logDays     = $LogDays
@@ -598,6 +672,9 @@ $json = $manifest | ConvertTo-Json -Depth 4
 
 $changed = @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'wrote *' -or $_ -like 'removed *' }).Count
 $skipped = @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'SKIP *' })
-Write-Host ("{0} unique closed trades. {1} output files, {2} changed. {3:n1}s" -f $total, $produced.Count, $changed, ((Get-Date) - $started).TotalSeconds)
+$result = '{0} unique closed trades. {1} output files, {2} changed. {3:n1}s' -f $total, $produced.Count, $changed, ((Get-Date) - $started).TotalSeconds
+Write-Host $result
 foreach ($s in $skipped) { Write-Warning $s }
+Write-RunLog ('OK - ' + $result) @($skipped)
+$mutex.ReleaseMutex()
 if ($VerbosePreference -eq 'Continue') { [Mt4DashV2.Builder]::Log | ForEach-Object { Write-Verbose $_ } }

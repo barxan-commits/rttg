@@ -182,10 +182,13 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .tooltip .tt-row i { display: inline-block; width: 12px; height: 2px; border-radius: 1px; }
 .tooltip .tt-row span { color: var(--text-secondary); }
 .hint { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+.todo { margin: 6px 0 14px; padding-left: 0; list-style: none; display: grid; gap: 6px; font-size: 13px; }
+.todo li { line-height: 1.45; } .todo .pill { margin-right: 4px; }
 .pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 1px 9px 1px 7px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-primary); white-space: nowrap; }
 .pill i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .pill.critical i { background: var(--st-critical); } .pill.serious i { background: var(--st-serious); }
-.pill.warning i { background: var(--st-warning); } .pill.good i { background: var(--st-good); } .pill.info i { background: var(--text-muted); }
+.pill.warning i { background: var(--st-warning); } .pill.good i { background: var(--st-good); } .pill.info i, .pill.idle i { background: var(--text-muted); }
+.pill.idle { color: var(--text-muted); }
 .controls { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin-bottom: 10px; }
 .controls label { display: flex; flex-direction: column; font-size: 12px; color: var(--text-secondary); gap: 3px; }
 .controls select { font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); max-width: 260px; }
@@ -260,7 +263,7 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
       <label>Side <select id="fSide"><option value="">All</option><option>BUY</option><option>SELL</option></select></label>
       <label>Group comments by
         <select id="fCommentMode">
-          <option value="base">Base comment (no [sl]/[tp])</option>
+          <option value="base">Base comment (no [sl]/[tp], no #ticket)</option>
           <option value="raw">Raw comment</option>
         </select>
       </label>
@@ -465,6 +468,8 @@ function isCandidate(name) {
 
 /* ---------------- trade records ---------------- */
 function stripSuffix(c) { return (c || '').replace(/\s*\[(sl|tp|so)\]\s*$/i, '').trim(); }
+// copier trades that carry the master ticket ("MP T10 #2052488935") group under one name ("MP T10")
+function baseOf(base, comment) { const b = base || stripSuffix(comment); return b.replace(/\s*#\d{6,}$/, '').trim() || b; }
 function deriveExit(c) {
   const m = /\[(sl|tp|so)\]\s*$/i.exec(c || '');
   if (!m) return 'Other';
@@ -490,7 +495,7 @@ function ingestTrades(rows, file, report) {
     const type = g(r, 'type').toUpperCase();
     if (type !== 'BUY' && type !== 'SELL') { other++; continue; }
     const comment = g(r, 'comment');
-    const base = g(r, 'base_comment') || stripSuffix(comment);
+    const base = baseOf(g(r, 'base_comment'), comment);
     const profit = num0(g(r, 'profit')), commission = num0(g(r, 'commission')), swap = num0(g(r, 'swap'));
     let net = num(g(r, 'net_profit')); if (Number.isNaN(net)) net = profit + commission + swap;
     const t = {
@@ -603,7 +608,7 @@ function ingestOpen(rows, file, report) {
       ticket: g(r, 'ticket'), type: g(r, 'type').toUpperCase(), lots: num0(g(r, 'lots')), symbol: g(r, 'symbol'),
       openTime: parseMT(g(r, 'open_time')), openPrice: num(g(r, 'open_price')),
       sl: num(g(r, 'last_sl')), tp: num(g(r, 'last_tp')), magic: g(r, 'magic') || '0', comment,
-      base: g(r, 'base_comment') || stripSuffix(comment), mfe: num(g(r, 'mfe_points')), mae: num(g(r, 'mae_points')),
+      base: baseOf(g(r, 'base_comment'), comment), mfe: num(g(r, 'mfe_points')), mae: num(g(r, 'mae_points')),
       lastSeen: parseMT(g(r, 'last_seen')),
       profit: num(g(r, 'profit')), swap: num(g(r, 'swap')), commission: num(g(r, 'commission')),
     };
@@ -650,13 +655,16 @@ function ingestHealth(rows, report) {
   }
   report.rows = rows.length - 1;
 }
-const SYNC_BAD = (st) => st && st !== 'OK';
+// "OK (COLLECTOR WARNING)" still syncs: the collector behind it is old or stopped
+const SYNC_BAD = (st) => !!st && !/^OK\b/i.test(st);
+const SYNC_WARN = (st) => !!st && /^OK\b/i.test(st) && st.trim().toUpperCase() !== 'OK';
+const syncRank = (st) => (SYNC_BAD(st) ? 2 : SYNC_WARN(st) ? 1 : 0);
 function upsertSync(term, info) {
   const prev = DB.sync.terminals.get(term) || { terminal: term, account: '', status: 'OK', detail: '', profile: '', run: '' };
   if (info.account) prev.account = info.account;
   if (info.profile) prev.profile = info.profile;
   if (info.run) prev.run = info.run;
-  if (SYNC_BAD(info.status) || !SYNC_BAD(prev.status)) { prev.status = info.status || prev.status; if (info.detail) prev.detail = info.detail; }
+  if (syncRank(info.status) >= syncRank(prev.status)) { prev.status = info.status || prev.status; if (info.detail) prev.detail = info.detail; }
   DB.sync.terminals.set(term, prev);
 }
 function ingestSync(text, label) {
@@ -783,8 +791,11 @@ async function loadSources(files) {
   $('#empty').hidden = true; $('#app').hidden = false;
   const tf = DB.files.filter((f) => f.kind === 'trades').length;
   let sum = DB.trades.length.toLocaleString('en-US') + ' closed trades · ' + DB.accounts.size + ' accounts · ' + tf + ' trade files';
-  if (SOURCE.kind === 'drive' && SOURCE.manifest) sum += ' · Drive data built ' + SOURCE.manifest.generatedAt + (SOURCE.manifest.machine ? ' on ' + SOURCE.manifest.machine : '');
+  const builtAge = buildAgeMinutes(), builtOn = SOURCE.manifest && SOURCE.manifest.machine ? ' on ' + SOURCE.manifest.machine : '';
+  if (SOURCE.kind === 'drive' && SOURCE.manifest) sum += ' · Drive data built ' + (Number.isFinite(builtAge) ? (builtAge < 1 ? 'just now' : fmtDur(builtAge * 60) + ' ago') : SOURCE.manifest.generatedAt) + builtOn;
   $('#summary').textContent = sum;
+  DB.staleWarning = builtAge > STALE_BUILD_MIN ? 'The data in Google Drive was last built ' + fmtDur(builtAge * 60) + ' ago (' + SOURCE.manifest.generatedAt + builtOn
+    + '), so newer trades, open positions and comments are missing. To rebuild it automatically every 10 minutes, open MT4_Terminals\\_DASHBOARD_BUILD in Google Drive on the VPS and double-click INSTALL_AUTO_UPDATE.bat once. If you already did, check that the VPS is on, you are logged in there and Google Drive is running.' : '';
   const failed = DB.files.filter((f) => f.kind === 'failed').length;
   if (failed) DB.loadWarning = failed + ' file(s) could not be downloaded from Drive, so figures may be incomplete. See the Files tab and press Refresh from Drive.';
   else DB.loadWarning = '';
@@ -794,6 +805,13 @@ async function loadSources(files) {
   render();
 }
 let KEEP_FILTERS = false;
+const STALE_BUILD_MIN = 60;
+// minutes since the build script last wrote the Drive data (NaN when not loaded from Drive)
+function buildAgeMinutes() {
+  if (SOURCE.kind !== 'drive' || !SOURCE.manifest) return NaN;
+  const t = SOURCE.manifest.generatedUtc ? Date.parse(SOURCE.manifest.generatedUtc) : SOURCE.manifestTime;
+  return Number.isFinite(t) ? Math.max(0, (Date.now() - t) / 60000) : NaN;
+}
 function showProgress(t) { const p = $('#progress'); p.hidden = false; p.textContent = t; }
 function hideProgress() { $('#progress').hidden = true; }
 
@@ -808,7 +826,7 @@ function commentOf(t) { return state.commentMode === 'raw' ? (t.comment || '(emp
 function fillSelect(sel, values, current, labelFn) {
   sel.textContent = '';
   sel.appendChild(el('option', { value: '' }, 'All'));
-  for (const [v, n] of values) { const o = el('option', { value: v }, (labelFn ? labelFn(v) : v) + '  (' + n + ')'); sel.appendChild(o); }
+  for (const [v, n] of values) { const o = el('option', { value: v }, (labelFn ? labelFn(v) : v) + (n ? '  (' + n + ')' : '  (open only)')); sel.appendChild(o); }
   sel.value = values.some(([v]) => v === current) ? current : '';
 }
 function countBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); m.set(k, (m.get(k) || 0) + 1); } return m; }
@@ -817,9 +835,11 @@ function buildFilterOptions() {
   const accs = countBy(T, (t) => t.account); for (const a of DB.accounts.keys()) if (!accs.has(a)) accs.set(a, 0);
   fillSelect($('#fAccount'), [...accs].sort((a, b) => a[0].localeCompare(b[0])), state.account, accLabel);
   fillSelect($('#fCampaign'), [...countBy(T, (t) => t.campaign)].sort((a, b) => b[1] - a[1]), state.campaign);
-  fillSelect($('#fMagic'), [...countBy(T, (t) => t.magic)].sort((a, b) => (+a[0]) - (+b[0]) || a[0].localeCompare(b[0])), state.magic);
-  fillSelect($('#fComment'), [...countBy(T, commentOf)].sort((a, b) => b[1] - a[1]), state.comment);
-  fillSelect($('#fSymbol'), [...countBy(T, (t) => t.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
+  // strategies with open positions but no closed trade yet are listed too
+  const withOpen = (m, fn) => { for (const p of DB.open) { const k = fn(p); if (!m.has(k)) m.set(k, 0); } return m; };
+  fillSelect($('#fMagic'), [...withOpen(countBy(T, (t) => t.magic), (p) => p.magic)].sort((a, b) => (+a[0]) - (+b[0]) || a[0].localeCompare(b[0])), state.magic);
+  fillSelect($('#fComment'), [...withOpen(countBy(T, commentOf), commentOf)].sort((a, b) => b[1] - a[1]), state.comment);
+  fillSelect($('#fSymbol'), [...withOpen(countBy(T, (t) => t.symbol), (p) => p.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
 }
 function resetFilters(doRender = true) {
   Object.assign(state, { from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '' });
@@ -960,7 +980,7 @@ function renderKPIs(T, s) {
   const hm = healthModel();
   const hs = hm.summary;
   tile('Health', hs.critical ? hs.critical + ' critical' : hs.notSyncing ? hs.notSyncing + ' not syncing' : hs.errors ? hs.errors + ' errors' : hs.stale ? hs.stale + ' stale' : hs.warnings ? hs.warnings + ' warnings' : (hm.rows.length ? 'All OK' : '–'),
-    hm.rows.length ? [hs.errors + ' errors', hs.warnings + ' warnings', hs.stale + ' stale', hs.notSyncing + ' not syncing'].join(' · ') : 'needs health files from the build script',
+    hm.rows.length ? [hs.errors + ' errors', hs.warnings + ' warnings', hs.stale + ' stale', hs.notSyncing + ' not syncing'].concat(hs.inactive ? [hs.inactive + ' inactive'] : []).join(' · ') : 'needs health files from the build script',
     hs.critical || hs.notSyncing ? 'neg' : '', false, 'Open the Health tab', () => { state.tab = 'health'; renderTabsNav(); renderTab(); $('#tabs').scrollIntoView({ behavior: 'smooth' }); });
   tile('Gross profit', money(s.gp), 'Largest win ' + money(s.maxWin), 'pos');
   tile('Gross loss', money(s.gl), 'Largest loss ' + money(s.maxLoss), s.gl < 0 ? 'neg' : '');
@@ -992,6 +1012,7 @@ function renderWarnings(T) {
   const w = $('#warn'); const msgs = [];
   const cur = new Set(T.map((t) => t.currency).filter(Boolean));
   if (cur.size > 1) msgs.push('The selection mixes account currencies (' + [...cur].join(', ') + '). Totals add them together; filter by account for exact figures.');
+  if (DB.staleWarning) msgs.push(DB.staleWarning);
   if (DB.loadWarning) msgs.push(DB.loadWarning);
   if (DB.other) msgs.push(DB.other + ' non BUY/SELL rows (pending orders etc.) were excluded from statistics.');
   w.hidden = !msgs.length; w.textContent = msgs.join(' ');
@@ -1605,6 +1626,15 @@ function renderFiles(host) {
 
 /* ---------------- health ---------------- */
 const SEV_RANK = { critical: 4, error: 3, warning: 2, info: 1, activity: 0 };
+const MT4_ERRORS = {
+  1: 'no change (modify with the same values)', 2: 'common error', 3: 'invalid trade parameters', 4: 'trade server busy', 6: 'no connection to the trade server',
+  8: 'too frequent requests', 64: 'account disabled', 65: 'invalid account', 128: 'trade timeout', 129: 'invalid price', 130: 'invalid stops (SL/TP too close or on the wrong side)',
+  131: 'invalid lot size', 132: 'market closed', 133: 'trading disabled', 134: 'not enough money', 135: 'price changed', 136: 'off quotes', 137: 'broker busy', 138: 'requote',
+  139: 'order locked', 141: 'too many requests', 145: 'too close to market to modify', 146: 'trade context busy', 148: 'too many orders', 149: 'hedging not allowed', 150: 'FIFO rule',
+  4051: 'invalid function parameter', 4105: 'no order selected', 4106: 'unknown symbol', 4107: 'invalid price', 4108: 'unknown ticket (already closed?)',
+  4109: 'trading not allowed: AutoTrading off or "Allow live trading" unticked in the EA settings', 4110: 'buys not allowed', 4111: 'sells not allowed',
+  4112: 'automated trading disabled by the broker', 5004: 'cannot open file',
+};
 const SEV_LEVEL = { critical: 'critical', error: 'serious', warning: 'warning', info: 'info', activity: 'info' };
 function pill(level, label) { const sp = el('span', { class: 'pill ' + level }); sp.appendChild(el('i')); sp.appendChild(document.createTextNode(label)); return sp; }
 function terminalAccounts() {
@@ -1619,6 +1649,17 @@ function terminalAccounts() {
     map.set(label, a.account); mapped.add(a.account);
   }
   return map;
+}
+const IDLE_MIN = 24 * 60;
+function healthAdvice(r) {
+  if (/SOURCE NOT DISCOVERED/i.test(r.sync)) return 'AutoSync cannot find account ' + (r.account || '?') + ' on this PC. If the terminal now runs another account, put the new account in the AutoSync identity map; otherwise attach HistoryExporter_AUTOID_v2 to one chart once.';
+  if (SYNC_BAD(r.sync)) return 'Sync problem: ' + r.sync + '. Run AutoSync again on ' + (r.machine || 'its PC') + '.';
+  if (r.level === 'idle') return 'No snapshot or log for over a day. Fine if retired; otherwise start the terminal and the collector.';
+  if (r.label === 'Critical') return 'The EA failed to close a position. Check this terminal\'s open trades now (Problems below).';
+  if (r.label === 'Disconnected') return 'Not connected to the broker: check login, password and server in this terminal.';
+  if (r.label === 'Stale' || r.label === 'Collector warning') return 'The collector stopped writing: re-attach MT4Collector_Quant (AutoTrading on) or restart the terminal.';
+  if (r.label === 'Errors' || r.label === 'Warnings') return 'See Problems in the logs below.';
+  return '';
 }
 function buildHealthRows() {
   const t2a = terminalAccounts();
@@ -1644,30 +1685,62 @@ function buildHealthRows() {
     }
     rows.push(r);
   }
-  // staleness: compare like with like (broker server time for snapshots)
+  // staleness: compare like with like (broker server time for snapshots, log time for logs)
   const newestSnap = Math.max(-Infinity, ...rows.map((r) => r.lastSnap).filter(Number.isFinite));
+  const newestLog = Math.max(-Infinity, ...rows.map((r) => r.lastLog).filter(Number.isFinite));
   for (const r of rows) {
     r.lag = Number.isFinite(r.lastSnap) && Number.isFinite(newestSnap) ? (newestSnap - r.lastSnap) / 60000 : NaN;
-    r.stale = r.lag > 30;
+    // retired or switched-off terminals: no snapshot and no log line for a day
+    const quietSnap = Number.isFinite(newestSnap) ? !(r.lag <= IDLE_MIN) : true;
+    const quietLog = Number.isFinite(newestLog) ? !(r.lastLog > newestLog - IDLE_MIN * 60000) : true;
+    r.idle = !SYNC_BAD(r.sync) && (Number.isFinite(newestSnap) || Number.isFinite(newestLog)) && quietSnap && quietLog;
+    r.stale = r.lag > 30 && !r.idle;
+    r.collectorWarn = SYNC_WARN(r.sync) && !r.idle;
     if (SYNC_BAD(r.sync)) { r.level = 'critical'; r.label = 'Not syncing'; }
+    else if (r.idle) { r.level = 'idle'; r.label = 'Inactive'; }
     else if (r.critical) { r.level = 'critical'; r.label = 'Critical'; }
     else if (/^no$/i.test(r.connected)) { r.level = 'serious'; r.label = 'Disconnected'; }
     else if (r.stale) { r.level = 'serious'; r.label = 'Stale'; }
+    else if (r.collectorWarn) { r.level = 'serious'; r.label = 'Collector warning'; }
     else if (r.error) { r.level = 'serious'; r.label = 'Errors'; }
     else if (r.warning) { r.level = 'warning'; r.label = 'Warnings'; }
     else { r.level = 'good'; r.label = 'OK'; }
-    r.rank = { critical: 4, serious: 3, warning: 2, good: 1 }[r.level];
+    r.rank = { critical: 4, serious: 3, warning: 2, good: 1, idle: 0 }[r.level];
+    r.todo = healthAdvice(r);
   }
   return rows;
+}
+// one line per kind of problem, worst first, naming the terminals
+function renderHealthTodo(host, rows) {
+  const kinds = [
+    ['Not syncing', (r) => /SOURCE NOT DISCOVERED/i.test(r.sync), 'AutoSync cannot find the account it expects for these terminals. If a terminal now runs a different account, put the new account in the AutoSync identity map for it (unmapped accounts are listed under the table); otherwise attach HistoryExporter_AUTOID_v2 to one chart once.'],
+    ['Sync problem', (r) => SYNC_BAD(r.sync) && !/SOURCE NOT DISCOVERED/i.test(r.sync), 'Run AutoSync again on their PC.'],
+    ['Critical', (r) => r.label === 'Critical', 'The EA gave up closing a position (AEP close exhausted). Check the open trades on these terminals now; details in Problems in the logs.'],
+    ['Disconnected', (r) => r.label === 'Disconnected', 'Not connected to the broker: check login, password and server.'],
+    ['Stale', (r) => r.label === 'Stale' || r.label === 'Collector warning', 'The collector stopped writing: re-attach MT4Collector_Quant (AutoTrading on) or restart the terminal.'],
+    ['Errors', (r) => r.label === 'Errors' || r.label === 'Warnings', 'See Problems in the logs below.'],
+    ['Inactive', (r) => r.level === 'idle', 'No data for over a day. Fine if retired; otherwise start the terminal and the collector.'],
+  ];
+  const ul = el('ul', { class: 'todo' });
+  for (const [label, test, text] of kinds) {
+    const hit = rows.filter(test); if (!hit.length) continue;
+    const idle = hit[0].level === 'idle';
+    const li = el('li', idle ? { class: 'muted' } : null); li.appendChild(pill(hit[0].level, label));
+    li.appendChild(el(idle ? 'span' : 'b', null, ' ' + hit.map((r) => r.terminal).join(', ') + ': '));
+    li.appendChild(document.createTextNode(text)); ul.appendChild(li);
+  }
+  if (!ul.children.length) return;
+  host.appendChild(el('h2', null, 'What to do'));
+  host.appendChild(ul);
 }
 function healthModel() {
   const all = buildHealthRows();
   const rows = all.filter((r) => (!state.account || r.account === state.account) && (!state.campaign || (DB.accounts.get(r.account) || {}).campaign === state.campaign));
   const terms = new Set(rows.map((r) => r.terminal));
   const events = DB.health.filter((h) => terms.has(h.terminal) && (!state.magic || h.magic === state.magic));
-  const summary = { critical: 0, errors: 0, warnings: 0, stale: 0, notSyncing: 0 };
+  const summary = { critical: 0, errors: 0, warnings: 0, stale: 0, notSyncing: 0, inactive: 0 };
   for (const h of events) { if (h.severity === 'critical') summary.critical += h.count; else if (h.severity === 'error') summary.errors += h.count; else if (h.severity === 'warning') summary.warnings += h.count; }
-  for (const r of rows) { if (r.stale) summary.stale++; if (SYNC_BAD(r.sync)) summary.notSyncing++; }
+  for (const r of rows) { if (r.stale || r.collectorWarn) summary.stale++; if (SYNC_BAD(r.sync)) summary.notSyncing++; if (r.idle) summary.inactive++; }
   return { rows, events, summary };
 }
 function renderHealth(host) {
@@ -1675,8 +1748,9 @@ function renderHealth(host) {
   if (!DB.health.length && !DB.sync.terminals.size) {
     host.appendChild(el('p', { class: 'muted' }, 'Health needs health_events.csv.gz and sync_all.txt, which the updated Build-DashboardData.ps1 writes into _DASHBOARD. Run it once, then refresh.'));
   }
+  renderHealthTodo(host, hm.rows);
   host.appendChild(el('h2', null, 'Terminals'));
-  host.appendChild(el('p', { class: 'sub' }, 'Worst problem first. Logs cover the last ' + ((SOURCE.manifest && SOURCE.manifest.logDays) || 'few') + ' days. "Behind" compares each account\'s last snapshot with the newest one (broker server time).'));
+  host.appendChild(el('p', { class: 'sub' }, 'Worst problem first. Logs cover the last ' + ((SOURCE.manifest && SOURCE.manifest.logDays) || 'few') + ' days. "Behind" compares each account\'s last snapshot with the newest one (broker server time). "Inactive" means no snapshot and no log line for over a day (retired or switched off); it is not counted as a problem.'));
   table(host, [
     { key: 'rank', label: 'Status', render: (td, v, r) => td.appendChild(pill(r.level, r.label)) },
     { key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'machine', label: 'Machine' },
@@ -1687,6 +1761,7 @@ function renderHealth(host) {
     { key: 'pingLast', label: 'Ping (last)', num: true, f: (v) => (Number.isFinite(v) ? nf0.format(v) + ' ms' : '–') }, { key: 'pingMax', label: 'Ping (max)', num: true, f: (v) => (Number.isFinite(v) ? nf0.format(v) + ' ms' : '–') },
     { key: 'stalls', label: 'Timer stalls', num: true }, { key: 'version', label: 'Collector' }, { key: 'connected', label: 'Connected' },
     { key: 'sync', label: 'Sync', render: (td, v, r) => { td.textContent = v || '–'; if (r.syncDetail) td.title = r.syncDetail; } },
+    { key: 'todo', label: 'What to do' },
   ], hm.rows, { tabId: 'healthTerm', defKey: 'rank', onRow: (r) => { if (r.account) { state.account = r.account; syncFilterInputs(); render(); } } });
   if (DB.sync.unmapped.length) host.appendChild(el('p', { class: 'hint' }, 'Accounts the AutoSync identity map lists as UNMAPPED: ' + DB.sync.unmapped.map((u) => u.account + (u.profile ? ' (' + u.profile + ')' : '')).join(', ') + '. Give them a terminal label in the sync profile.'));
 
@@ -1712,7 +1787,8 @@ function renderHealth(host) {
   if (!probs.length) host.appendChild(el('p', { class: 'muted' }, 'Nothing at this level in the loaded log days.'));
   else table(host, [
     { key: 'rank', label: 'Severity', render: (td, v, r) => td.appendChild(pill(SEV_LEVEL[r.severity] || 'info', r.severity)) },
-    { key: 'category', label: 'Problem' }, { key: 'count', label: 'Count', num: true }, { key: 'terminal', label: 'Terminal' }, { key: 'source', label: 'EA / source' },
+    { key: 'category', label: 'Problem', render: (td, v) => { const m = /^Error (\d+)$/.exec(v); td.textContent = m && MT4_ERRORS[m[1]] ? v + ' – ' + MT4_ERRORS[m[1]] : v; } },
+    { key: 'count', label: 'Count', num: true }, { key: 'terminal', label: 'Terminal' }, { key: 'source', label: 'EA / source' },
     { key: 'chart', label: 'Chart' }, { key: 'magic', label: 'Magic' }, { key: 'last', label: 'Last seen', f: fmtTime }, { key: 'sample', label: 'Latest message' },
   ], probs, { tabId: 'healthProb', defKey: 'rank', pageSize: 200 });
 
@@ -2138,7 +2214,7 @@ async function loadFromDrive(keepFilters) {
       }
     };
     await Promise.all([worker(), worker(), worker()]);
-    SOURCE = { kind: 'drive', manifest };
+    SOURCE = { kind: 'drive', manifest, manifestTime: Date.parse(mans[0].modifiedTime || '') };
     KEEP_FILTERS = !!keepFilters;
     items.sort((a, b) => a.name.localeCompare(b.name));
     await loadSources(items);
