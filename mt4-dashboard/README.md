@@ -57,6 +57,18 @@ the page reads those.
      than about a third of the time.
    - Because the script runs from Google Drive, a newer
      `Build-DashboardData.ps1` placed there is used from the next run.
+   - **History import:** the collector only knows trades from the day it
+     was attached. To add earlier history, open the terminal's Account
+     History tab, right-click, choose *All History*, then *Save as Detailed
+     Report*, and copy the `.htm` file into `MT4_Terminals\_HISTORY_IMPORT`.
+     The next build adds its closed trades (machine, terminal and campaign
+     come from the account's collector data). A trade the collector also
+     recorded keeps the collector's row, so re-importing is safe.
+   - **Snapshots:** once a day the finished `_DASHBOARD` folder is zipped to
+     `MT4_Terminals\_DASHBOARD_BACKUP\snapshot_yyyy-MM-dd.zip`; the last 30
+     are kept (`-BackupDays`). To restore, unzip a snapshot over
+     `_DASHBOARD`. Imported history is in the snapshots too; keep the
+     original `.htm` files as well.
    - Data folders outside `MT4_Terminals` (for example another EA's
      terminal, `MT4 RSI EA Data\VPS\M15_Terminal`) go in
      `EXTRA_FOLDERS.txt` next to the script, one per line: a full path or a

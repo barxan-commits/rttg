@@ -34,6 +34,14 @@
   More folders (e.g. another EA's terminals): -ExtraFolders, or one per line in
   EXTRA_FOLDERS.txt next to this script. A folder can be one terminal (it has
   Reports, Experts or Journal inside) or a folder of terminals.
+
+  History import: save a terminal's Account History report (right-click, Save as
+  Detailed Report, .htm) into MT4_Terminals\_HISTORY_IMPORT. Its closed trades are
+  added; a trade the collector also recorded keeps the collector's row. This fills
+  the time before the collector was attached.
+
+  Snapshots: once a day the finished _DASHBOARD folder is zipped to
+  <ProjectRoot>\_DASHBOARD_BACKUP\snapshot_yyyy-MM-dd.zip (last -BackupDays kept).
 #>
 [CmdletBinding()]
 param(
@@ -50,12 +58,15 @@ param(
   [string[]]$Exclude = @('ARCHIVE', '_DASHBOARD', '_MASTER', 'mastergpt'),
   # more data folders; a relative path is taken inside the folder that holds ProjectRoot (My Drive)
   [string[]]$ExtraFolders = @(),
+  # keep this many daily snapshots of _DASHBOARD in <ProjectRoot>\_DASHBOARD_BACKUP (0 = no snapshots)
+  [ValidateRange(0, 365)]
+  [int]$BackupDays = 30,
   # build even when BUILD_PC.txt names another PC
   [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
-$BuilderVersion = '2026-10-08'
+$BuilderVersion = '2026-10-09'
 $pc = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
 $here = $PSScriptRoot
 $runLog = if ($here) { Join-Path $here ('last_build_' + $pc + '.txt') } else { '' }
@@ -274,6 +285,50 @@ namespace Mt4DashV2 {
       return csv;
     }
 
+    // MT4 "Detailed Report" (.htm) of the Account History: closed trades, comment row under each trade.
+    static readonly Regex RxTr = new Regex(@"<tr[^>]*>(.*?)</tr>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+    static readonly Regex RxTd = new Regex(@"<t[dh][^>]*>(.*?)</t[dh]>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+    static readonly Regex RxTags = new Regex(@"<[^>]+>");
+    static string Plain(string h) { return RxTags.Replace(h, "").Replace("&nbsp;", " ").Replace("&amp;", "&").Trim(); }
+    static string NumTxt(string t) { return t.Replace(" ", "").Replace("\u00a0", ""); }
+    public static Csv ReadHtml(string path) {
+      string s = ReadAllText(path);
+      Csv csv = new Csv(); csv.Index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+      csv.Header = TradeCols;
+      for (int i = 0; i < TradeCols.Length; i++) csv.Index[TradeCols[i]] = i;
+      string account = "", currency = "";
+      Match am = Regex.Match(s, @"Account:\s*(?:<[^>]+>\s*)*(\d{4,})"); if (am.Success) account = am.Groups[1].Value;
+      Match cm = Regex.Match(s, @"Currency:\s*(?:<[^>]+>\s*)*([A-Za-z]{3})"); if (cm.Success) currency = cm.Groups[1].Value.ToUpperInvariant();
+      if (account.Length == 0) return csv;
+      List<string[]> rows = new List<string[]>();
+      foreach (Match m in RxTr.Matches(s)) {
+        List<string> c = new List<string>();
+        foreach (Match d in RxTd.Matches(m.Groups[1].Value)) c.Add(Plain(d.Groups[1].Value));
+        if (c.Count == 3 && c[0].Length == 0 && rows.Count > 0) {   // magic + comment of the trade above
+          string[] last = rows[rows.Count - 1];
+          last[csv.Index["magic"]] = c[1]; last[csv.Index["comment"]] = c[2]; last[csv.Index["base_comment"]] = c[2];
+          continue;
+        }
+        if (c.Count != 14 || !Regex.IsMatch(c[0], @"^\d{5,}$")) continue;
+        string type = c[2].ToUpperInvariant(); if (type != "BUY" && type != "SELL") continue;
+        string[] r = new string[TradeCols.Length]; for (int i = 0; i < r.Length; i++) r[i] = "";
+        double pr = Num(NumTxt(c[13])), co = Num(NumTxt(c[10])), sw = Num(NumTxt(c[12]));
+        int dot = c[5].IndexOf('.'); int digits = dot < 0 ? 0 : c[5].Length - dot - 1;
+        r[csv.Index["account"]] = account; r[csv.Index["ticket"]] = c[0]; r[csv.Index["account_currency"]] = currency;
+        r[csv.Index["open_time"]] = c[1]; r[csv.Index["close_time"]] = c[8]; r[csv.Index["type"]] = type;
+        r[csv.Index["lots"]] = NumTxt(c[3]); r[csv.Index["symbol"]] = c[4].ToUpperInvariant();
+        r[csv.Index["digits"]] = digits.ToString(CultureInfo.InvariantCulture);
+        r[csv.Index["point_size"]] = Math.Pow(10, -digits).ToString("0.##########", CultureInfo.InvariantCulture);
+        r[csv.Index["open_price"]] = NumTxt(c[5]); r[csv.Index["close_price"]] = NumTxt(c[9]);
+        r[csv.Index["magic"]] = "0";
+        r[csv.Index["profit"]] = F(pr); r[csv.Index["commission"]] = F(co); r[csv.Index["swap"]] = F(sw); r[csv.Index["net_profit"]] = F(pr + co + sw);
+        r[csv.Index["collector_version"]] = "0";
+        rows.Add(r);
+      }
+      csv.Rows = rows;
+      return csv;
+    }
+
     // ---------------- writing ----------------
     static string Cell(string[] r, int i) { return i < 0 || i >= r.Length ? "" : r[i].Trim(); }
     static double Num(string s) { double d; return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out d) ? d : 0; }
@@ -327,12 +382,13 @@ namespace Mt4DashV2 {
       Dictionary<string, Rec> map = new Dictionary<string, Rec>();
       foreach (string f in files) {
         Csv c;
-        try { c = Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
+        bool isImport = f.EndsWith(".htm", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
+        try { c = isImport ? ReadHtml(f) : Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
         int[] ix = new int[TradeCols.Length];
         for (int i = 0; i < TradeCols.Length; i++) ix[i] = c.Get(TradeCols[i]);
         int iType = c.Get("type"), iAcc = c.Get("account"), iTicket = c.Get("ticket"), iClose = c.Get("close_time");
         int iVer = c.Get("collector_version"), iRec = c.Get("recorded_at");
-        string tag = TagOf(Path.GetFileName(f));
+        string tag = isImport ? "import" : TagOf(Path.GetFileName(f));
         int used = 0;
         foreach (string[] r in c.Rows) {
           string type = Cell(r, iType).ToUpperInvariant();
@@ -349,6 +405,16 @@ namespace Mt4DashV2 {
           used++;
         }
         Log.Add("trades " + Path.GetFileName(f) + " rows=" + c.Rows.Count + " used=" + used);
+      }
+      // imported history has no machine / terminal / campaign: take them from the account's collector rows
+      Dictionary<string, string[]> latest = new Dictionary<string, string[]>();
+      foreach (Rec r in map.Values) {
+        if (r.Out[TradeCols.Length] == "import") continue;
+        string[] prevOut; if (!latest.TryGetValue(r.Out[0], out prevOut) || string.CompareOrdinal(r.Out[8], prevOut[8]) > 0) latest[r.Out[0]] = r.Out;
+      }
+      foreach (Rec r in map.Values) {
+        string[] src; if (r.Out[TradeCols.Length] != "import" || !latest.TryGetValue(r.Out[0], out src)) continue;
+        r.Out[2] = src[2]; r.Out[3] = src[3]; r.Out[4] = src[4]; r.Out[6] = src[6];
       }
       total = map.Count;
       ClosedAt.Clear();
@@ -690,6 +756,7 @@ while ($dirs.Count -gt 0) {
       elseif ($n -like '*collector_status.txt') { $found['status'].Add($f) }
       elseif ($n -like '_sync_status*.txt') { $found['sync'].Add($f) }
       elseif ($n -like '_terminal_identity_map*.txt') { $found['map'].Add($f) }
+      elseif ($n -match '\.html?$') { if ($d -match '_HISTORY_IMPORT') { $found['trades'].Add($f) } }
       elseif ($n -like '*.log') { $found['logs'].Add($f) }
     }
     foreach ($s in [System.IO.Directory]::EnumerateDirectories($d)) { if ([System.IO.Path]::GetFileName($s) -notmatch $excludeRx) { $dirs.Push($s) } }
@@ -773,11 +840,29 @@ $manifest = [ordered]@{
 $json = $manifest | ConvertTo-Json -Depth 4
 [void][Mt4DashV2.Builder]::WriteIfChanged((Join-Path $OutDir 'mt4dash_manifest.json'), [System.Text.UTF8Encoding]::new($false).GetBytes($json))
 
+# one snapshot of the finished _DASHBOARD per day, so a bad build or a lost collector file can be undone
+$backupNotes = New-Object System.Collections.Generic.List[string]
+if ($BackupDays -gt 0) {
+  try {
+    $bdir = Join-Path $ProjectRoot '_DASHBOARD_BACKUP'
+    New-Item -ItemType Directory -Force -Path $bdir | Out-Null
+    $zip = Join-Path $bdir ('snapshot_' + $started.ToString('yyyy-MM-dd') + '.zip')
+    if (-not (Test-Path -LiteralPath $zip)) {
+      Add-Type -AssemblyName System.IO.Compression.FileSystem
+      $tmpZip = $zip + '.tmp'
+      if (Test-Path -LiteralPath $tmpZip) { Remove-Item -LiteralPath $tmpZip -Force }
+      [System.IO.Compression.ZipFile]::CreateFromDirectory($OutDir, $tmpZip)
+      Move-Item -LiteralPath $tmpZip -Destination $zip
+      $backupNotes.Add('Snapshot written: ' + (Split-Path -Leaf $zip))
+    }
+    @(Get-ChildItem -LiteralPath $bdir -Filter 'snapshot_*.zip' | Sort-Object Name -Descending | Select-Object -Skip $BackupDays) | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
+  } catch { $backupNotes.Add('Snapshot failed: ' + $_.Exception.Message) }
+}
 $changed = @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'wrote *' -or $_ -like 'removed *' }).Count
-$skipped = @($extraNotes) + @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'SKIP *' })
+$skipped = @($backupNotes) + @($extraNotes) + @([Mt4DashV2.Builder]::Log | Where-Object { $_ -like 'SKIP *' })
 $result = '{0} unique closed trades. {1} output files, {2} changed. {3:n1}s' -f $total, $produced.Count, $changed, ((Get-Date) - $started).TotalSeconds
 Write-Host $result
-foreach ($s in $skipped) { Write-Warning $s }
+foreach ($s in $skipped) { if ($s -notlike 'Snapshot written*') { Write-Warning $s } }
 Add-Timing 'write'
 Write-RunLog ('OK - ' + $result) (@('Timing:   ' + ($timing -join ', ')) + @($skipped))
 $mutex.ReleaseMutex()
