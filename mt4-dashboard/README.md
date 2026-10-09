@@ -109,6 +109,15 @@ once their collector files are synced into `MT4_Terminals`.
   and the biggest changes by magic, account, symbol or comment. The split
   dates are saved in your browser, so the last period keeps growing as new
   trades arrive. Other filters still apply, e.g. pick one account first.
+- **Faders**: copies of a master trade, recognised by the comment
+  `<type> <source> #<master ticket>` (types: MP, MP FEES, MP HALF,
+  MP NOPULL, MP2X, DAY, SPR, ADDL5, ADDP5, ADDP20; usually magic
+  77800-78399 or 7790444). The **Category** filter (All / Faders / Not
+  faders) and the **Fader type** filter work on the whole dashboard. The
+  Faders tab has one row per fader with its own result, the result of the
+  master trades it copied (found by ticket in any account) and both added
+  together. The total sums per row, so a master shared by several faders
+  counts once for each.
 - **Baskets & depth**: results by number of legs per basket, how often baskets
   reach each depth, and results by leg number.
 - **Open positions**: exposure and floating P/L per magic (P/L per position

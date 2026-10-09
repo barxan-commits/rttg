@@ -260,6 +260,8 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
       <label>Magic <select id="fMagic"></select></label>
       <label>Comment <select id="fComment"></select></label>
       <label>Symbol <select id="fSymbol"></select></label>
+      <label>Category <select id="fCategory"><option value="">All</option><option value="fader">Faders (copies)</option><option value="other">Not faders</option></select></label>
+      <label>Fader type <select id="fFaderType"></select></label>
       <label>Side <select id="fSide"><option value="">All</option><option>BUY</option><option>SELL</option></select></label>
       <label>Group comments by
         <select id="fCommentMode">
@@ -316,7 +318,7 @@ const DB = {
   files: [],             // loaded files report
 };
 const state = {
-  from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '',
+  from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '', category: '', faderType: '',
   commentMode: 'base', tab: 'magic', sort: {}, page: {}, search: '', basketSearch: '', equityAccount: '',
   healthSev: 'warning', cmp: { dim: 'magic', items: [], unit: 'money' }, per: { splits: null, by: 'magic' },
 };
@@ -817,6 +819,33 @@ function buildAgeMinutes() {
 function showProgress(t) { const p = $('#progress'); p.hidden = false; p.textContent = t; }
 function hideProgress() { $('#progress').hidden = true; }
 
+/* ---------------- faders ----------------
+   A fader is a copy of a master trade. Its comment is "<TYPE> <SOURCE> #<master ticket>" (e.g. "MP T10 #2052488935",
+   "ADDL5 WH206 #..."), usually with magic 77800-78399 or 7790444. TYPE is one of FADER_TYPES. */
+const FADER_TYPES = ['MP FEES', 'MP HALF', 'MP NOPULL', 'MP2X', 'MP', 'DAY', 'SPR', 'ADDL5', 'ADDP5', 'ADDP20'];
+const FADER_RX = new RegExp('^(' + FADER_TYPES.join('|') + ')(?![A-Za-z0-9])\\s*(.*?)\\s*(?:#(\\d{6,}))?$');
+const FADER_CACHE = new Map();
+function faderInfo(comment, magic) {
+  const key = comment + '|' + magic;
+  let r = FADER_CACHE.get(key); if (r) return r;
+  r = { is: false, type: '', src: '', master: '' };
+  const m = FADER_RX.exec(stripSuffix(comment));
+  if (m) {
+    const mg = +magic, inRange = (mg >= 77800 && mg <= 78399) || mg === 7790444 || (mg >= 7550000 && mg <= 7550099);
+    if (m[3] || inRange) r = { is: true, type: m[1], src: m[2], master: m[3] || '' };
+  }
+  FADER_CACHE.set(key, r); return r;
+}
+const faderOf = (x) => faderInfo(x.comment || '', x.magic);
+function faderOk(x) {
+  if (!state.category && !state.faderType) return true;
+  const f = faderOf(x);
+  if (state.category === 'fader' && !f.is) return false;
+  if (state.category === 'other' && f.is) return false;
+  if (state.faderType && f.type !== state.faderType) return false;
+  return true;
+}
+
 /* ---------------- filters ---------------- */
 // Account, magic and comment lists are split into active and not active. Active: an account with any data
 // (snapshot, closed trade, open-positions file, collector status), or a magic/comment with a closed trade,
@@ -902,10 +931,16 @@ function buildFilterOptions() {
   fillActiveSelect($('#fMagic'), 'magic', magics, (v) => v, (a, b) => (+a) - (+b) || a.localeCompare(b), 'magics');
   const comments = withOpen(countBy(T, commentOf), commentOf);
   fillActiveSelect($('#fComment'), 'comment', comments, (v) => v, (a, b) => comments.get(b) - comments.get(a) || a.localeCompare(b), 'comments');
+  const ft = $('#fFaderType'); ft.textContent = ''; ft.appendChild(el('option', { value: '' }, 'All'));
+  const typeN = countBy(T.filter((t) => faderOf(t).is), (t) => faderOf(t).type);
+  for (const k of FADER_TYPES) if (typeN.has(k)) ft.appendChild(el('option', { value: k }, k + '  (' + typeN.get(k) + ')'));
+  if (state.faderType && !typeN.has(state.faderType)) state.faderType = '';
+  ft.value = state.faderType; $('#fCategory').value = state.category;
   fillSelect($('#fSymbol'), [...withOpen(countBy(T, (t) => t.symbol), (p) => p.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
 }
 function resetFilters(doRender = true) {
-  Object.assign(state, { from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '' });
+  Object.assign(state, { from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '', category: '', faderType: '' });
+  $('#fCategory').value = '';
   $('#fFrom').value = ''; $('#fTo').value = ''; $('#fSide').value = '';
   for (const b of document.querySelectorAll('#presets button')) b.classList.toggle('on', b.dataset.p === 'all');
   if (doRender) { buildFilterOptions(); render(); }
@@ -916,6 +951,7 @@ function matchDims(t, skipDate) {
   if (!dimOk('magic', t.magic)) return false;
   if (state.symbol && t.symbol !== state.symbol) return false;
   if (state.side && t.type !== state.side) return false;
+  if (!faderOk(t)) return false;
   if (state.comment && !dimOk('comment', commentOf(t))) return false;
   if (!skipDate) {
     if (state.from !== null && t.closeTime < state.from) return false;
@@ -1054,7 +1090,7 @@ function renderKPIs(T, s) {
   const ol = op.reduce((a, p) => a + p.lots, 0);
   tile('Open positions', op.length.toLocaleString('en-US'), nfLots.format(ol) + ' lots, latest file per account');
   // floating P/L: per position when the patched collector writes it, otherwise the account snapshot
-  const dimFilter = state.magic || state.comment || state.symbol || state.side;
+  const dimFilter = state.magic || state.comment || state.symbol || state.side || state.category || state.faderType;
   const withPnl = op.filter((p) => Number.isFinite(p.pnl));
   let fl = 0, any = false, flNote = '';
   if (dimFilter && withPnl.length) {
@@ -1458,7 +1494,7 @@ function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({
 function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
 
 const TABS = [
-  ['magic', 'By magic'], ['compare', 'Compare'], ['periods', 'Periods'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
+  ['magic', 'By magic'], ['compare', 'Compare'], ['periods', 'Periods'], ['faders', 'Faders'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
   ['account', 'By account'], ['campaign', 'By campaign'], ['exit', 'Exit reasons'], ['baskets', 'Baskets & depth'],
   ['time', 'Hour / weekday'], ['trades', 'Trades'], ['open', 'Open positions'], ['accounts', 'Accounts'], ['health', 'Health'], ['files', 'Files'],
 ];
@@ -1515,7 +1551,32 @@ function renderTab() {
   else if (id === 'health') renderHealth(host);
   else if (id === 'compare') renderCompare(host);
   else if (id === 'periods') renderPeriods(host, T);
+  else if (id === 'faders') renderFaders(host, T);
   else if (id === 'files') renderFiles(host);
+}
+// One row per fader (account + magic), like the fader tables: its own result, the master trades it copied, and both together.
+function renderFaders(host, T) {
+  const F = T.filter((t) => faderOf(t).is);
+  host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment is "<type> <source> #<master ticket>". Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Use Category and Fader type above to filter the whole dashboard to them.'));
+  if (!F.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader trades in this selection.')); return; }
+  const byTicket = new Map(); for (const t of DB.trades) byTicket.set(t.ticket, t);
+  const groups = groupBy(F, (t) => t.account + '|' + t.magic + '|' + faderOf(t).type + '|' + faderOf(t).src);
+  const rows = [];
+  for (const [k, arr] of groups) {
+    const f0 = faderOf(arr[0]); const a = DB.accounts.get(arr[0].account) || {};
+    let net = 0; const masters = new Set(); let found = 0, master = 0;
+    for (const t of arr) { net += t.net; const mt = faderOf(t).master; if (mt && !masters.has(mt)) { masters.add(mt); const m = byTicket.get(mt); if (m) { found++; master += m.net; } } }
+    rows.push({ key: k, terminal: a.terminal || '', account: arr[0].account, magic: arr[0].magic, type: f0.type, src: f0.src, n: arr.length, net, master: found ? master : NaN, both: found ? net + master : NaN,
+      masters: masters.size, coverage: masters.size ? found / masters.size : NaN, last: arr[arr.length - 1].closeTime });
+  }
+  const tot = { key: 'tot', terminal: 'Total', account: '', magic: '', type: '', src: '', n: rows.reduce((x, r) => x + r.n, 0), net: rows.reduce((x, r) => x + r.net, 0),
+    master: rows.reduce((x, r) => x + (r.master || 0), 0), both: rows.reduce((x, r) => x + (r.both || 0), 0), masters: '', coverage: NaN, last: NaN };
+  table(host, [
+    { key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'magic', label: 'Fader (magic)' }, { key: 'type', label: 'Type' }, { key: 'src', label: 'Source' },
+    { key: 'n', label: 'Trades', num: true }, { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls },
+    { key: 'both', label: 'Fader + master', num: true, f: money, cls: signCls }, { key: 'masters', label: 'Master trades', num: true }, { key: 'coverage', label: 'Masters found', num: true, f: pct },
+    { key: 'last', label: 'Last close', f: fmtTime },
+  ], rows, { tabId: 'faders', defKey: 'terminal', defDir: 'asc', footer: tot, onRow: (r) => { state.account = r.account; state.magic = r.magic; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
 }
 function renderBaskets(host, T) {
   let rows = baskets(T);
@@ -1594,7 +1655,7 @@ function renderTrades(host, T) {
 }
 function openFiltered() {
   return DB.open.filter((p) => dimOk('account', p.account) && (!state.campaign || p.campaign === state.campaign) && dimOk('magic', p.magic)
-    && (!state.symbol || p.symbol === state.symbol) && (!state.side || p.type === state.side) && dimOk('comment', commentOf(p)));
+    && (!state.symbol || p.symbol === state.symbol) && (!state.side || p.type === state.side) && faderOk(p) && dimOk('comment', commentOf(p)));
 }
 function renderOpen(host) {
   const P = openFiltered();
@@ -2309,6 +2370,8 @@ $('#fileInput').addEventListener('change', (e) => { loadFiles(e.target.files); e
 for (const [id, key] of [['#fAccount', 'account'], ['#fCampaign', 'campaign'], ['#fMagic', 'magic'], ['#fComment', 'comment'], ['#fSymbol', 'symbol'], ['#fSide', 'side']]) {
   $(id).addEventListener('change', (e) => { state[key] = e.target.value; state.page = {}; render(); });
 }
+$('#fCategory').addEventListener('change', (e) => { state.category = e.target.value; state.page = {}; render(); });
+$('#fFaderType').addEventListener('change', (e) => { state.faderType = e.target.value; if (state.faderType && !state.category) { state.category = 'fader'; $('#fCategory').value = 'fader'; } state.page = {}; render(); });
 $('#fCommentMode').addEventListener('change', (e) => { state.commentMode = e.target.value; state.comment = ''; buildFilterOptions(); render(); });
 function setPreset(p) {
   state.preset = p;
