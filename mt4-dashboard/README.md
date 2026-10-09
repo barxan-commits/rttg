@@ -116,7 +116,10 @@ once their collector files are synced into `MT4_Terminals`.
   faders) and the **Fader type** filter work on the whole dashboard. The
   Faders tab has one row per fader with its own result, the result of the
   master trades it copied (found by ticket in any account) and both added
-  together. The total sums per row, so a master shared by several faders
+  together. These columns cover the first (normal) copies. The extra copies
+  that ADDL5 / ADDP5 / ADDP20 test faders open (comment `<type> <source>
+  +#<master ticket>`) are shown apart: how many closed and their result.
+  Category also has *first copies* and *extra copies* options. The total sums per row, so a master shared by several faders
   counts once for each.
 - **Baskets & depth**: results by number of legs per basket, how often baskets
   reach each depth, and results by leg number.

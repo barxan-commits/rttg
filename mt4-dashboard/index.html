@@ -260,7 +260,7 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
       <label>Magic <select id="fMagic"></select></label>
       <label>Comment <select id="fComment"></select></label>
       <label>Symbol <select id="fSymbol"></select></label>
-      <label>Category <select id="fCategory"><option value="">All</option><option value="fader">Faders (copies)</option><option value="other">Not faders</option></select></label>
+      <label>Category <select id="fCategory"><option value="">All</option><option value="fader">Faders (all copies)</option><option value="first">Faders: first copies</option><option value="extra">Faders: extra copies (+#)</option><option value="other">Not faders</option></select></label>
       <label>Fader type <select id="fFaderType"></select></label>
       <label>Side <select id="fSide"><option value="">All</option><option>BUY</option><option>SELL</option></select></label>
       <label>Group comments by
@@ -828,11 +828,13 @@ const FADER_CACHE = new Map();
 function faderInfo(comment, magic) {
   const key = comment + '|' + magic;
   let r = FADER_CACHE.get(key); if (r) return r;
-  r = { is: false, type: '', src: '', master: '' };
+  r = { is: false, type: '', src: '', master: '', extra: false };
   const m = FADER_RX.exec(stripSuffix(comment));
   if (m) {
     const mg = +magic, inRange = (mg >= 77800 && mg <= 78399) || mg === 7790444 || (mg >= 7550000 && mg <= 7550099);
-    if (m[3] || inRange) r = { is: true, type: m[1], src: m[2], master: m[3] || '' };
+    // an extra copy (ADDL5 / ADDP5 / ADDP20) has "+#<master ticket>" in the comment
+    const extra = /\+$/.test(m[2]);
+    if (m[3] || inRange) r = { is: true, type: m[1], src: m[2].replace(/\s*\+$/, ''), master: m[3] || '', extra };
   }
   FADER_CACHE.set(key, r); return r;
 }
@@ -842,6 +844,8 @@ function faderOk(x) {
   const f = faderOf(x);
   if (state.category === 'fader' && !f.is) return false;
   if (state.category === 'other' && f.is) return false;
+  if (state.category === 'first' && (!f.is || f.extra)) return false;
+  if (state.category === 'extra' && (!f.is || !f.extra)) return false;
   if (state.faderType && f.type !== state.faderType) return false;
   return true;
 }
@@ -1557,24 +1561,33 @@ function renderTab() {
 // One row per fader (account + magic), like the fader tables: its own result, the master trades it copied, and both together.
 function renderFaders(host, T) {
   const F = T.filter((t) => faderOf(t).is);
-  host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment is "<type> <source> #<master ticket>". Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Use Category and Fader type above to filter the whole dashboard to them.'));
+  host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment is "<type> <source> #<master ticket>". Trades, Fader $, Master $ and Fader + master cover the first (normal) copies, so they compare with the plain faders. Extra copies are the second copies that ADDL5 / ADDP5 / ADDP20 test faders add (comment "+#<master ticket>"): how many closed and their result. Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Use Category and Fader type above to filter the whole dashboard to them.'));
   if (!F.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader trades in this selection.')); return; }
   const byTicket = new Map(); for (const t of DB.trades) byTicket.set(t.ticket, t);
   const groups = groupBy(F, (t) => t.account + '|' + t.magic + '|' + faderOf(t).type + '|' + faderOf(t).src);
   const rows = [];
   for (const [k, arr] of groups) {
     const f0 = faderOf(arr[0]); const a = DB.accounts.get(arr[0].account) || {};
-    let net = 0; const masters = new Set(); let found = 0, master = 0;
-    for (const t of arr) { net += t.net; const mt = faderOf(t).master; if (mt && !masters.has(mt)) { masters.add(mt); const m = byTicket.get(mt); if (m) { found++; master += m.net; } } }
-    rows.push({ key: k, terminal: a.terminal || '', account: arr[0].account, magic: arr[0].magic, type: f0.type, src: f0.src, n: arr.length, net, master: found ? master : NaN, both: found ? net + master : NaN,
+    // first (normal) copies drive Trades, Fader $, Master $ and Fader + master; extra copies (+#) are counted apart
+    let net = 0, n = 0, xn = 0, xnet = 0; const masters = new Set(); let found = 0, master = 0;
+    for (const t of arr) {
+      const f = faderOf(t);
+      if (f.extra) { xn++; xnet += t.net; continue; }
+      n++; net += t.net;
+      if (f.master && !masters.has(f.master)) { masters.add(f.master); const m = byTicket.get(f.master); if (m) { found++; master += m.net; } }
+    }
+    rows.push({ key: k, terminal: a.terminal || '', account: arr[0].account, magic: arr[0].magic, type: f0.type, src: f0.src, n, net, master: found ? master : NaN, both: found ? net + master : NaN,
+      xn: xn || '', xnet: xn ? xnet : NaN, all: n || xn ? net + xnet : NaN,
       masters: masters.size, coverage: masters.size ? found / masters.size : NaN, last: arr[arr.length - 1].closeTime });
   }
-  const tot = { key: 'tot', terminal: 'Total', account: '', magic: '', type: '', src: '', n: rows.reduce((x, r) => x + r.n, 0), net: rows.reduce((x, r) => x + r.net, 0),
-    master: rows.reduce((x, r) => x + (r.master || 0), 0), both: rows.reduce((x, r) => x + (r.both || 0), 0), masters: '', coverage: NaN, last: NaN };
+  const sum = (key) => rows.reduce((x, r) => x + (Number.isFinite(r[key]) ? r[key] : 0), 0);
+  const tot = { key: 'tot', terminal: 'Total', account: '', magic: '', type: '', src: '', n: sum('n'), net: sum('net'), master: sum('master'), both: sum('both'), xn: sum('xn'), xnet: sum('xnet'), all: sum('all'), masters: '', coverage: NaN, last: NaN };
   table(host, [
     { key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'magic', label: 'Fader (magic)' }, { key: 'type', label: 'Type' }, { key: 'src', label: 'Source' },
     { key: 'n', label: 'Trades', num: true }, { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls },
-    { key: 'both', label: 'Fader + master', num: true, f: money, cls: signCls }, { key: 'masters', label: 'Master trades', num: true }, { key: 'coverage', label: 'Masters found', num: true, f: pct },
+    { key: 'both', label: 'Fader + master', num: true, f: money, cls: signCls },
+    { key: 'xn', label: 'Extra copies', num: true }, { key: 'xnet', label: 'Extra copies $', num: true, f: money, cls: signCls }, { key: 'all', label: 'First + extra $', num: true, f: money, cls: signCls },
+    { key: 'masters', label: 'Master trades', num: true }, { key: 'coverage', label: 'Masters found', num: true, f: pct },
     { key: 'last', label: 'Last close', f: fmtTime },
   ], rows, { tabId: 'faders', defKey: 'terminal', defDir: 'asc', footer: tot, onRow: (r) => { state.account = r.account; state.magic = r.magic; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
 }
@@ -2371,7 +2384,7 @@ for (const [id, key] of [['#fAccount', 'account'], ['#fCampaign', 'campaign'], [
   $(id).addEventListener('change', (e) => { state[key] = e.target.value; state.page = {}; render(); });
 }
 $('#fCategory').addEventListener('change', (e) => { state.category = e.target.value; state.page = {}; render(); });
-$('#fFaderType').addEventListener('change', (e) => { state.faderType = e.target.value; if (state.faderType && !state.category) { state.category = 'fader'; $('#fCategory').value = 'fader'; } state.page = {}; render(); });
+$('#fFaderType').addEventListener('change', (e) => { state.faderType = e.target.value; if (state.faderType && (!state.category || state.category === 'other')) { state.category = 'fader'; $('#fCategory').value = 'fader'; } state.page = {}; render(); });
 $('#fCommentMode').addEventListener('change', (e) => { state.commentMode = e.target.value; state.comment = ''; buildFilterOptions(); render(); });
 function setPreset(p) {
   state.preset = p;
