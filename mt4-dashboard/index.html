@@ -780,6 +780,7 @@ async function loadSources(files) {
     done++;
     if (done % 5 === 0) { showProgress('Reading files… ' + done + ' / ' + files.length); await new Promise((r) => setTimeout(r, 0)); }
   }
+  BY_TICKET = null;
   DB.trades = Array.from(TRADE_MAP.values()).sort((a, b) => a.closeTime - b.closeTime || (a.ticket < b.ticket ? -1 : 1));
   TRADE_MAP = new Map();
   finalizeSnaps(); finalizeOpen(); computeDerived();
@@ -1398,12 +1399,27 @@ const C = {
   accounts: { label: 'Accounts', num: true, f: (v) => v },
   symbols: { label: 'Symbols', num: true, f: (v) => v },
   comments: { label: 'Comments', num: false, f: (v) => v },
+  master: { label: 'Master $', num: true, f: money, cls: signCls },
+  masterDiff: { label: 'Fader − master', num: true, f: money, cls: signCls },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
   basketWin: { label: 'Basket win %', num: true, f: pct },
   worstBasket: { label: 'Worst basket', num: true, f: money },
 };
 const STD_COLS = ['n', 'winRate', 'net', 'pf', 'exp', 'avgR', 'totR', 'netPct', 'gp', 'gl', 'avgWin', 'avgLoss', 'payoff', 'maxWin', 'maxLoss', 'maxDD', 'mcl', 'lots', 'cs', 'sl', 'tp', 'oth', 'avgDur', 'mfe', 'mae', 'sqn', 'buyNet', 'sellNet', 'first', 'last'];
 
+// Master $ for a group of trades: the distinct master trades its first-copy faders copied (matched by ticket in any account); NaN when none are faders.
+let BY_TICKET = null;
+function masterExtra(arr) {
+  if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
+  const seen = new Set(); let master = 0, found = 0, fnet = 0;
+  for (const t of arr) {
+    const f = faderOf(t); if (!f.is || f.extra) continue;
+    fnet += t.net;
+    if (f.master && !seen.has(f.master)) { seen.add(f.master); const m = BY_TICKET.get(f.master); if (m) { found++; master += m.net; } }
+  }
+  return found ? { master, masterDiff: fnet - master } : { master: NaN, masterDiff: NaN };
+}
+const MASTER_COLS = [Object.assign({ key: 'master' }, C.master), Object.assign({ key: 'masterDiff' }, C.masterDiff)];
 function sortRows(rows, tabId, defKey, defDir) {
   const st = state.sort[tabId] || { key: defKey, dir: defDir };
   const dir = st.dir === 'asc' ? 1 : -1;
@@ -1519,19 +1535,19 @@ function renderTab() {
     const g = groupBy(T, (t) => t.magic);
     const rows = [...g].map(([k, arr]) => {
       const bs = baskets(arr);
-      return dimRow(k, k, arr, { baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
+      return dimRow(k, k, arr, { ...masterExtra(arr), baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
     });
-    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), [{ key: 'label', label: 'Magic', num: false }]);
+    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['master', 'masterDiff', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), [{ key: 'label', label: 'Magic', num: false }]);
     table(host, cols, rows, { tabId: id, defKey: 'net', onRow: setF('magic'), footer: totalsFooter(T, 'label') });
   } else if (id === 'comment') {
     const g = groupBy(T, commentOf);
-    const rows = [...g].map(([k, arr]) => dimRow(k, k, arr, { magics: [...new Set(arr.map((t) => t.magic))].slice(0, 4).join(', ') + (new Set(arr.map((t) => t.magic)).size > 4 ? ' …' : '') }));
-    const cols = [{ key: 'label', label: state.commentMode === 'raw' ? 'Raw comment' : 'Base comment' }, { key: 'magics', label: 'Magics' }].concat(STD_COLS.map((k) => Object.assign({ key: k }, C[k])), [Object.assign({ key: 'accounts' }, C.accounts), Object.assign({ key: 'symbols' }, C.symbols)]);
+    const rows = [...g].map(([k, arr]) => dimRow(k, k, arr, { ...masterExtra(arr), magics: [...new Set(arr.map((t) => t.magic))].slice(0, 4).join(', ') + (new Set(arr.map((t) => t.magic)).size > 4 ? ' …' : '') }));
+    const cols = [{ key: 'label', label: state.commentMode === 'raw' ? 'Raw comment' : 'Base comment' }, { key: 'magics', label: 'Magics' }].concat(MASTER_COLS, STD_COLS.map((k) => Object.assign({ key: k }, C[k])), [Object.assign({ key: 'accounts' }, C.accounts), Object.assign({ key: 'symbols' }, C.symbols)]);
     table(host, cols, rows, { tabId: id, defKey: 'net', onRow: setF('comment'), footer: totalsFooter(T, 'label') });
   } else if (id === 'magiccomment') {
     const g = groupBy(T, (t) => t.magic + '\u0000' + commentOf(t));
-    const rows = [...g].map(([k, arr]) => { const [mg, cm] = k.split('\u0000'); return dimRow(k, mg, arr, { magic: mg, comment: cm }); });
-    const cols = [{ key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }].concat(STD_COLS.map((k) => Object.assign({ key: k }, C[k])));
+    const rows = [...g].map(([k, arr]) => { const [mg, cm] = k.split('\u0000'); return dimRow(k, mg, arr, { ...masterExtra(arr), magic: mg, comment: cm }); });
+    const cols = [{ key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }].concat(MASTER_COLS, STD_COLS.map((k) => Object.assign({ key: k }, C[k])));
     table(host, cols, rows, { tabId: id, defKey: 'net', onRow: (r) => { state.magic = r.magic; state.comment = r.comment; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }, footer: totalsFooter(T, 'magic') });
   } else if (id === 'symbol') {
     const rows = [...groupBy(T, (t) => t.symbol)].map(([k, arr]) => dimRow(k, k, arr));

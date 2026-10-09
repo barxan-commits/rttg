@@ -211,3 +211,5 @@ python tools/make_sample_data.py sample
 ```
 
 Then choose the `sample` folder in the page.
+
+The By magic, By comment and Magic x comment tabs also show **Master $** (the master trades the faders copied) and **Fader - master** (fader result minus master result); non-fader rows show a dash.
