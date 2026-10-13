@@ -61,12 +61,15 @@ param(
   # keep this many daily snapshots of _DASHBOARD in <ProjectRoot>\_DASHBOARD_BACKUP (0 = no snapshots)
   [ValidateRange(0, 365)]
   [int]$BackupDays = 30,
+  # a log bigger than this is read from its last MB only (a runaway EA can write a log of several GB)
+  [ValidateRange(1, 4096)]
+  [int]$MaxLogMB = 32,
   # build even when BUILD_PC.txt names another PC
   [switch]$Force
 )
 
 $ErrorActionPreference = 'Stop'
-$BuilderVersion = '2026-10-13'
+$BuilderVersion = '2026-10-14'
 $pc = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
 $here = $PSScriptRoot
 $runLog = if ($here) { Join-Path $here ('last_build_' + $pc + '.txt') } else { '' }
@@ -226,6 +229,21 @@ namespace Mt4DashV2 {
     static StreamReader OpenText(string path) {
       FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
       return new StreamReader(fs, Detect(fs), true);
+    }
+    public static long MaxLogBytes = 32L * 1024 * 1024;
+    // Like OpenText, but a file bigger than MaxLogBytes is read from its last MaxLogBytes only (first partial line dropped).
+    static StreamReader OpenTail(string path, out bool cut) {
+      cut = false;
+      FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+      Encoding enc = Detect(fs);
+      if (fs.Length <= MaxLogBytes) return new StreamReader(fs, enc, true);
+      cut = true;
+      long pos = fs.Length - MaxLogBytes;
+      if (!(enc is UTF8Encoding)) pos &= ~1L;      // UTF-16: stay on a character boundary
+      fs.Position = pos;
+      StreamReader sr = new StreamReader(fs, enc, false);
+      sr.ReadLine();
+      return sr;
     }
     static string ReadAllText(string path) { using (StreamReader sr = OpenText(path)) return sr.ReadToEnd(); }
 
@@ -697,7 +715,9 @@ namespace Mt4DashV2 {
         string date = fn.Substring(0, 4) + "." + fn.Substring(4, 2) + "." + fn.Substring(6, 2);
         long lines = 0;
         try {
-          using (StreamReader sr = OpenText(f)) {
+          bool cut;
+          using (StreamReader sr = OpenTail(f, out cut)) {
+            if (cut) Log.Add("SKIP big log, only its last " + (MaxLogBytes / 1048576) + " MB read: " + f);
             string l;
             while ((l = sr.ReadLine()) != null) {
               Match m = RxLine.Match(l);
@@ -741,6 +761,7 @@ namespace Mt4DashV2 {
   ('Project:  ' + $ProjectRoot),
   ('Builder:  ' + $BuilderVersion)) -join "`r`n") + "`r`n")
 
+[Mt4DashV2.Builder]::MaxLogBytes = [long]$MaxLogMB * 1MB
 Add-Timing 'start'
 [Mt4DashV2.Builder]::Log.Clear()
 
