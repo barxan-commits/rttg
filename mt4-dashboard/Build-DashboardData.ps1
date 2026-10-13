@@ -66,7 +66,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$BuilderVersion = '2026-10-09'
+$BuilderVersion = '2026-10-13'
 $pc = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
 $here = $PSScriptRoot
 $runLog = if ($here) { Join-Path $here ('last_build_' + $pc + '.txt') } else { '' }
@@ -171,9 +171,11 @@ namespace Mt4DashV2 {
   // ends a run that hangs (e.g. a file Google Drive cannot fetch), so the next scheduled run can start
   public static class Watchdog {
     static System.Threading.Timer timer;
+    // what the build is doing right now; written to the run log when the watchdog ends a hung run
+    public static volatile string Where = "starting";
     public static void Start(int minutes, string logPath, string logText) {
       timer = new System.Threading.Timer(delegate(object o) {
-        try { if (!string.IsNullOrEmpty(logPath)) File.WriteAllText(logPath, logText); } catch (Exception) { }
+        try { if (!string.IsNullOrEmpty(logPath)) File.WriteAllText(logPath, logText + "Stuck at: " + Where + "\r\n"); } catch (Exception) { }
         Environment.Exit(3);
       }, null, (long)minutes * 60000L, System.Threading.Timeout.Infinite);
     }
@@ -381,6 +383,7 @@ namespace Mt4DashV2 {
     public static List<string> BuildTrades(string[] files, string outDir, int maxRows, out int total) {
       Dictionary<string, Rec> map = new Dictionary<string, Rec>();
       foreach (string f in files) {
+        Watchdog.Where = "reading statement " + f;
         Csv c;
         bool isImport = f.EndsWith(".htm", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
         try { c = isImport ? ReadHtml(f) : Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
@@ -449,6 +452,7 @@ namespace Mt4DashV2 {
       Dictionary<string, List<string[]>> best = new Dictionary<string, List<string[]>>();
       Dictionary<string, string> bestSeen = new Dictionary<string, string>();
       foreach (string f in files) {
+        Watchdog.Where = "reading open file " + f;
         Csv c;
         try { c = Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
         int[] ix = new int[OpenCols.Length];
@@ -480,6 +484,7 @@ namespace Mt4DashV2 {
     public static List<string> BuildEquity(string[] files, string outDir, int minutes) {
       Dictionary<string, SortedDictionary<string, Slot>> per = new Dictionary<string, SortedDictionary<string, Slot>>();
       foreach (string f in files) {
+        Watchdog.Where = "reading snapshot file " + f;
         Csv c;
         try { c = Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
         int[] ix = new int[SnapCols.Length];
@@ -538,6 +543,7 @@ namespace Mt4DashV2 {
     public static List<string> BuildBundle(string[] files, string[] labels, string outDir, string name) {
       StringBuilder sb = new StringBuilder();
       for (int i = 0; i < files.Length; i++) {
+        Watchdog.Where = "reading " + name + " source " + files[i];
         try { sb.Append("#FILE: ").Append(labels[i]).Append('\n').Append(ReadAllText(files[i]).Replace("\r", "")).Append('\n'); }
         catch (Exception e) { Log.Add("SKIP " + files[i] + " : " + e.Message); }
       }
@@ -686,6 +692,7 @@ namespace Mt4DashV2 {
       Array.Sort(order, delegate(int a, int b) { return string.CompareOrdinal(Path.GetFileName(files[a]), Path.GetFileName(files[b])); });
       foreach (int k in order) {
         string f = files[k]; string fn = Path.GetFileNameWithoutExtension(f);
+        Watchdog.Where = "reading log " + f;
         if (fn.Length != 8) continue;
         string date = fn.Substring(0, 4) + "." + fn.Substring(4, 2) + "." + fn.Substring(6, 2);
         long lines = 0;
@@ -746,6 +753,7 @@ $dirs = New-Object System.Collections.Generic.Stack[string]
 foreach ($r in $roots) { $dirs.Push($r.Path) }
 while ($dirs.Count -gt 0) {
   $d = $dirs.Pop()
+  [Mt4DashV2.Watchdog]::Where = 'listing folder ' + $d
   try {
     foreach ($f in [System.IO.Directory]::EnumerateFiles($d)) {
       $n = [System.IO.Path]::GetFileName($f)
@@ -803,6 +811,7 @@ Write-Host ("Found {0} statement, {1} open, {2} snapshot, {3} status, {4} sync, 
   $tradeFiles.Count, $openFiles.Count, $snapFiles.Count, $statusFiles.Count, $syncFiles.Count, $logFiles.Count)
 Add-Timing 'scan'
 
+[Mt4DashV2.Watchdog]::Where = 'building trades'
 $total = 0
 $produced = New-Object System.Collections.Generic.List[string]
 $produced.AddRange([Mt4DashV2.Builder]::BuildTrades([string[]]$tradeFiles, $OutDir, $MaxRowsPerFile, [ref]$total))
@@ -840,6 +849,7 @@ $manifest = [ordered]@{
 $json = $manifest | ConvertTo-Json -Depth 4
 [void][Mt4DashV2.Builder]::WriteIfChanged((Join-Path $OutDir 'mt4dash_manifest.json'), [System.Text.UTF8Encoding]::new($false).GetBytes($json))
 
+[Mt4DashV2.Watchdog]::Where = 'writing manifest / daily snapshot zip'
 # one snapshot of the finished _DASHBOARD per day, so a bad build or a lost collector file can be undone
 $backupNotes = New-Object System.Collections.Generic.List[string]
 if ($BackupDays -gt 0) {
