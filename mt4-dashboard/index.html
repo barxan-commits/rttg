@@ -1618,7 +1618,7 @@ function renderTab() {
 // One row per fader (account + magic), like the fader tables: its own result, the master trades it copied, and both together.
 function renderFaders(host, T) {
   const F = T.filter((t) => faderOf(t).is);
-  host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment ends with the master ticket ("<type> <source> #<master ticket>", also "#BIG<ticket>" or "+#<ticket>"), whatever the EA version or magic number. Types the dashboard does not know are listed as COPY. Trades, Fader $, Master $ and Fader + master cover the first (normal) copies, so they compare with the plain faders. Extra copies are the second copies that ADDL5 / ADDP5 / ADDP20 test faders add (comment "+#<master ticket>"): how many closed and their result. Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Use Category and Fader type above to filter the whole dashboard to them.'));
+  host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment ends with the master ticket ("<type> <source> #<master ticket>", also "#BIG<ticket>" or "+#<ticket>"), whatever the EA version or magic number. Types the dashboard does not know are listed as COPY. Trades, Fader $, Master $ and Fader + master cover the first (normal) copies, so they compare with the plain faders. Extra copies are the second copies that ADDL5 / ADDP5 / ADDP20 test faders add (comment "+#<master ticket>"): how many closed and their result. Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Spread, comm and swap are the costs of those same trades, fader and master side by side; costs are negative, and Costs = spread + comm + swap (the spread is an estimate from the collector and is already inside the profit, so it is not subtracted from Net again). Use Category and Fader type above to filter the whole dashboard to them.'));
   if (!F.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader trades in this selection.')); return; }
   const byTicket = new Map(); for (const t of DB.trades) byTicket.set(t.ticket, t);
   const groups = groupBy(F, (t) => t.account + '|' + t.magic + '|' + faderOf(t).type + '|' + faderOf(t).src);
@@ -1627,22 +1627,26 @@ function renderFaders(host, T) {
     const f0 = faderOf(arr[0]); const a = DB.accounts.get(arr[0].account) || {};
     // first (normal) copies drive Trades, Fader $, Master $ and Fader + master; extra copies (+#) are counted apart
     let net = 0, n = 0, xn = 0, xnet = 0; const masters = new Set(); let found = 0, master = 0;
+    let fsp = 0, fcm = 0, fsw = 0, msp = 0, mcm = 0, msw = 0;   // costs of the first copies and of their masters: spread estimate, commission, swap
     for (const t of arr) {
       const f = faderOf(t);
       if (f.extra) { xn++; xnet += t.net; continue; }
-      n++; net += t.net;
-      if (f.master && !masters.has(f.master)) { masters.add(f.master); const m = byTicket.get(f.master); if (m) { found++; master += m.net; } }
+      n++; net += t.net; fsp -= t.spreadCost || 0; fcm += t.commission || 0; fsw += t.swap || 0;
+      if (f.master && !masters.has(f.master)) { masters.add(f.master); const m = byTicket.get(f.master); if (m) { found++; master += m.net; msp -= m.spreadCost || 0; mcm += m.commission || 0; msw += m.swap || 0; } }
     }
     rows.push({ key: k, terminal: a.terminal || '', account: arr[0].account, magic: arr[0].magic, type: f0.type, src: f0.src, n, net, master: found ? master : NaN, both: found ? net + master : NaN,
+      fsp, fcm, fsw, fcost: fsp + fcm + fsw, msp: found ? msp : NaN, mcm: found ? mcm : NaN, msw: found ? msw : NaN, mcost: found ? msp + mcm + msw : NaN,
       xn: xn || '', xnet: xn ? xnet : NaN, all: n || xn ? net + xnet : NaN,
       masters: masters.size, coverage: masters.size ? found / masters.size : NaN, last: arr[arr.length - 1].closeTime });
   }
   const sum = (key) => rows.reduce((x, r) => x + (Number.isFinite(r[key]) ? r[key] : 0), 0);
-  const tot = { key: 'tot', terminal: 'Total', account: '', magic: '', type: '', src: '', n: sum('n'), net: sum('net'), master: sum('master'), both: sum('both'), xn: sum('xn'), xnet: sum('xnet'), all: sum('all'), masters: '', coverage: NaN, last: NaN };
+  const tot = { key: 'tot', terminal: 'Total', account: '', magic: '', type: '', src: '', n: sum('n'), net: sum('net'), master: sum('master'), both: sum('both'), fsp: sum('fsp'), fcm: sum('fcm'), fsw: sum('fsw'), fcost: sum('fcost'), msp: sum('msp'), mcm: sum('mcm'), msw: sum('msw'), mcost: sum('mcost'), xn: sum('xn'), xnet: sum('xnet'), all: sum('all'), masters: '', coverage: NaN, last: NaN };
   table(host, [
     { key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'magic', label: 'Fader (magic)' }, { key: 'type', label: 'Type' }, { key: 'src', label: 'Source' },
     { key: 'n', label: 'Trades', num: true }, { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls },
     { key: 'both', label: 'Fader + master', num: true, f: money, cls: signCls },
+    { key: 'fsp', label: 'Fader spread', num: true, f: money, cls: signCls }, { key: 'fcm', label: 'Fader comm', num: true, f: money, cls: signCls }, { key: 'fsw', label: 'Fader swap', num: true, f: money, cls: signCls }, { key: 'fcost', label: 'Fader costs', num: true, f: money, cls: signCls },
+    { key: 'msp', label: 'Master spread', num: true, f: money, cls: signCls }, { key: 'mcm', label: 'Master comm', num: true, f: money, cls: signCls }, { key: 'msw', label: 'Master swap', num: true, f: money, cls: signCls }, { key: 'mcost', label: 'Master costs', num: true, f: money, cls: signCls },
     { key: 'xn', label: 'Extra copies', num: true }, { key: 'xnet', label: 'Extra copies $', num: true, f: money, cls: signCls }, { key: 'all', label: 'First + extra $', num: true, f: money, cls: signCls },
     { key: 'masters', label: 'Master trades', num: true }, { key: 'coverage', label: 'Masters found', num: true, f: pct },
     { key: 'last', label: 'Last close', f: fmtTime },
