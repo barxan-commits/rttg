@@ -471,7 +471,7 @@ function isCandidate(name) {
 /* ---------------- trade records ---------------- */
 function stripSuffix(c) { return (c || '').replace(/\s*\[(sl|tp|so)\]\s*$/i, '').trim(); }
 // copier trades that carry the master ticket ("MP T10 #2052488935") group under one name ("MP T10")
-function baseOf(base, comment) { const b = base || stripSuffix(comment); return b.replace(/\s*#\d{6,}$/, '').trim() || b; }
+function baseOf(base, comment) { const b = base || stripSuffix(comment); return b.replace(/\s*\+?#[A-Za-z]*\d{6,}$/, '').trim() || b; }
 function deriveExit(c) {
   const m = /\[(sl|tp|so)\]\s*$/i.exec(c || '');
   if (!m) return 'Other';
@@ -861,19 +861,22 @@ function hideProgress() { $('#progress').hidden = true; }
    A fader is a copy of a master trade. Its comment is "<TYPE> <SOURCE> #<master ticket>" (e.g. "MP T10 #2052488935",
    "ADDL5 WH206 #..."), usually with magic 77800-78399 or 7790444. TYPE is one of FADER_TYPES. */
 const FADER_TYPES = ['MP FEES', 'MP HALF', 'MP NOPULL', 'MP2X', 'MP', 'DAY', 'SPR', 'ADDL5', 'ADDP5', 'ADDP20'];
-const FADER_RX = new RegExp('^(' + FADER_TYPES.join('|') + ')(?![A-Za-z0-9])\\s*(.*?)\\s*(?:#(\\d{6,}))?$');
+// known fader families (MP2X / MP0.5X / MP3X, ADD types with a number: ADDL5, ADDP20, ADDL20 ...); any other comment that ends in a master ticket is type COPY
+const FADER_KNOWN = /^(MP FEES|MP HALF|MP NOPULL|MP[\d.]+X|MP|DAY|SPR|ADD[LP]\d*|PLAIN)(?![A-Za-z0-9])\s*/i;
+// the reference to the master ticket at the end: "#2052488935", "+#2052488935" (extra copy) or "#BIG2052488935" (a tag before the ticket)
+const FADER_REF = /^(.*?)\s*(\+)?#([A-Za-z]*)(\d{6,})$/;
 const FADER_CACHE = new Map();
 function faderInfo(comment, magic) {
   const key = comment + '|' + magic;
   let r = FADER_CACHE.get(key); if (r) return r;
   r = { is: false, type: '', src: '', master: '', extra: false };
-  const m = FADER_RX.exec(stripSuffix(comment));
-  if (m) {
-    const mg = +magic, inRange = (mg >= 77800 && mg <= 78399) || mg === 7790444 || (mg >= 7550000 && mg <= 7550099);
-    // an extra copy (ADDL5 / ADDP5 / ADDP20) has "+#<master ticket>" in the comment
-    const extra = /\+$/.test(m[2]);
-    if (m[3] || inRange) r = { is: true, type: m[1], src: m[2].replace(/\s*\+$/, ''), master: m[3] || '', extra };
-  }
+  const c = stripSuffix(comment);
+  const rm = FADER_REF.exec(c);
+  const front = rm ? rm[1].trim() : c;
+  const km = FADER_KNOWN.exec(front);
+  const mg = +magic, inRange = (mg >= 77800 && mg <= 78399) || mg === 7790444 || (mg >= 7550000 && mg <= 7550099);
+  if (km && (rm || inRange)) r = { is: true, type: km[1].toUpperCase(), src: front.slice(km[0].length).trim(), master: rm ? rm[4] : '', extra: !!(rm && rm[2]) };
+  else if (rm && front) r = { is: true, type: 'COPY', src: front, master: rm[4], extra: !!rm[2] };   // an extra copy (ADDL / ADDP) has "+#<master ticket>"
   FADER_CACHE.set(key, r); return r;
 }
 const faderOf = (x) => faderInfo(x.comment || '', x.magic);
@@ -975,7 +978,8 @@ function buildFilterOptions() {
   fillActiveSelect($('#fComment'), 'comment', comments, (v) => v, (a, b) => comments.get(b) - comments.get(a) || a.localeCompare(b), 'comments');
   const ft = $('#fFaderType'); ft.textContent = ''; ft.appendChild(el('option', { value: '' }, 'All'));
   const typeN = countBy(T.filter((t) => faderOf(t).is), (t) => faderOf(t).type);
-  for (const k of FADER_TYPES) if (typeN.has(k)) ft.appendChild(el('option', { value: k }, k + '  (' + typeN.get(k) + ')'));
+  const typeOrder = [...typeN.keys()].sort((a, b) => { const ia = FADER_TYPES.indexOf(a), ib = FADER_TYPES.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, undefined, { numeric: true }); });
+  for (const k of typeOrder) ft.appendChild(el('option', { value: k }, k + '  (' + typeN.get(k) + ')'));
   if (state.faderType && !typeN.has(state.faderType)) state.faderType = '';
   ft.value = state.faderType; $('#fCategory').value = state.category;
   fillSelect($('#fSymbol'), [...withOpen(countBy(T, (t) => t.symbol), (p) => p.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
@@ -1614,7 +1618,7 @@ function renderTab() {
 // One row per fader (account + magic), like the fader tables: its own result, the master trades it copied, and both together.
 function renderFaders(host, T) {
   const F = T.filter((t) => faderOf(t).is);
-  host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment is "<type> <source> #<master ticket>". Trades, Fader $, Master $ and Fader + master cover the first (normal) copies, so they compare with the plain faders. Extra copies are the second copies that ADDL5 / ADDP5 / ADDP20 test faders add (comment "+#<master ticket>"): how many closed and their result. Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Use Category and Fader type above to filter the whole dashboard to them.'));
+  host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment ends with the master ticket ("<type> <source> #<master ticket>", also "#BIG<ticket>" or "+#<ticket>"), whatever the EA version or magic number. Types the dashboard does not know are listed as COPY. Trades, Fader $, Master $ and Fader + master cover the first (normal) copies, so they compare with the plain faders. Extra copies are the second copies that ADDL5 / ADDP5 / ADDP20 test faders add (comment "+#<master ticket>"): how many closed and their result. Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Use Category and Fader type above to filter the whole dashboard to them.'));
   if (!F.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader trades in this selection.')); return; }
   const byTicket = new Map(); for (const t of DB.trades) byTicket.set(t.ticket, t);
   const groups = groupBy(F, (t) => t.account + '|' + t.magic + '|' + faderOf(t).type + '|' + faderOf(t).src);
