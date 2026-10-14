@@ -796,7 +796,13 @@ async function loadSources(files) {
   const tf = DB.files.filter((f) => f.kind === 'trades').length;
   let sum = DB.trades.length.toLocaleString('en-US') + ' closed trades · ' + DB.accounts.size + ' accounts · ' + tf + ' trade files';
   const builtAge = buildAgeMinutes(), builtOn = SOURCE.manifest && SOURCE.manifest.machine ? ' on ' + SOURCE.manifest.machine : '';
-  if (SOURCE.kind === 'drive' && SOURCE.manifest) sum += ' · Drive data built ' + (Number.isFinite(builtAge) ? (builtAge < 1 ? 'just now' : fmtDur(builtAge * 60) + ' ago') : SOURCE.manifest.generatedAt) + builtOn;
+  if (SOURCE.kind === 'drive' && SOURCE.manifest) {
+    // clock time in the viewer's own time zone: Drive's time for the manifest file (the PC's clock can be off), else the build PC's stamp
+    const builtMs = Number.isFinite(SOURCE.manifestTime) ? SOURCE.manifestTime : Date.parse(SOURCE.manifest.generatedUtc || '');
+    sum += ' · Drive data built ' + (Number.isFinite(builtMs) ? localStamp(builtMs) + ' (' + (builtAge < 1 ? 'just now' : fmtDur(builtAge * 60) + ' ago') + ')' : SOURCE.manifest.generatedAt) + builtOn;
+    sum += ' · page loaded ' + localStamp(Date.now());
+  }
+  if (DB.trades.length) sum += ' · last closed trade ' + fmtTime(DB.trades[DB.trades.length - 1].closeTime) + ' (server time)';
   $('#summary').textContent = sum;
   DB.staleWarning = builtAge > STALE_BUILD_MIN ? 'The data in Google Drive was last built ' + fmtDur(builtAge * 60) + ' ago (' + SOURCE.manifest.generatedAt + builtOn
     + '), so newer trades, open positions and comments are missing. To rebuild it automatically every 10 minutes, open MT4_Terminals\\_DASHBOARD_BUILD in Google Drive on the VPS and double-click INSTALL_AUTO_UPDATE.bat once. If you already did, check that the VPS is on, you are logged in there and Google Drive is running.' : '';
@@ -812,6 +818,9 @@ let KEEP_FILTERS = false;
 const STALE_BUILD_MIN = 60;
 // minutes since the build script last wrote the Drive data (NaN when not loaded from Drive). The later of
 // the build PC's own UTC stamp and Drive's file time, so a PC clock or time zone that is off never raises a false alarm.
+function localStamp(ms) {
+  try { return new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); } catch (e) { return fmtTime(ms) + ' UTC'; }
+}
 function buildAgeMinutes() {
   if (SOURCE.kind !== 'drive' || !SOURCE.manifest) return NaN;
   const ts = [Date.parse(SOURCE.manifest.generatedUtc || ''), SOURCE.manifestTime].filter(Number.isFinite);
