@@ -798,12 +798,14 @@ async function loadSources(files) {
   const builtAge = buildAgeMinutes(), builtOn = SOURCE.manifest && SOURCE.manifest.machine ? ' on ' + SOURCE.manifest.machine : '';
   if (SOURCE.kind === 'drive' && SOURCE.manifest) {
     // clock time in the viewer's own time zone: Drive's time for the manifest file (the PC's clock can be off), else the build PC's stamp
-    const builtMs = Number.isFinite(SOURCE.manifestTime) ? SOURCE.manifestTime : Date.parse(SOURCE.manifest.generatedUtc || '');
+    const builtMs = builtMillis();
     sum += ' · Drive data built ' + (Number.isFinite(builtMs) ? localStamp(builtMs) + ' (' + (builtAge < 1 ? 'just now' : fmtDur(builtAge * 60) + ' ago') + ')' : SOURCE.manifest.generatedAt) + builtOn;
     sum += ' · page loaded ' + localStamp(Date.now());
   }
   if (DB.trades.length) sum += ' · last closed trade ' + fmtTime(DB.trades[DB.trades.length - 1].closeTime) + ' (server time)';
   $('#summary').textContent = sum;
+  $('#summary').title = 'Built = when the VPS last wrote the data to Google Drive (your time zone). Page loaded = when this page last read Drive; it refreshes every 15 minutes. '
+    + 'Last closed trade = newest trade in the data, in the broker\'s server time. If Built is recent but the last closed trade is old, the build works and the terminals have stopped sending data (or the market is closed). If Built is old, the build on the VPS has stopped.';
   DB.staleWarning = builtAge > STALE_BUILD_MIN ? 'The data in Google Drive was last built ' + fmtDur(builtAge * 60) + ' ago (' + SOURCE.manifest.generatedAt + builtOn
     + '), so newer trades, open positions and comments are missing. To rebuild it automatically every 10 minutes, open MT4_Terminals\\_DASHBOARD_BUILD in Google Drive on the VPS and double-click INSTALL_AUTO_UPDATE.bat once. If you already did, check that the VPS is on, you are logged in there and Google Drive is running.' : '';
   const failed = DB.files.filter((f) => f.kind === 'failed').length;
@@ -818,13 +820,18 @@ let KEEP_FILTERS = false;
 const STALE_BUILD_MIN = 60;
 // minutes since the build script last wrote the Drive data (NaN when not loaded from Drive). The later of
 // the build PC's own UTC stamp and Drive's file time, so a PC clock or time zone that is off never raises a false alarm.
+// Drive's own time for the manifest file (true UTC); the build PC's stamp only when Drive gives none, because that PC's clock can be off
+function builtMillis() {
+  if (!SOURCE.manifest) return NaN;
+  return Number.isFinite(SOURCE.manifestTime) ? SOURCE.manifestTime : Date.parse(SOURCE.manifest.generatedUtc || '');
+}
 function localStamp(ms) {
   try { return new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); } catch (e) { return fmtTime(ms) + ' UTC'; }
 }
 function buildAgeMinutes() {
   if (SOURCE.kind !== 'drive' || !SOURCE.manifest) return NaN;
-  const ts = [Date.parse(SOURCE.manifest.generatedUtc || ''), SOURCE.manifestTime].filter(Number.isFinite);
-  return ts.length ? Math.max(0, (Date.now() - Math.max(...ts)) / 60000) : NaN;
+  const ms = builtMillis();
+  return Number.isFinite(ms) ? Math.max(0, (Date.now() - ms) / 60000) : NaN;
 }
 function showProgress(t) { const p = $('#progress'); p.hidden = false; p.textContent = t; }
 function hideProgress() { $('#progress').hidden = true; }
