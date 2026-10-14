@@ -794,18 +794,9 @@ async function loadSources(files) {
   if (!DB.trades.length && !DB.open.length && !DB.snaps.size) { showProgress('Files were read but contained no usable rows. See the console for details.'); return; }
   $('#empty').hidden = true; $('#app').hidden = false;
   const tf = DB.files.filter((f) => f.kind === 'trades').length;
-  let sum = DB.trades.length.toLocaleString('en-US') + ' closed trades · ' + DB.accounts.size + ' accounts · ' + tf + ' trade files';
   const builtAge = buildAgeMinutes(), builtOn = SOURCE.manifest && SOURCE.manifest.machine ? ' on ' + SOURCE.manifest.machine : '';
-  if (SOURCE.kind === 'drive' && SOURCE.manifest) {
-    // clock time in the viewer's own time zone: Drive's time for the manifest file (the PC's clock can be off), else the build PC's stamp
-    const builtMs = builtMillis();
-    sum += ' · Drive data built ' + (Number.isFinite(builtMs) ? localStamp(builtMs) + ' (' + (builtAge < 1 ? 'just now' : fmtDur(builtAge * 60) + ' ago') + ')' : SOURCE.manifest.generatedAt) + builtOn;
-    sum += ' · page loaded ' + localStamp(Date.now());
-  }
-  if (DB.trades.length) sum += ' · last closed trade ' + fmtTime(DB.trades[DB.trades.length - 1].closeTime) + ' (server time)';
-  $('#summary').textContent = sum;
-  $('#summary').title = 'Built = when the VPS last wrote the data to Google Drive (your time zone). Page loaded = when this page last read Drive; it refreshes every 15 minutes. '
-    + 'Last closed trade = newest trade in the data, in the broker\'s server time. If Built is recent but the last closed trade is old, the build works and the terminals have stopped sending data (or the market is closed). If Built is old, the build on the VPS has stopped.';
+  SUMMARY = { base: DB.trades.length.toLocaleString('en-US') + ' closed trades · ' + DB.accounts.size + ' accounts · ' + tf + ' trade files', builtOn, loadedAt: Date.now() };
+  renderSummary();
   DB.staleWarning = builtAge > STALE_BUILD_MIN ? 'The data in Google Drive was last built ' + fmtDur(builtAge * 60) + ' ago (' + SOURCE.manifest.generatedAt + builtOn
     + '), so newer trades, open positions and comments are missing. To rebuild it automatically every 10 minutes, open MT4_Terminals\\_DASHBOARD_BUILD in Google Drive on the VPS and double-click INSTALL_AUTO_UPDATE.bat once. If you already did, check that the VPS is on, you are logged in there and Google Drive is running.' : '';
   const failed = DB.files.filter((f) => f.kind === 'failed').length;
@@ -816,6 +807,36 @@ async function loadSources(files) {
   buildFilterOptions();
   render();
 }
+// header line: build time, page load time and newest closed trade, each with a mark: green check ok, amber warning, red cross
+let SUMMARY = null;
+const MARK = { ok: ['✓', 'var(--pos-text)'], warn: ['⚠', 'var(--warn-ink)'], bad: ['✗', 'var(--neg-text)'] };
+function markSpan(level, tip) { const m = MARK[level]; return el('span', { style: 'color:' + m[1] + ';font-weight:700', title: tip }, ' ' + m[0]); }
+function renderSummary() {
+  const host = $('#summary'); if (!host || !SUMMARY) return;
+  host.textContent = ''; host.appendChild(document.createTextNode(SUMMARY.base));
+  if (SOURCE.kind === 'drive' && SOURCE.manifest) {
+    const builtMs = builtMillis(), age = buildAgeMinutes();
+    if (Number.isFinite(builtMs)) {
+      host.appendChild(document.createTextNode(' · Drive data built ' + localStamp(builtMs) + ' (' + (age < 1 ? 'just now' : fmtDur(age * 60) + ' ago') + ')' + SUMMARY.builtOn));
+      host.appendChild(age <= 45 ? markSpan('ok', 'The VPS built the data recently.') : age <= STALE_BUILD_MIN ? markSpan('warn', 'The build is a little late; one build takes several minutes.') : markSpan('bad', 'The build on the VPS has stopped or is stuck: this data is old.'));
+    } else host.appendChild(document.createTextNode(' · Drive data built ' + SOURCE.manifest.generatedAt + SUMMARY.builtOn));
+    const loadAge = (Date.now() - SUMMARY.loadedAt) / 60000;
+    host.appendChild(document.createTextNode(' · page loaded ' + localStamp(SUMMARY.loadedAt)));
+    host.appendChild(loadAge <= 20 ? markSpan('ok', 'This page read Drive recently (it refreshes every 15 minutes).') : loadAge <= 40 ? markSpan('warn', 'This page has not refreshed for a while. Press Refresh from Drive.') : markSpan('bad', 'This page has not refreshed for a long time. Press Refresh from Drive or reload.'));
+  }
+  if (DB.trades.length) {
+    const last = DB.trades[DB.trades.length - 1].closeTime;
+    host.appendChild(document.createTextNode(' · last closed trade ' + fmtTime(last) + ' (server time)'));
+    // compare with the newest activity any terminal reported (both are broker server time), so no time zone is needed
+    let newest = 0; for (const a of DB.accounts.values()) if (a.lastSeen > newest) newest = a.lastSeen;
+    const gap = (newest - last) / 60000;
+    if (Number.isFinite(gap)) host.appendChild(gap <= 30 ? markSpan('ok', 'Trades are closing: the newest trade is within 30 minutes of the newest terminal report.') : gap <= 240 ? markSpan('warn', 'No trade closed for ' + fmtDur(gap * 60) + ' while terminals kept reporting.') : markSpan('bad', 'No trade closed for ' + fmtDur(gap * 60) + ' while terminals kept reporting (market closed, or the EAs stopped trading).'));
+  }
+  host.title = 'Built = when the VPS last wrote the data to Google Drive (your time zone). Page loaded = when this page last read Drive; it refreshes every 15 minutes. '
+    + 'Last closed trade = newest trade in the data, in the broker\'s server time. Green check = fine, amber warning = late, red cross = problem. '
+    + 'If Built is recent but the last closed trade is old, the build works and the terminals have stopped trading or sending data (or the market is closed). If Built is old, the build on the VPS has stopped.';
+}
+setInterval(renderSummary, 60000);
 let KEEP_FILTERS = false;
 const STALE_BUILD_MIN = 60;
 // minutes since the build script last wrote the Drive data (NaN when not loaded from Drive). The later of
