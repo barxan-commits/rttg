@@ -1554,6 +1554,8 @@ function masterExtra(arr) {
   const fx = isF ? { firsts: fnet, extras: xn ? xnet : NaN, extraN: xn || '', firstN: arr.filter((t) => { const f = faderOf(t); return f.is && !f.extra; }).length, masterN: found } : { firsts: NaN, extras: NaN, extraN: '', firstN: '', masterN: '' };
   return found ? { master, masterDiff: fnet + master, copying, copyingAll, ...fx } : { master: NaN, masterDiff: NaN, copying: '', copyingAll: '', ...fx };
 }
+const MASTER_KEYS = ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'copying'];   // shown after Trades / Win % / Net everywhere
+const statCol = (k) => Object.assign({ key: k }, C[k]);
 const MASTER_COLS = [Object.assign({ key: 'firsts' }, C.firsts), Object.assign({ key: 'extras' }, C.extras), Object.assign({ key: 'master' }, C.master), Object.assign({ key: 'masterDiff' }, C.masterDiff), Object.assign({ key: 'copying' }, C.copying)];
 function sortRows(rows, tabId, defKey, defDir) {
   const st = state.sort[tabId] || { key: defKey, dir: defDir };
@@ -1647,7 +1649,7 @@ function exportCSV(cols, rows, name) {
 let DOWNLOADS = null;
 function flash(msg) { const w = $('#warn'); w.hidden = false; w.textContent = msg; }
 function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({ key: k }, C[k]))); }
-function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
+function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); const me = masterExtra(T); delete me.copying; delete me.copyingAll; Object.assign(r, me); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
 
 const TABS = [
   ['magic', 'By magic'], ['compare', 'Compare'], ['periods', 'Periods'], ['faders', 'Faders'], ['fa', 'Fader analysis'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
@@ -1689,22 +1691,22 @@ function renderTab() {
   } else if (id === 'comment') {
     const g = groupBy(T, commentOf);
     const rows = [...g].map(([k, arr]) => dimRow(k, k, arr, { ...masterExtra(arr), magics: [...new Set(arr.map((t) => t.magic))].slice(0, 4).join(', ') + (new Set(arr.map((t) => t.magic)).size > 4 ? ' …' : '') }));
-    const cols = [{ key: 'label', label: state.commentMode === 'raw' ? 'Raw comment' : 'Base comment' }, { key: 'magics', label: 'Magics' }].concat(MASTER_COLS, STD_COLS.map((k) => Object.assign({ key: k }, C[k])), [Object.assign({ key: 'accounts' }, C.accounts), Object.assign({ key: 'symbols' }, C.symbols)]);
+    const cols = [{ key: 'label', label: state.commentMode === 'raw' ? 'Raw comment' : 'Base comment' }, { key: 'magics', label: 'Magics' }].concat(STD_COLS.slice(0, 3).map(statCol), MASTER_KEYS.map(statCol), STD_COLS.slice(3).map(statCol), [Object.assign({ key: 'accounts' }, C.accounts), Object.assign({ key: 'symbols' }, C.symbols)]);
     table(host, cols, rows, { tabId: id, defKey: 'net', onRow: setF('comment'), footer: totalsFooter(T, 'label') });
   } else if (id === 'magiccomment') {
     const g = groupBy(T, (t) => t.magic + '\u0000' + commentOf(t));
     const rows = [...g].map(([k, arr]) => { const [mg, cm] = k.split('\u0000'); return dimRow(k, mg, arr, { ...masterExtra(arr), magic: mg, comment: cm }); });
-    const cols = [{ key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }].concat(MASTER_COLS, STD_COLS.map((k) => Object.assign({ key: k }, C[k])));
+    const cols = [{ key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }].concat(STD_COLS.slice(0, 3).map(statCol), MASTER_KEYS.map(statCol), STD_COLS.slice(3).map(statCol));
     table(host, cols, rows, { tabId: id, defKey: 'net', onRow: (r) => { state.magic = r.magic; state.comment = r.comment; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }, footer: totalsFooter(T, 'magic') });
   } else if (id === 'symbol') {
-    const rows = [...groupBy(T, (t) => t.symbol)].map(([k, arr]) => dimRow(k, k, arr));
-    table(host, colsOf(STD_COLS.concat(['accounts']), [{ key: 'label', label: 'Symbol' }]), rows, { tabId: id, defKey: 'net', onRow: setF('symbol'), footer: totalsFooter(T, 'label') });
+    const rows = [...groupBy(T, (t) => t.symbol)].map(([k, arr]) => dimRow(k, k, arr, masterExtra(arr)));
+    table(host, colsOf(STD_COLS.slice(0, 3).concat(MASTER_KEYS, STD_COLS.slice(3), ['accounts']), [{ key: 'label', label: 'Symbol' }]), rows, { tabId: id, defKey: 'net', onRow: setF('symbol'), footer: totalsFooter(T, 'label') });
   } else if (id === 'account') {
-    const rows = [...groupBy(T, (t) => t.account)].map(([k, arr]) => { const a = DB.accounts.get(k) || {}; return dimRow(k, k, arr, { machine: a.machine || '', terminal: a.terminal || '', campaign: a.campaign || '' }); });
-    table(host, colsOf(STD_COLS.concat(['symbols']), [{ key: 'label', label: 'Account' }, { key: 'machine', label: 'Machine' }, { key: 'terminal', label: 'Terminal' }, { key: 'campaign', label: 'Campaign' }]), rows, { tabId: id, defKey: 'net', onRow: setF('account'), footer: totalsFooter(T, 'label') });
+    const rows = [...groupBy(T, (t) => t.account)].map(([k, arr]) => { const a = DB.accounts.get(k) || {}; return dimRow(k, k, arr, { ...masterExtra(arr), machine: a.machine || '', terminal: a.terminal || '', campaign: a.campaign || '' }); });
+    table(host, colsOf(STD_COLS.slice(0, 3).concat(MASTER_KEYS, STD_COLS.slice(3), ['symbols']), [{ key: 'label', label: 'Account' }, { key: 'machine', label: 'Machine' }, { key: 'terminal', label: 'Terminal' }, { key: 'campaign', label: 'Campaign' }]), rows, { tabId: id, defKey: 'net', onRow: setF('account'), footer: totalsFooter(T, 'label') });
   } else if (id === 'campaign') {
-    const rows = [...groupBy(T, (t) => t.campaign)].map(([k, arr]) => dimRow(k, k, arr));
-    table(host, colsOf(STD_COLS.concat(['accounts', 'symbols']), [{ key: 'label', label: 'Campaign' }]), rows, { tabId: id, defKey: 'net', onRow: setF('campaign'), footer: totalsFooter(T, 'label') });
+    const rows = [...groupBy(T, (t) => t.campaign)].map(([k, arr]) => dimRow(k, k, arr, masterExtra(arr)));
+    table(host, colsOf(STD_COLS.slice(0, 3).concat(MASTER_KEYS, STD_COLS.slice(3), ['accounts', 'symbols']), [{ key: 'label', label: 'Campaign' }]), rows, { tabId: id, defKey: 'net', onRow: setF('campaign'), footer: totalsFooter(T, 'label') });
   } else if (id === 'exit') {
     const rows = [...groupBy(T, (t) => t.exit)].map(([k, arr]) => dimRow(k, k, arr, { share: arr.length / (T.length || 1) }));
     const cols = [{ key: 'label', label: 'Exit reason' }, { key: 'share', label: 'Share', num: true, f: pct }].concat(['n', 'net', 'exp', 'gp', 'gl', 'winRate', 'avgDur', 'mfe', 'mae', 'lots'].map((k) => Object.assign({ key: k }, C[k])));
@@ -1793,13 +1795,15 @@ function faderAnalysis() {
     const mk = m ? masterKeyOf(m) : '';
     let mm = null;
     if (m) { mm = ma.get(mk); if (!mm) { mm = newMaster(mk, m); ma.set(mk, mm); } }
-    if (f.extra) { x.xn++; x.xnet += t.net; if (mm) { mm.xn++; mm.xnet += t.net; const xk = fk + '>' + mk; let xp = xpairs.get(xk); if (!xp) { xp = { fk, mk, xn: 0, xnet: 0 }; xpairs.set(xk, xp); } xp.xn++; xp.xnet += t.net; } continue; }
+    let sy = x.sym.get(t.symbol); if (!sy) { sy = { symbol: t.symbol, n: 0, net: 0, mnet: 0, found: 0, xn: 0, xnet: 0, wins: 0, who: new Map() }; x.sym.set(t.symbol, sy); }
+    if (t.net > 0) sy.wins++;
+    if (m) { const wk = m.magic + ' ' + baseOf(m.base, m.comment); sy.who.set(wk, (sy.who.get(wk) || 0) + 1); }
+    if (f.extra) { sy.xn++; sy.xnet += t.net; x.xn++; x.xnet += t.net; if (mm) { mm.xn++; mm.xnet += t.net; const xk = fk + '>' + mk; let xp = xpairs.get(xk); if (!xp) { xp = { fk, mk, xn: 0, xnet: 0 }; xpairs.set(xk, xp); } xp.xn++; xp.xnet += t.net; } continue; }
     x.n++; x.net += t.net; x.sp -= t.spreadCost || 0; x.cm += t.commission || 0; x.sw += t.swap || 0;
     if (Number.isFinite(t.duration)) { x.dur += t.duration; x.durN++; }
-    let sy = x.sym.get(t.symbol); if (!sy) { sy = { symbol: t.symbol, n: 0, net: 0, mnet: 0 }; x.sym.set(t.symbol, sy); }
     sy.n++; sy.net += t.net;
     if (!m) continue;
-    x.found++; x.mnet += m.net; sy.mnet += m.net; x.mkeys.add(mk); x.masters.add(m.ticket);
+    x.found++; x.mnet += m.net; sy.mnet += m.net; sy.found++; x.mkeys.add(mk); x.masters.add(m.ticket);
     if (Number.isFinite(m.duration)) { x.mdur += m.duration; x.mdurN++; }
     const pk = fk + '>' + mk; let p = pairs.get(pk); if (!p) { p = { fk, mk, n: 0, net: 0, mnet: 0 }; pairs.set(pk, p); }
     p.n++; p.net += t.net; p.mnet += m.net;
@@ -1903,11 +1907,19 @@ function faDetail(host, A, x, big) {
   host.appendChild(el('h2', { class: 'section-title' }, (big ? 'Fader ' : 'Pairs of ') + faLabel(x) + ' · ' + (x.terminal ? x.terminal + ' · ' : '') + x.account));
   if (big) {
     const costs = x.sp + x.cm + x.sw;
-    host.appendChild(el('p', { class: 'sub' }, x.n + ' first copies ' + money(x.net) + ' · ' + x.xn + ' extra copies ' + money(x.xnet) + ' · all ' + money(x.net + x.xnet) + ' · their masters ' + money(x.mnet) + ' · first copies + masters ' + money(x.net + x.mnet) + ' · costs ' + money(costs) + ' · copies ' + x.mkeys.size + ' master strategies'));
+    host.appendChild(el('p', { class: 'sub' }, (x.n + x.xn) + ' trades · ' + x.n + ' first copies ' + money(x.net) + ' · ' + x.xn + ' extra copies ' + money(x.xnet) + ' · ' + x.found + ' master trades copied' + ' · all ' + money(x.net + x.xnet) + ' · their masters ' + money(x.mnet) + ' · first copies + masters ' + money(x.net + x.mnet) + ' · costs ' + money(costs) + ' · copies ' + x.mkeys.size + ' master strategies'));
   }
-  const sr = [...x.sym.values()].map((v) => ({ symbol: v.symbol, n: v.n, net: v.net, master: v.mnet, sum: v.net + v.mnet }));
+  const sr = [...x.sym.values()].map((v) => {
+    const top = [...v.who].sort((p, q) => q[1] - p[1]);
+    return { symbol: v.symbol, trades: v.n + v.xn, win: (v.n + v.xn) ? v.wins / (v.n + v.xn) : NaN, total: v.net + v.xnet, firstN: v.n, net: v.net, xn: v.xn || '', xnet: v.xn ? v.xnet : NaN,
+      masterN: v.found, master: v.mnet, sum: v.net + v.mnet, copying: top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) + ' more' : '') : '',
+      copyingAll: top.slice(0, 25).map(([k, n]) => k + '  (' + n + ' trades)').join('\n') };
+  });
   host.appendChild(el('h3', { class: 'section-title' }, 'Per pair (symbol)'));
-  table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'n', label: 'Copies', num: true }, { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Fader + master', num: true, f: money, cls: signCls }], sr, { tabId: 'fa2sym', defKey: 'net' });
+  table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct }, { key: 'total', label: 'Net', num: true, f: money, cls: signCls, title: C.net.title },
+    { key: 'firstN', label: 'Firsts n', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls, title: C.firsts.title }, { key: 'xn', label: 'Extras n', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls, title: C.extras.title },
+    { key: 'masterN', label: 'Master trades', num: true, title: C.masterN.title }, { key: 'master', label: 'Master alone $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls, title: C.masterDiff.title },
+    Object.assign({ key: 'copying' }, C.copying, { render: (td, v, r) => { td.textContent = v || ''; if (r.copyingAll) td.title = r.copyingAll; } })], sr, { tabId: 'fa2sym' + (big ? 'b' : ''), defKey: 'total' });
   host.appendChild(el('h3', { class: 'section-title' }, 'Masters copied by ' + faLabel(x) + ' (' + x.mkeys.size + ')'));
   const mr = []; const keys = new Set();
   for (const p of A.pairs.values()) if (p.fk === x.key) keys.add(p.mk);
