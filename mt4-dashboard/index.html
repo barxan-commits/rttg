@@ -253,10 +253,10 @@ th { background: linear-gradient(180deg, rgba(59,130,246,.16), rgba(59,130,246,.
 tbody tr:nth-child(even) td { background: rgba(127,127,127,.045); }
 tbody tr:hover td { background: rgba(59,130,246,.10); }
 tbody tr.click:hover td { background: rgba(20,184,166,.13); }
-.bstat { font-family: "Segoe UI", system-ui, -apple-system, "Inter", sans-serif; font-weight: 600; letter-spacing: .2px; background: rgba(127,127,127,.08); }
+.bstat { font-family: inherit; font-weight: 600; letter-spacing: .2px; background: rgba(127,127,127,.08); }
 .bstat.ok { background: rgba(34,197,94,.14); color: var(--c-green); border-color: rgba(34,197,94,.7); }
 .bstat.bad { background: rgba(244,63,94,.14); color: #fb7185; border-color: rgba(244,63,94,.75); }
-.bpop { font-family: "Segoe UI", system-ui, -apple-system, "Inter", sans-serif; font-size: 13.5px; line-height: 1.5; border-color: rgba(34,197,94,.45); box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.bpop { font-family: inherit; font-size: 13.5px; line-height: 1.5; border-color: rgba(34,197,94,.45); box-shadow: 0 10px 30px rgba(0,0,0,.4); }
 .bpop li { padding: 4px 8px; margin: 3px 0; border-radius: 7px; font-weight: 500; }
 .bpop li.ok { color: var(--c-green); background: rgba(34,197,94,.12); }
 .bpop li.wait { color: #60a5fa; background: rgba(59,130,246,.12); }
@@ -2583,6 +2583,10 @@ document.addEventListener('click', (e) => { const pop = $('#buildPop'); if (pop 
 function parseRunLog(t) {
   const o = {}; for (const l of String(t || '').split(/\r?\n/)) { const m = /^(Started|Finished|Result):\s*(.*)$/.exec(l); if (m) o[m[1]] = m[2].trim(); } return o;
 }
+// the build log as status rows: a green check per line when the build is OK, a red cross on the result when it failed
+function logRows(text, ok) {
+  return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => [ok ? 'ok' : (/^(Result|Stuck at):/i.test(l) ? 'bad' : 'wait'), l]);
+}
 const buildTrim = (res) => res.replace(/^(OK|FAILED|RUNNING)\s*-\s*/i, '');
 async function newestRunLog(folder) {
   const q = folder ? "parentId = '" + folder + "' and title contains 'last_build_'" : "title contains 'last_build_'";
@@ -2596,9 +2600,9 @@ async function showLastBuild() {
     const log = await newestRunLog(); if (!log) return;
     const text = await driveText(log); const info = parseRunLog(text); const res = info.Result || '';
     const when = localStamp(Date.parse(log.modifiedTime || ''));
-    if (/^OK/i.test(res)) buildStatusSet('ok', 'Build OK · ' + when, null, text);
-    else if (/^RUNNING/i.test(res) && Date.now() - Date.parse(log.modifiedTime || '') < 40 * 60000) buildStatusSet('wait', 'Build running · since ' + when, null, text);
-    else if (/^(FAILED|RUNNING)/i.test(res)) buildStatusSet('bad', 'Build failed · ' + when, [['bad', buildTrim(res)]], text);
+    if (/^OK/i.test(res)) buildStatusSet('ok', 'Build OK · ' + when, logRows(text, true));
+    else if (/^RUNNING/i.test(res) && Date.now() - Date.parse(log.modifiedTime || '') < 40 * 60000) buildStatusSet('wait', 'Build running · since ' + when, logRows(text, false));
+    else if (/^(FAILED|RUNNING)/i.test(res)) buildStatusSet('bad', 'Build failed · ' + when, logRows(text, false));
   } catch (e) { /* the status chip is optional */ }
 }
 async function buildNow() {
@@ -2634,7 +2638,7 @@ async function buildNow() {
       if (fin) {
         const ok = /^OK/i.test(res); const when = localStamp(logMod);
         rows.push([ok ? 'ok' : 'bad', (ok ? 'Build finished: ' : 'Build failed: ') + buildTrim(res)]);
-        buildStatusSet(ok ? 'ok' : 'bad', ok ? 'Build OK · ' + when : 'Build failed · ' + when, rows, raw);
+        buildStatusSet(ok ? 'ok' : 'bad', ok ? 'Build OK · ' + when : 'Build failed · ' + when, rows.concat(logRows(raw, ok)));
         if (ok && !reloaded) { reloaded = true; await loadFromDrive(true); }
         done = true; break;
       }
