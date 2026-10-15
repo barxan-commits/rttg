@@ -225,3 +225,5 @@ The Faders tab also shows the costs of the first copies and of their masters sid
 Filters: the **← Back** button undoes the last filter change (many steps), the chips under the filters show what is active and each has an x to remove just that filter. With Category = Faders the Magic, Comment and Symbol lists only show faders.
 
 By magic: "Split by account / terminal" shows one row per account for each magic number, rows of the same magic one under the other (alternating shading), so the same fader on two terminals can be compared. The Magic menu says "N accounts" for a magic that runs on several accounts.
+
+By magic, By comment and Magic x comment: **Copying master** shows the master strategy a fader copies (its magic and comment, "+N more" when it copies several; hover for the whole list).

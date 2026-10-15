@@ -1516,6 +1516,7 @@ const C = {
   symbols: { label: 'Symbols', num: true, f: (v) => v },
   comments: { label: 'Comments', num: false, f: (v) => v },
   master: { label: 'Master alone $', num: true, f: money, cls: signCls, title: 'What the master made or lost on the trades this fader copied (the fader copies each master trade the other way round).' },
+  copying: { label: 'Copying master', num: false, f: (v) => v || '', render: (td, v, r) => { td.textContent = v || ''; if (r.copyingAll) td.title = r.copyingAll; }, title: 'The master strategy this fader copies: its magic and comment. "+N more" when it copies several.' },
   masterDiff: { label: 'Both together $', num: true, f: money, cls: signCls, title: 'Fader + master: what you get if the fader and its master run together. The fader alone is the Net column.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
   basketWin: { label: 'Basket win %', num: true, f: pct },
@@ -1527,15 +1528,22 @@ const STD_COLS = ['n', 'winRate', 'net', 'pf', 'exp', 'avgR', 'totR', 'netPct', 
 let BY_TICKET = null;
 function masterExtra(arr) {
   if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
-  const seen = new Set(); let master = 0, found = 0, fnet = 0;
+  const seen = new Set(); let master = 0, found = 0, fnet = 0; const who = new Map();
   for (const t of arr) {
     const f = faderOf(t); if (!f.is || f.extra) continue;
     fnet += t.net;
-    if (f.master && !seen.has(f.master)) { seen.add(f.master); const m = BY_TICKET.get(f.master); if (m) { found++; master += m.net; } }
+    if (f.master && !seen.has(f.master)) {
+      seen.add(f.master); const m = BY_TICKET.get(f.master);
+      if (m) { found++; master += m.net; const k = m.magic + ' ' + baseOf(m.base, m.comment); who.set(k, (who.get(k) || 0) + 1); }
+    }
   }
-  return found ? { master, masterDiff: fnet + master } : { master: NaN, masterDiff: NaN };
+  // the master strategy(ies) the fader copies: the one it copies most, and how many others
+  const top = [...who].sort((a, b) => b[1] - a[1]);
+  const copying = top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) + ' more' : '') : '';
+  const copyingAll = top.slice(0, 25).map(([k, n]) => k + '  (' + n + ' trades)').join('\n') + (top.length > 25 ? '\n…' : '');
+  return found ? { master, masterDiff: fnet + master, copying, copyingAll } : { master: NaN, masterDiff: NaN, copying: '', copyingAll: '' };
 }
-const MASTER_COLS = [Object.assign({ key: 'master' }, C.master), Object.assign({ key: 'masterDiff' }, C.masterDiff)];
+const MASTER_COLS = [Object.assign({ key: 'master' }, C.master), Object.assign({ key: 'masterDiff' }, C.masterDiff), Object.assign({ key: 'copying' }, C.copying)];
 function sortRows(rows, tabId, defKey, defDir) {
   const st = state.sort[tabId] || { key: defKey, dir: defDir };
   const dir = st.dir === 'asc' ? 1 : -1;
@@ -1658,7 +1666,7 @@ function renderTab() {
       return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: a0.account, magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
     });
     const lead = [{ key: 'label', label: 'Magic', num: false }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
-    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['master', 'masterDiff', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
+    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['master', 'masterDiff', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
     const extra = (bar) => {
       const cb = el('input', { type: 'checkbox' }); cb.checked = split; cb.addEventListener('change', () => { SPLIT.magic = cb.checked; renderTab(); });
       const lb = el('label', { class: 'muted', style: 'display:inline-flex;flex-direction:row;align-items:center;gap:6px;cursor:pointer', title: 'One row per account and magic number, so the same magic on different terminals is not added together' }); lb.append(cb, document.createTextNode(' Split by account / terminal')); bar.appendChild(lb);
