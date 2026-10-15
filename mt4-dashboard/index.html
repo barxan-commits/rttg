@@ -227,6 +227,8 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .chip b { font-weight: 600; color: var(--accent); }
 .chip button { font: inherit; border: 0; background: rgba(127,127,127,.22); color: inherit; width: 18px; height: 18px; border-radius: 50%; line-height: 16px; cursor: pointer; padding: 0; }
 .chip button:hover { background: rgba(244,63,94,.35); }
+.grp1 td { background: rgba(59,130,246,.08) !important; }
+.grp0 td { background: transparent; }
 /* ---- colour layer: accents on top of the base tokens (works in light and dark) ---- */
 :root { --c-blue: #3b82f6; --c-teal: #14b8a6; --c-violet: #8b5cf6; --c-amber: #f59e0b; --c-rose: #f43f5e; --c-green: #22c55e; --c-cyan: #06b6d4; --c-pink: #ec4899; }
 header.top { background: linear-gradient(90deg, rgba(59,130,246,.16), rgba(20,184,166,.10) 55%, rgba(139,92,246,.10)); border-bottom: 1px solid rgba(59,130,246,.35); }
@@ -1045,7 +1047,8 @@ function buildFilterOptions() {
   const withOpen = (m, fn) => { for (const p of DB.open) { const k = fn(p); if (!m.has(k)) m.set(k, 0); } return m; };
   if (DB.active) DB.active.comment = activeValues(commentOf); // depends on "Group comments by"
   const magics = withOpen(countBy(T, (t) => t.magic), (p) => p.magic);
-  fillActiveSelect($('#fMagic'), 'magic', magics, (v) => v, (a, b) => (+a) - (+b) || a.localeCompare(b), 'magics');
+  const magicAccs = new Map(); for (const t of T) { let q = magicAccs.get(t.magic); if (!q) magicAccs.set(t.magic, q = new Set()); q.add(t.account); }
+  fillActiveSelect($('#fMagic'), 'magic', magics, (v) => v + (magicAccs.has(v) && magicAccs.get(v).size > 1 ? ' · ' + magicAccs.get(v).size + ' accounts' : ''), (a, b) => (+a) - (+b) || a.localeCompare(b), 'magics');
   const comments = withOpen(countBy(T, commentOf), commentOf);
   fillActiveSelect($('#fComment'), 'comment', comments, (v) => v, (a, b) => comments.get(b) - comments.get(a) || a.localeCompare(b), 'comments');
   const ft = $('#fFaderType'); ft.textContent = ''; ft.appendChild(el('option', { value: '' }, 'All'));
@@ -1571,7 +1574,8 @@ function table(host, cols, rows, opts) {
   const page = Math.min(state.page[opts.tabId] || 0, pages - 1);
   const tb = el('tbody');
   for (const r of rows.slice(page * ps, page * ps + ps)) {
-    const tr = el('tr', opts.onRow ? { class: 'click' } : null);
+    const rc = ((opts.onRow ? 'click ' : '') + (opts.rowClass ? opts.rowClass(r) : '')).trim();
+    const tr = el('tr', rc ? { class: rc } : null);
     for (const c of cols) {
       const v = r[c.key]; const td = el('td', { class: (c.num ? 'num ' : '') + (c.cls ? c.cls(v) : '') });
       if (c.render) c.render(td, v, r); else td.textContent = c.f ? c.f(v) : (v ?? '');
@@ -1639,19 +1643,31 @@ function renderTabsNav() {
     nav.appendChild(b);
   }
 }
+const SPLIT = { magic: false };
 let CUR = [];
 function renderTab() {
   const host = $('#tabBody'); host.textContent = ''; tip.hide();
   const T = CUR; const id = state.tab;
   const setF = (k) => (r) => { state[k] = r.key; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   if (id === 'magic') {
-    const g = groupBy(T, (t) => t.magic);
+    // the same magic number can run on several accounts (e.g. one fader on two terminals): "Split by account" shows one row per account
+    const split = SPLIT.magic;
+    const g = groupBy(T, (t) => (split ? t.account + '|' : '') + t.magic);
     const rows = [...g].map(([k, arr]) => {
-      const bs = baskets(arr);
-      return dimRow(k, k, arr, { ...masterExtra(arr), baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
+      const bs = baskets(arr); const a0 = arr[0]; const acc = DB.accounts.get(a0.account) || {};
+      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: a0.account, magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
     });
-    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['master', 'masterDiff', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), [{ key: 'label', label: 'Magic', num: false }]);
-    table(host, cols, rows, { tabId: id, defKey: 'net', onRow: setF('magic'), footer: totalsFooter(T, 'label') });
+    const lead = [{ key: 'label', label: 'Magic', num: false }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
+    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['master', 'masterDiff', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
+    const extra = (bar) => {
+      const cb = el('input', { type: 'checkbox' }); cb.checked = split; cb.addEventListener('change', () => { SPLIT.magic = cb.checked; renderTab(); });
+      const lb = el('label', { class: 'muted', style: 'display:inline-flex;flex-direction:row;align-items:center;gap:6px;cursor:pointer', title: 'One row per account and magic number, so the same magic on different terminals is not added together' }); lb.append(cb, document.createTextNode(' Split by account / terminal')); bar.appendChild(lb);
+    };
+    if (split) rows.sort((a, b) => b.net - a.net);   // inside one magic: best account first (the table sort below is stable)
+    let prevMagic = null, shade = 0;
+    table(host, cols, rows, { tabId: id, defKey: split ? 'label' : 'net', defDir: split ? 'asc' : 'desc', toolbarExtra: extra, footer: totalsFooter(T, 'label'),
+      rowClass: split ? (r) => { if (r.magic !== prevMagic) { shade ^= 1; prevMagic = r.magic; } return 'grp' + shade; } : null,
+      onRow: split ? (r) => { state.account = r.account; state.magic = r.magic; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } : setF('magic') });
   } else if (id === 'comment') {
     const g = groupBy(T, commentOf);
     const rows = [...g].map(([k, arr]) => dimRow(k, k, arr, { ...masterExtra(arr), magics: [...new Set(arr.map((t) => t.magic))].slice(0, 4).join(', ') + (new Set(arr.map((t) => t.magic)).size > 4 ? ' …' : '') }));
@@ -2570,7 +2586,7 @@ function goBack() {
 function renderChips() {
   const host = $('#chips'); if (!host) return; host.textContent = '';
   const items = [];
-  const sel = (id) => { const o = $(id); return o && o.selectedOptions[0] ? o.selectedOptions[0].textContent.replace(/\s+\(\d+\)$/, '').trim() : ''; };
+  const sel = (id) => { const o = $(id); return o && o.selectedOptions[0] ? o.selectedOptions[0].textContent.replace(/\s+\(\d+\)$/, '').replace(/\s+·\s+\d+ accounts$/, '').trim() : ''; };
   if (state.category) items.push(['Category', sel('#fCategory'), () => { state.category = ''; $('#fCategory').value = ''; buildFilterOptions(); }]);
   if (state.faderType) items.push(['Fader type', state.faderType, () => { state.faderType = ''; buildFilterOptions(); }]);
   if (state.account) items.push(['Account', sel('#fAccount') || state.account, () => { state.account = ''; buildFilterOptions(); }]);

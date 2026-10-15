@@ -223,3 +223,5 @@ The Faders tab also shows the costs of the first copies and of their masters sid
 **Build now button** (online page only): the header button puts a BUILD_NOW file into `_DASHBOARD_BUILD` on Drive; a hidden watcher on the VPS (`INSTALL_BUILD_BUTTON.bat`, run once there) sees it and runs `Build-DashboardData.ps1 -Force`. A status chip next to the button shows the steps (waiting, building, then a green OK or a red X with the reason) and keeps showing the result of the last build until the next build, also after a reload; click it for the details. The first click asks you to allow the page to create files in Google Drive.
 
 Filters: the **← Back** button undoes the last filter change (many steps), the chips under the filters show what is active and each has an x to remove just that filter. With Category = Faders the Magic, Comment and Symbol lists only show faders.
+
+By magic: "Split by account / terminal" shows one row per account for each magic number, rows of the same magic one under the other (alternating shading), so the same fader on two terminals can be compared. The Magic menu says "N accounts" for a magic that runs on several accounts.
