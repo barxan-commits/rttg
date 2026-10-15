@@ -163,12 +163,13 @@ main { padding: 16px; max-width: 1600px; margin: 0 auto; }
 .fa-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .fa-bar input[type=number] { width: 64px; }
 .btn.on { background: var(--surface-2); border-color: var(--text-muted); font-weight: 600; }
-.buildpanel { position: fixed; right: 16px; bottom: 16px; width: min(340px, calc(100vw - 32px)); z-index: 50; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.28); padding: 10px 12px; font-size: 13px; }
-.buildpanel h3 { margin: 0 0 6px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
-.buildpanel ul { list-style: none; margin: 6px 0; padding: 0; }
-.buildpanel li { padding: 2px 0; }
-.buildpanel li.ok { color: var(--pos-text); } .buildpanel li.bad { color: var(--neg-text); } .buildpanel li.wait { color: var(--text-secondary); }
-.buildpanel .x { background: none; border: 0; color: var(--text-muted); font-size: 16px; cursor: pointer; }
+.bwrap { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.bstat { font: inherit; font-size: 13px; background: none; border: 1px solid var(--border); border-radius: 14px; padding: 3px 10px; cursor: pointer; color: var(--text-secondary); max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bstat.ok { color: var(--pos-text); border-color: var(--pos-text); } .bstat.bad { color: var(--neg-text); border-color: var(--neg-text); font-weight: 600; }
+.bpop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 60; width: min(420px, 90vw); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.28); padding: 10px 12px; font-size: 13px; }
+.bpop ul { list-style: none; margin: 0 0 6px; padding: 0; } .bpop li { padding: 2px 0; }
+.bpop li.ok { color: var(--pos-text); } .bpop li.bad { color: var(--neg-text); } .bpop li.wait { color: var(--text-secondary); }
+.bpop pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font-size: 12px; color: var(--text-secondary); max-height: 220px; overflow: auto; }
 .tablewrap { overflow: auto; max-height: 640px; border: 1px solid var(--border); border-radius: 8px; }
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 th, td { padding: 5px 9px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--grid); }
@@ -230,7 +231,7 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
   </div>
   <div class="actions">
     <button id="driveBtn" class="btn primary" type="button" hidden>Refresh from Drive</button>
-    <button id="buildBtn" class="btn" type="button" hidden title="Ask the VPS to build the dashboard data now">Build now</button>
+    <span class="bwrap" id="buildWrap" hidden><button id="buildBtn" class="btn" type="button" title="Ask the VPS to build the dashboard data now">Build now</button><button id="buildStatus" class="bstat" type="button" hidden></button><div id="buildPop" class="bpop" hidden></div></span>
     <label class="btn primary" id="dirBtn">Choose folder<input id="dirInput" type="file" webkitdirectory directory multiple hidden></label>
     <label class="btn">Choose files<input id="fileInput" type="file" multiple accept=".csv,.txt" hidden></label>
     <button id="themeBtn" class="btn" type="button" title="Switch light / dark">Theme</button>
@@ -2522,32 +2523,52 @@ function driveError(e) {
 function asObj(p) { if (typeof p === 'string') { try { return JSON.parse(p); } catch (e) { return {}; } } return p || {}; }
 /* ---------------- Build now ----------------
    The page cannot start a program on the VPS. It puts a small file BUILD_NOW_<time>.txt into _DASHBOARD_BUILD on Drive;
-   the watcher on the VPS (INSTALL_BUILD_BUTTON.bat) sees it through Drive sync and runs the build. The status window
-   follows last_build_<PC>.txt, which the build script writes when it finishes (the watcher writes RUNNING when it starts). */
+   the watcher on the VPS (INSTALL_BUILD_BUTTON.bat) sees it through Drive sync and runs the build. The status chip next to the
+   button follows last_build_<PC>.txt (the build script writes it when it finishes, the watcher writes RUNNING when it starts)
+   and keeps showing the result of the last build until the next one. */
 const BUILD = { run: 0, poll: window.__BUILD_POLL_MS || 12000 };
-function buildPanelSet(title, rows, opts) {
-  const host = $('#buildPanel'); if (!host) return; host.hidden = false; host.textContent = '';
-  const h = el('h3'); h.appendChild(el('span', null, title));
-  const x = el('button', { class: 'x', type: 'button', title: 'Close (the build keeps going)' }, '×'); x.addEventListener('click', () => { host.hidden = true; }); h.appendChild(x);
-  host.appendChild(h);
-  const ul = el('ul');
-  for (const [cls, text] of rows) ul.appendChild(el('li', { class: cls }, (cls === 'ok' ? '✓ ' : cls === 'bad' ? '✗ ' : '… ') + text));
-  host.appendChild(ul);
-  if (opts && opts.note) host.appendChild(el('div', { class: 'muted' }, opts.note));
+// level: wait | ok | bad. rows: [[cls, text]], raw: optional log text shown in the popover
+function buildStatusSet(level, chip, rows, raw) {
+  const b = $('#buildStatus'); if (!b) return;
+  b.hidden = false; b.className = 'bstat ' + (level === 'ok' ? 'ok' : level === 'bad' ? 'bad' : '');
+  b.textContent = (level === 'ok' ? '✓ ' : level === 'bad' ? '✗ ' : '… ') + chip;
+  const pop = $('#buildPop'); const wasOpen = !pop.hidden; pop.textContent = '';
+  if (rows && rows.length) { const ul = el('ul'); for (const [c, t] of rows) ul.appendChild(el('li', { class: c }, (c === 'ok' ? '✓ ' : c === 'bad' ? '✗ ' : '… ') + t)); pop.appendChild(ul); }
+  if (raw) pop.appendChild(el('pre', null, raw.trim()));
+  pop.hidden = !wasOpen || !pop.childNodes.length;
 }
+$('#buildStatus').addEventListener('click', (e) => { e.stopPropagation(); const pop = $('#buildPop'); if (pop.childNodes.length) pop.hidden = !pop.hidden; });
+document.addEventListener('click', (e) => { const pop = $('#buildPop'); if (pop && !pop.hidden && !e.target.closest('#buildPop')) pop.hidden = true; });
 function parseRunLog(t) {
   const o = {}; for (const l of String(t || '').split(/\r?\n/)) { const m = /^(Started|Finished|Result):\s*(.*)$/.exec(l); if (m) o[m[1]] = m[2].trim(); } return o;
+}
+const buildTrim = (res) => res.replace(/^(OK|FAILED|RUNNING)\s*-\s*/i, '');
+async function newestRunLog(folder) {
+  const q = folder ? "parentId = '" + folder + "' and title contains 'last_build_'" : "title contains 'last_build_'";
+  const lg = await driveCall('search_files', { query: q, pageSize: 10, excludeContentSnippets: true });
+  return (lg.files || []).filter((f) => /^last_build_.*\.txt$/i.test(f.title || '')).sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')))[0];
+}
+// what the last build left behind: shown after every page load and kept until the next build
+async function showLastBuild() {
+  if (!MCP) return;
+  try {
+    const log = await newestRunLog(); if (!log) return;
+    const text = await driveText(log); const info = parseRunLog(text); const res = info.Result || '';
+    const when = localStamp(Date.parse(log.modifiedTime || ''));
+    if (/^OK/i.test(res)) buildStatusSet('ok', 'Build OK · ' + when, null, text);
+    else if (/^RUNNING/i.test(res) && Date.now() - Date.parse(log.modifiedTime || '') < 40 * 60000) buildStatusSet('wait', 'Build running · since ' + when, null, text);
+    else if (/^(FAILED|RUNNING)/i.test(res)) buildStatusSet('bad', 'Build failed · ' + when, [['bad', buildTrim(res)]], text);
+  } catch (e) { /* the status chip is optional */ }
 }
 async function buildNow() {
   if (!MCP) return;
   const my = ++BUILD.run; const t0 = Date.now(); const btn = $('#buildBtn'); btn.disabled = true;
-  const rows = [['wait', 'Looking for the build folder in Google Drive']];
+  BUILD.busy = true;
   try {
-    buildPanelSet('Build on VPS', rows);
-    const lg = await driveCall('search_files', { query: "title contains 'last_build_'", pageSize: 10, excludeContentSnippets: true });
-    const logs = (lg.files || []).filter((f) => /^last_build_.*\.txt$/i.test(f.title || '')).sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')));
-    if (!logs.length) { buildPanelSet('Build on VPS', [['bad', 'No last_build_<PC>.txt found in Drive. Install the automatic build on the VPS first (INSTALL_AUTO_UPDATE.bat).']]); return; }
-    const folder = logs[0].parentId;
+    buildStatusSet('wait', 'Looking for the build folder…', [['wait', 'Looking for the build folder in Google Drive']]);
+    const first = await newestRunLog();
+    if (!first) { buildStatusSet('bad', 'No build log in Drive', [['bad', 'No last_build_<PC>.txt found in Drive. Install the automatic build on the VPS first (INSTALL_AUTO_UPDATE.bat).']]); return; }
+    const folder = first.parentId;
     const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
     const title = 'BUILD_NOW_' + stamp + '.txt';
     await driveCall('create_file', { title, parentId: folder, contentMimeType: 'text/plain', disableConversionToGoogleType: true, textContent: 'build requested ' + new Date().toISOString() + '\r\n' });
@@ -2561,34 +2582,32 @@ async function buildNow() {
       const log = fl.filter((f) => /^last_build_.*\.txt$/i.test(f.title || '')).sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')))[0];
       const beatAge = beat ? (Date.now() - Date.parse(beat.modifiedTime || '')) / 60000 : Infinity;
       const logMod = log ? Date.parse(log.modifiedTime || '') : 0;
-      const info = log && logMod >= t0 - 5000 ? parseRunLog(await driveText(log)) : {};
-      const res = info.Result || '';
+      const raw = log && logMod >= t0 - 5000 ? await driveText(log) : '';
+      const info = parseRunLog(raw); const res = info.Result || '';
       if (/^RUNNING/i.test(res)) sawRunning = true;
       const fin = /^(OK|FAILED)/i.test(res) && logMod >= t0 - 5000 && (sawRunning || (!reqLeft && logMod > lastWithReq));
       if (reqLeft) lastWithReq = Date.now();
-      const el1 = Math.round((Date.now() - t0) / 1000);
-      const out = [['ok', 'Request sent (' + title + ')']];
+      const sec = Math.round((Date.now() - t0) / 1000), el1 = fmtDur(sec);
       const watcherOk = beatAge <= 12;
-      if (reqLeft) out.push(['wait', 'Waiting for the VPS to pick it up (Drive sync + watcher, usually under a minute) · ' + el1 + 's']);
-      else out.push(['ok', 'The VPS picked up the request']);
-      if (reqLeft && !watcherOk) out.push(['bad', beat ? 'The watcher on the VPS has not reported for ' + fmtDur(beatAge * 60) + '. Is the VPS on and are you logged in?' : 'No watcher found on the VPS. Run INSTALL_BUILD_BUTTON.bat there once.']);
-      if (!reqLeft && !fin) out.push(['wait', sawRunning ? 'Building on the VPS… ' + el1 + 's (a build takes about 4 to 15 minutes)' : 'Starting the build… ' + el1 + 's']);
+      const rows = [['ok', 'Request sent (' + title + ')'], reqLeft ? ['wait', 'Waiting for the VPS to pick it up (Drive sync + watcher, usually under a minute) · ' + el1] : ['ok', 'The VPS picked up the request']];
       if (fin) {
-        const ok = /^OK/i.test(res);
-        out.push([ok ? 'ok' : 'bad', (ok ? 'Build finished: ' : 'Build failed: ') + res.replace(/^(OK|FAILED)\s*-\s*/i, '')]);
-        if (ok) out.push(reloaded ? ['ok', 'Dashboard reloaded from Drive'] : ['wait', 'Reloading the dashboard from Drive…']);
-      }
-      buildPanelSet('Build on VPS', out, { note: watcherOk ? 'Watcher on the VPS: online' : '' });
-      if (fin) {
-        if (/^OK/i.test(res) && !reloaded) { reloaded = true; await loadFromDrive(true); const o2 = out.slice(0, -1).concat([['ok', 'Dashboard reloaded from Drive']]); buildPanelSet('Build on VPS', o2, { note: 'Watcher on the VPS: online' }); }
+        const ok = /^OK/i.test(res); const when = localStamp(logMod);
+        rows.push([ok ? 'ok' : 'bad', (ok ? 'Build finished: ' : 'Build failed: ') + buildTrim(res)]);
+        buildStatusSet(ok ? 'ok' : 'bad', ok ? 'Build OK · ' + when : 'Build failed · ' + when, rows, raw);
+        if (ok && !reloaded) { reloaded = true; await loadFromDrive(true); }
         done = true; break;
       }
+      if (reqLeft && !watcherOk) {
+        rows.push(['bad', beat ? 'The watcher on the VPS has not reported for ' + fmtDur(beatAge * 60) + '. Is the VPS on and are you logged in there?' : 'No watcher found on the VPS. Run INSTALL_BUILD_BUTTON.bat there once.']);
+        buildStatusSet('bad', beat ? 'Watcher on VPS silent' : 'No watcher on VPS', rows);
+      } else if (reqLeft) buildStatusSet('wait', 'Waiting for the VPS · ' + el1, rows);
+      else { rows.push(['wait', sawRunning ? 'Building on the VPS · ' + el1 + ' (a build takes about 4 to 15 minutes)' : 'Starting the build · ' + el1]); buildStatusSet('wait', (sawRunning ? 'Building · ' : 'Starting · ') + el1, rows); }
       await new Promise((r) => setTimeout(r, BUILD.poll));
     }
-    if (!done && my === BUILD.run) buildPanelSet('Build on VPS', [['bad', 'Gave up after 35 minutes without a finished build. Check last_build_<PC>.txt in _DASHBOARD_BUILD.']]);
+    if (!done && my === BUILD.run) buildStatusSet('bad', 'No result after 35 min', [['bad', 'Gave up after 35 minutes without a finished build. Check last_build_<PC>.txt in _DASHBOARD_BUILD.']]);
   } catch (e) {
-    buildPanelSet('Build on VPS', [['bad', driveError(e)]]);
-  } finally { btn.disabled = false; }
+    buildStatusSet('bad', 'Build request failed', [['bad', driveError(e)]]);
+  } finally { btn.disabled = false; BUILD.busy = false; }
 }
 $('#buildBtn').addEventListener('click', buildNow);
 async function driveCall(tool, input) {
@@ -2668,6 +2687,7 @@ async function loadFromDrive(keepFilters) {
     KEEP_FILTERS = !!keepFilters;
     items.sort((a, b) => a.name.localeCompare(b.name));
     await loadSources(items);
+    if (!BUILD.busy) showLastBuild();
   } catch (e) {
     showProgress(driveError(e));
   } finally {
@@ -2679,7 +2699,7 @@ async function loadFromDrive(keepFilters) {
   window.claude.use('downloads').then((d) => { DOWNLOADS = d; }).catch(() => {});
   MCP = await window.claude.use('mcp');
   if (!MCP) return;
-  $('#driveBtn').hidden = false; $('#buildBtn').hidden = false;
+  $('#driveBtn').hidden = false; $('#buildWrap').hidden = false;
   $('#driveNote').hidden = false;
   $('#driveNote').textContent = 'Opened from claude.ai: data is read from MT4_Terminals/_DASHBOARD in your Google Drive automatically.';
   $('#driveBtn').addEventListener('click', () => loadFromDrive(true));
@@ -2744,6 +2764,5 @@ document.addEventListener('drop', async (e) => {
   loadFiles(out);
 });
 </script>
-<div id="buildPanel" class="buildpanel" hidden></div>
 </body>
 </html>
