@@ -229,3 +229,5 @@ By magic: "Split by account / terminal" shows one row per account for each magic
 By magic, By comment and Magic x comment: **Copying master** shows the master strategy a fader copies (its magic and comment, "+N more" when it copies several; hover for the whole list).
 
 By magic: Firsts $ + Extras $ = Net (the first copies and the extra copies of a fader). Click the Copying master cell for a page of its own with every master the fader copies (copies, coverage, fader $, master $, sum) and the result per pair; the on/off switches are buttons (green check = on).
+
+The master list page (click Copying master) has one row per master with: Fader trades (first copies), Extras n, Master trades, Coverage, Net, Firsts $, Extras $, Master alone $ and Both together $. By magic also shows Firsts n and Master trades.
