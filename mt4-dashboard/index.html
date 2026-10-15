@@ -828,7 +828,7 @@ function renderSummary() {
     const builtMs = builtMillis(), age = buildAgeMinutes();
     if (Number.isFinite(builtMs)) {
       host.appendChild(document.createTextNode(' · Drive data built ' + localStamp(builtMs) + ' (' + (age < 1 ? 'just now' : fmtDur(age * 60) + ' ago') + ')' + SUMMARY.builtOn));
-      host.appendChild(age <= 45 ? markSpan('ok', 'The VPS built the data recently.') : age <= STALE_BUILD_MIN ? markSpan('warn', 'The build is a little late; one build takes several minutes.') : markSpan('bad', 'The build on the VPS has stopped or is stuck: this data is old.'));
+      host.appendChild(age <= 60 ? markSpan('ok', 'The VPS built the data recently (it builds every 30 minutes).') : age <= STALE_BUILD_MIN ? markSpan('warn', 'The build is late; a build runs every 30 minutes and takes up to about 15.') : markSpan('bad', 'The build on the VPS has stopped or is stuck: this data is old.'));
     } else host.appendChild(document.createTextNode(' · Drive data built ' + SOURCE.manifest.generatedAt + SUMMARY.builtOn));
     const loadAge = (Date.now() - SUMMARY.loadedAt) / 60000;
     host.appendChild(document.createTextNode(' · page loaded ' + localStamp(SUMMARY.loadedAt)));
@@ -848,7 +848,7 @@ function renderSummary() {
 }
 setInterval(renderSummary, 60000);
 let KEEP_FILTERS = false;
-const STALE_BUILD_MIN = 60;
+const STALE_BUILD_MIN = 90;   // the build runs every 30 minutes and takes up to ~15, so up to ~45 minutes is normal
 // minutes since the build script last wrote the Drive data (NaN when not loaded from Drive). The later of
 // the build PC's own UTC stamp and Drive's file time, so a PC clock or time zone that is off never raises a false alarm.
 // Drive's own time for the manifest file (true UTC); the build PC's stamp only when Drive gives none, because that PC's clock can be off
