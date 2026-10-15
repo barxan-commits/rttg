@@ -217,3 +217,5 @@ The By magic, By comment and Magic x comment tabs also show **Master $** (the ma
 Fader detection no longer depends on the magic number or EA version: any comment that ends with a master ticket (`#2052488935`, `+#2052488935` for an extra copy, `#BIG2052488935`) is a fader. Known types: MP, MP FEES/HALF/NOPULL, MP2X/MP0.5X/MP3X, DAY, SPR, ADDL<n>, ADDP<n>, PLAIN; anything else is type COPY.
 
 The Faders tab also shows the costs of the first copies and of their masters side by side: spread (estimate), commission, swap and their sum (negative = cost).
+
+**Fader analysis tab** (three views): 1) master x fader matrix (cell = fader $, copies / master trades, fader + master), 2) per fader with first and extra copies, costs per trade, hold time, coverage and a pair (symbol) breakdown on click, 3) per master with every fader that copied it. "Min copies" (default 5) hides noise; the date, account, magic and symbol filters apply.
