@@ -222,6 +222,11 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .per-groups { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 14px; }
 @media (max-width: 520px) { .per-groups { grid-template-columns: 1fr; } }
 
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; padding: 3px 4px 3px 10px; border-radius: 14px; background: rgba(59,130,246,.14); border: 1px solid rgba(59,130,246,.45); color: var(--text-primary); }
+.chip b { font-weight: 600; color: var(--accent); }
+.chip button { font: inherit; border: 0; background: rgba(127,127,127,.22); color: inherit; width: 18px; height: 18px; border-radius: 50%; line-height: 16px; cursor: pointer; padding: 0; }
+.chip button:hover { background: rgba(244,63,94,.35); }
 /* ---- colour layer: accents on top of the base tokens (works in light and dark) ---- */
 :root { --c-blue: #3b82f6; --c-teal: #14b8a6; --c-violet: #8b5cf6; --c-amber: #f59e0b; --c-rose: #f43f5e; --c-green: #22c55e; --c-cyan: #06b6d4; --c-pink: #ec4899; }
 header.top { background: linear-gradient(90deg, rgba(59,130,246,.16), rgba(20,184,166,.10) 55%, rgba(139,92,246,.10)); border-bottom: 1px solid rgba(59,130,246,.35); }
@@ -328,8 +333,10 @@ tbody tr.click:hover td { background: rgba(20,184,166,.13); }
           <option value="raw">Raw comment</option>
         </select>
       </label>
+      <button class="btn" id="backBtn" type="button" disabled title="Undo the last filter change">← Back</button>
       <button class="btn" id="resetBtn" type="button">Reset filters</button>
     </div>
+    <div id="chips" class="chips" hidden></div>
     <div id="warn" class="warn" hidden></div>
     <div class="kpis" id="kpis"></div>
 
@@ -1023,11 +1030,17 @@ function fillSelect(sel, values, current, labelFn) {
   sel.value = values.some(([v]) => v === current) ? current : '';
 }
 function countBy(arr, fn) { const m = new Map(); for (const x of arr) { const k = fn(x); m.set(k, (m.get(k) || 0) + 1); } return m; }
+// the Category menu also narrows the Magic / Comment / Symbol lists (only faders when Category = Faders)
+function faderCatOk(x) {
+  if (!state.category) return true;
+  const f = faderOf(x);
+  return state.category === 'fader' ? f.is : state.category === 'first' ? f.is && !f.extra : state.category === 'extra' ? f.is && f.extra : state.category === 'other' ? !f.is : true;
+}
 function buildFilterOptions() {
-  const T = DB.trades;
-  const accs = countBy(T, (t) => t.account); for (const a of DB.accounts.keys()) if (!accs.has(a)) accs.set(a, 0);
+  const T = DB.trades.filter(faderCatOk); const ALL = DB.trades;
+  const accs = countBy(ALL, (t) => t.account); for (const a of DB.accounts.keys()) if (!accs.has(a)) accs.set(a, 0);
   fillActiveSelect($('#fAccount'), 'account', accs, accOption, (a, b) => naturalCmp(accSortKey(a), accSortKey(b)), 'accounts');
-  fillSelect($('#fCampaign'), [...countBy(T, (t) => t.campaign)].sort((a, b) => b[1] - a[1]), state.campaign);
+  fillSelect($('#fCampaign'), [...countBy(ALL, (t) => t.campaign)].sort((a, b) => b[1] - a[1]), state.campaign);
   // strategies with open positions but no closed trade yet are listed too
   const withOpen = (m, fn) => { for (const p of DB.open) { const k = fn(p); if (!m.has(k)) m.set(k, 0); } return m; };
   if (DB.active) DB.active.comment = activeValues(commentOf); // depends on "Group comments by"
@@ -1036,7 +1049,7 @@ function buildFilterOptions() {
   const comments = withOpen(countBy(T, commentOf), commentOf);
   fillActiveSelect($('#fComment'), 'comment', comments, (v) => v, (a, b) => comments.get(b) - comments.get(a) || a.localeCompare(b), 'comments');
   const ft = $('#fFaderType'); ft.textContent = ''; ft.appendChild(el('option', { value: '' }, 'All'));
-  const typeN = countBy(T.filter((t) => faderOf(t).is), (t) => faderOf(t).type);
+  const typeN = countBy(ALL.filter((t) => faderOf(t).is), (t) => faderOf(t).type);
   const typeOrder = [...typeN.keys()].sort((a, b) => { const ia = FADER_TYPES.indexOf(a), ib = FADER_TYPES.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b, undefined, { numeric: true }); });
   for (const k of typeOrder) ft.appendChild(el('option', { value: k }, k + '  (' + typeN.get(k) + ')'));
   if (state.faderType && !typeN.has(state.faderType)) state.faderType = '';
@@ -2536,7 +2549,46 @@ function syncFilterInputs() {
   $('#fSide').value = state.side;
   $('#fCommentMode').value = state.commentMode;
 }
+// ---- filter history (← Back) and the chips of the active filters ----
+const FKEYS = ['from', 'to', 'preset', 'account', 'campaign', 'magic', 'comment', 'symbol', 'side', 'category', 'faderType', 'commentMode'];
+const HIST = []; let LAST_SNAP = null, RESTORING = false;
+const filterSnap = () => JSON.stringify(FKEYS.map((k) => state[k]));
+function trackHistory() {
+  const snap = filterSnap();
+  if (LAST_SNAP !== null && snap !== LAST_SNAP && !RESTORING) { HIST.push(LAST_SNAP); if (HIST.length > 60) HIST.shift(); }
+  LAST_SNAP = snap; RESTORING = false;
+  const b = $('#backBtn'); if (b) b.disabled = !HIST.length;
+}
+function goBack() {
+  const prev = HIST.pop(); if (!prev) return;
+  const vals = JSON.parse(prev); FKEYS.forEach((k, i) => { state[k] = vals[i]; });
+  RESTORING = true;
+  $('#fFrom').value = Number.isFinite(state.from) ? fmtDate(state.from) : ''; $('#fTo').value = Number.isFinite(state.to) ? fmtDate(state.to - DAY) : '';
+  for (const b of document.querySelectorAll('#presets button')) b.classList.toggle('on', b.dataset.p === state.preset);
+  state.page = {}; syncFilterInputs(); render();
+}
+function renderChips() {
+  const host = $('#chips'); if (!host) return; host.textContent = '';
+  const items = [];
+  const sel = (id) => { const o = $(id); return o && o.selectedOptions[0] ? o.selectedOptions[0].textContent.replace(/\s+\(\d+\)$/, '').trim() : ''; };
+  if (state.category) items.push(['Category', sel('#fCategory'), () => { state.category = ''; $('#fCategory').value = ''; buildFilterOptions(); }]);
+  if (state.faderType) items.push(['Fader type', state.faderType, () => { state.faderType = ''; buildFilterOptions(); }]);
+  if (state.account) items.push(['Account', sel('#fAccount') || state.account, () => { state.account = ''; buildFilterOptions(); }]);
+  if (state.campaign) items.push(['Campaign', state.campaign, () => { state.campaign = ''; buildFilterOptions(); }]);
+  if (state.magic) items.push(['Magic', sel('#fMagic') || state.magic, () => { state.magic = ''; buildFilterOptions(); }]);
+  if (state.comment) items.push(['Comment', sel('#fComment') || state.comment, () => { state.comment = ''; buildFilterOptions(); }]);
+  if (state.symbol) items.push(['Symbol', state.symbol, () => { state.symbol = ''; buildFilterOptions(); }]);
+  if (state.side) items.push(['Side', state.side, () => { state.side = ''; $('#fSide').value = ''; }]);
+  if (state.from !== null || state.to !== null) items.push(['Period', (state.from !== null ? fmtDate(state.from) : '…') + ' → ' + (state.to !== null ? fmtDate(state.to - DAY) : '…'), () => setPreset('all')]);
+  host.hidden = !items.length;
+  for (const [k, v, clear] of items) {
+    const c = el('span', { class: 'chip' }); c.appendChild(el('b', null, k + ':')); c.appendChild(document.createTextNode(v));
+    const x = el('button', { type: 'button', title: 'Remove this filter' }, '×'); x.addEventListener('click', () => { clear(); state.page = {}; render(); });
+    c.appendChild(x); host.appendChild(c);
+  }
+}
 function render() {
+  trackHistory(); renderChips();
   CUR = filtered();
   const s = stats(CUR);
   renderWarnings(CUR); renderKPIs(CUR, s); renderCharts(CUR, s); renderTabsNav(); renderTab();
@@ -2759,8 +2811,8 @@ $('#fileInput').addEventListener('change', (e) => { loadFiles(e.target.files); e
 for (const [id, key] of [['#fAccount', 'account'], ['#fCampaign', 'campaign'], ['#fMagic', 'magic'], ['#fComment', 'comment'], ['#fSymbol', 'symbol'], ['#fSide', 'side']]) {
   $(id).addEventListener('change', (e) => { state[key] = e.target.value; state.page = {}; render(); });
 }
-$('#fCategory').addEventListener('change', (e) => { state.category = e.target.value; state.page = {}; render(); });
-$('#fFaderType').addEventListener('change', (e) => { state.faderType = e.target.value; if (state.faderType && (!state.category || state.category === 'other')) { state.category = 'fader'; $('#fCategory').value = 'fader'; } state.page = {}; render(); });
+$('#fCategory').addEventListener('change', (e) => { state.category = e.target.value; state.page = {}; buildFilterOptions(); render(); });
+$('#fFaderType').addEventListener('change', (e) => { state.faderType = e.target.value; if (state.faderType && (!state.category || state.category === 'other')) { state.category = 'fader'; $('#fCategory').value = 'fader'; } state.page = {}; buildFilterOptions(); render(); });
 $('#fCommentMode').addEventListener('change', (e) => { state.commentMode = e.target.value; state.comment = ''; buildFilterOptions(); render(); });
 function setPreset(p) {
   state.preset = p;
@@ -2779,6 +2831,7 @@ function dateInput() {
 }
 $('#fFrom').addEventListener('change', dateInput); $('#fTo').addEventListener('change', dateInput);
 $('#resetBtn').addEventListener('click', () => resetFilters(true));
+$('#backBtn').addEventListener('click', goBack);
 $('#themeBtn').addEventListener('click', () => {
   const root = document.documentElement; const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
   root.dataset.theme = dark ? 'light' : 'dark';
