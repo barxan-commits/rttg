@@ -230,6 +230,6 @@ By magic, By comment and Magic x comment: **Copying master** shows the master st
 
 By magic: Firsts $ + Extras $ = Net (the first copies and the extra copies of a fader). Click the Copying master cell for a page of its own with every master the fader copies (copies, coverage, fader $, master $, sum) and the result per pair; the on/off switches are buttons (green check = on).
 
-The master list page (click Copying master) has one row per master with: Fader trades (first copies), Extras n, Master trades, Coverage, Net, Firsts $, Extras $, Master alone $ and Both together $. By magic also shows Firsts n and Master trades.
+The master list page (click Copying master) has one row per master with: Fader trades (first copies), Extra trade count, Master trade count, Coverage, Net, Firsts $, Extras $, Master alone $ and Both together $. By magic also shows First trade count and Master trades.
 
-The same fader columns (Firsts n/$, Extras n/$, Master trades, Master alone $, Both together $, Copying master) are in By magic, By comment, Magic x comment, By symbol, By account and By campaign, and in the pair table of the master list page.
+The same fader columns (First trade count / Firsts $, Extra trade count / Extras $, Master trade count, Master alone $, Both together $, Copying master) are in By magic, By comment, Magic x comment, By symbol, By account and By campaign, and in the pair table of the master list page.

@@ -1522,9 +1522,9 @@ const C = {
   master: { label: 'Master alone $', num: true, f: money, cls: signCls, title: 'What the master made or lost on the trades this fader copied (the fader copies each master trade the other way round).' },
   firsts: { label: 'Firsts $', num: true, f: money, cls: signCls, title: 'Result of the first (normal) copies of a fader. Net = Firsts $ + Extras $.' },
   extras: { label: 'Extras $', num: true, f: money, cls: signCls, title: 'Result of the extra (second) copies of an ADD fader (+# in the comment).' },
-  extraN: { label: 'Extras n', num: true, f: (v) => v, title: 'Number of extra (second) copies of the fader.' },
-  firstN: { label: 'Firsts n', num: true, f: (v) => v, title: 'Number of first (normal) copies of the fader.' },
-  masterN: { label: 'Master trades', num: true, f: (v) => v, title: 'Number of master trades the fader copied (each counted once).' },
+  extraN: { label: 'Extra trade count', num: true, f: (v) => v, title: 'Number of extra (second) copies of the fader.' },
+  firstN: { label: 'First trade count', num: true, f: (v) => v, title: 'Number of first (normal) copies of the fader.' },
+  masterN: { label: 'Master trade count', num: true, f: (v) => v, title: 'Number of master trades the fader copied (each counted once).' },
   copying: { label: 'Copying master', num: false, f: (v) => v || '', render: (td, v, r) => { if (!v) return; const a = el('a', { href: '#', class: 'lnk', title: (r.copyingAll || '') + '\n\nClick for the full list on its own page' }, v); a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(r.account, r.magic); }); td.appendChild(a); }, title: 'The master strategy this fader copies: its magic and comment. "+N more" when it copies several.' },
   masterDiff: { label: 'Both together $', num: true, f: money, cls: signCls, title: 'Fader + master: what you get if the fader and its master run together. The fader alone is the Net column.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
@@ -1757,7 +1757,7 @@ function renderFaders(host, T) {
     { key: 'fsp', label: 'Fader spread', num: true, f: money, cls: signCls }, { key: 'fcm', label: 'Fader comm', num: true, f: money, cls: signCls }, { key: 'fsw', label: 'Fader swap', num: true, f: money, cls: signCls }, { key: 'fcost', label: 'Fader costs', num: true, f: money, cls: signCls },
     { key: 'msp', label: 'Master spread', num: true, f: money, cls: signCls }, { key: 'mcm', label: 'Master comm', num: true, f: money, cls: signCls }, { key: 'msw', label: 'Master swap', num: true, f: money, cls: signCls }, { key: 'mcost', label: 'Master costs', num: true, f: money, cls: signCls },
     { key: 'xn', label: 'Extra copies', num: true }, { key: 'xnet', label: 'Extra copies $', num: true, f: money, cls: signCls }, { key: 'all', label: 'First + extra $', num: true, f: money, cls: signCls },
-    { key: 'masters', label: 'Master trades', num: true }, { key: 'coverage', label: 'Masters found', num: true, f: pct },
+    { key: 'masters', label: 'Master trade count', num: true }, { key: 'coverage', label: 'Masters found', num: true, f: pct },
     { key: 'last', label: 'Last close', f: fmtTime },
   ], rows, { tabId: 'faders', defKey: 'terminal', defDir: 'asc', footer: tot, onRow: (r) => { state.account = r.account; state.magic = r.magic; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
 }
@@ -1798,15 +1798,15 @@ function faderAnalysis() {
     let sy = x.sym.get(t.symbol); if (!sy) { sy = { symbol: t.symbol, n: 0, net: 0, mnet: 0, found: 0, xn: 0, xnet: 0, wins: 0, who: new Map() }; x.sym.set(t.symbol, sy); }
     if (t.net > 0) sy.wins++;
     if (m) { const wk = m.magic + ' ' + baseOf(m.base, m.comment); sy.who.set(wk, (sy.who.get(wk) || 0) + 1); }
-    if (f.extra) { sy.xn++; sy.xnet += t.net; x.xn++; x.xnet += t.net; if (mm) { mm.xn++; mm.xnet += t.net; const xk = fk + '>' + mk; let xp = xpairs.get(xk); if (!xp) { xp = { fk, mk, xn: 0, xnet: 0 }; xpairs.set(xk, xp); } xp.xn++; xp.xnet += t.net; } continue; }
+    if (f.extra) { sy.xn++; sy.xnet += t.net; x.xn++; x.xnet += t.net; if (mm) { mm.xn++; mm.xnet += t.net; const xk = fk + '>' + mk; let xp = xpairs.get(xk); if (!xp) { xp = { fk, mk, xn: 0, xnet: 0, wins: 0 }; xpairs.set(xk, xp); } xp.xn++; xp.xnet += t.net; if (t.net > 0) xp.wins++; } continue; }
     x.n++; x.net += t.net; x.sp -= t.spreadCost || 0; x.cm += t.commission || 0; x.sw += t.swap || 0;
     if (Number.isFinite(t.duration)) { x.dur += t.duration; x.durN++; }
     sy.n++; sy.net += t.net;
     if (!m) continue;
     x.found++; x.mnet += m.net; sy.mnet += m.net; sy.found++; x.mkeys.add(mk); x.masters.add(m.ticket);
     if (Number.isFinite(m.duration)) { x.mdur += m.duration; x.mdurN++; }
-    const pk = fk + '>' + mk; let p = pairs.get(pk); if (!p) { p = { fk, mk, n: 0, net: 0, mnet: 0 }; pairs.set(pk, p); }
-    p.n++; p.net += t.net; p.mnet += m.net;
+    const pk = fk + '>' + mk; let p = pairs.get(pk); if (!p) { p = { fk, mk, n: 0, net: 0, mnet: 0, wins: 0 }; pairs.set(pk, p); }
+    p.n++; p.net += t.net; p.mnet += m.net; if (t.net > 0) p.wins++;
     mm.faders.add(fk); mm.copies++; mm.fnet += t.net; mm.pairSum += t.net + m.net;
     if (!mm.copied.has(m.ticket)) { mm.copied.add(m.ticket); mm.cnet += m.net; }
   }
@@ -1883,7 +1883,7 @@ function faMatrix(host, A, faders) {
   const exp = el('button', { class: 'btn small', type: 'button' }, 'Export CSV');
   exp.addEventListener('click', () => {
     const rows = [...A.pairs.values()].filter((p) => vis.has(p.fk)).map((p) => { const x = A.fa.get(p.fk), m = A.ma.get(p.mk); return { fader: faLabel(x), faderAccount: x.account, master: m.magic + ' ' + m.label, masterAccount: m.account, copies: p.n, masterTrades: m.n, coverage: m.n ? p.n / m.n : NaN, faderNet: p.net, masterNet: p.mnet, sum: p.net + p.mnet }; });
-    exportCSV([{ key: 'fader', label: 'Fader' }, { key: 'faderAccount', label: 'Fader account' }, { key: 'master', label: 'Master' }, { key: 'masterAccount', label: 'Master account' }, { key: 'copies', label: 'Copies' }, { key: 'masterTrades', label: 'Master trades' }, { key: 'coverage', label: 'Coverage' }, { key: 'faderNet', label: 'Fader $' }, { key: 'masterNet', label: 'Master $' }, { key: 'sum', label: 'Fader + master' }], rows, 'fader_matrix');
+    exportCSV([{ key: 'fader', label: 'Fader' }, { key: 'faderAccount', label: 'Fader account' }, { key: 'master', label: 'Master' }, { key: 'masterAccount', label: 'Master account' }, { key: 'copies', label: 'Copies' }, { key: 'masterTrades', label: 'Master trade count' }, { key: 'coverage', label: 'Coverage' }, { key: 'faderNet', label: 'Fader $' }, { key: 'masterNet', label: 'Master $' }, { key: 'sum', label: 'Fader + master' }], rows, 'fader_matrix');
   });
   toolbar.appendChild(exp); host.appendChild(toolbar);
   const wrap = el('div', { class: 'tablewrap' }); wrap.appendChild(tbl); host.appendChild(wrap);
@@ -1917,29 +1917,31 @@ function faDetail(host, A, x, big) {
   });
   host.appendChild(el('h3', { class: 'section-title' }, 'Per pair (symbol)'));
   table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct }, { key: 'total', label: 'Net', num: true, f: money, cls: signCls, title: C.net.title },
-    { key: 'firstN', label: 'Firsts n', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls, title: C.firsts.title }, { key: 'xn', label: 'Extras n', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls, title: C.extras.title },
-    { key: 'masterN', label: 'Master trades', num: true, title: C.masterN.title }, { key: 'master', label: 'Master alone $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls, title: C.masterDiff.title },
+    { key: 'firstN', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls, title: C.firsts.title }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls, title: C.extras.title },
+    { key: 'masterN', label: 'Master trade count', num: true, title: C.masterN.title }, { key: 'master', label: 'Master alone $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls, title: C.masterDiff.title },
     Object.assign({ key: 'copying' }, C.copying, { render: (td, v, r) => { td.textContent = v || ''; if (r.copyingAll) td.title = r.copyingAll; } })], sr, { tabId: 'fa2sym' + (big ? 'b' : ''), defKey: 'total' });
   host.appendChild(el('h3', { class: 'section-title' }, 'Masters copied by ' + faLabel(x) + ' (' + x.mkeys.size + ')'));
   const mr = []; const keys = new Set();
   for (const p of A.pairs.values()) if (p.fk === x.key) keys.add(p.mk);
   for (const p of A.xpairs.values()) if (p.fk === x.key) keys.add(p.mk);
   for (const mk of keys) {
-    const p = A.pairs.get(x.key + '>' + mk) || { n: 0, net: 0, mnet: 0 }, xp = A.xpairs.get(x.key + '>' + mk) || { xn: 0, xnet: 0 }, m = A.ma.get(mk);
-    mr.push({ mmagic: m.magic, comment: m.label, n: p.n, xn: xp.xn || '', mn: m.n, cov: m.n ? p.n / m.n : NaN, total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + p.mnet : NaN });
+    const p = A.pairs.get(x.key + '>' + mk) || { n: 0, net: 0, mnet: 0, wins: 0 }, xp = A.xpairs.get(x.key + '>' + mk) || { xn: 0, xnet: 0, wins: 0 }, m = A.ma.get(mk);
+    const all = p.n + xp.xn;
+    mr.push({ mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: m.n ? p.n / m.n : NaN, total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + p.mnet : NaN });
   }
-  host.appendChild(el('p', { class: 'sub' }, 'Fader trades = first copies, Extras = second copies (+#), Master trades = all trades of that master strategy in the selected period. Net = Firsts $ + Extras $. Both together = Firsts $ + Master alone $.'));
+  host.appendChild(el('p', { class: 'sub' }, 'Trades = first + extra trade count. First trade count = first copies, Extra trade count = second copies (+#), Master trade count = all trades of that master strategy in the selected period. Net = Firsts $ + Extras $. Both together = Firsts $ + Master alone $.'));
   table(host, [{ key: 'mmagic', label: 'Master magic' }, { key: 'comment', label: 'Master comment' },
-    { key: 'n', label: 'Fader trades', num: true }, { key: 'xn', label: 'Extras n', num: true }, { key: 'mn', label: 'Master trades', num: true }, { key: 'cov', label: 'Coverage', num: true, f: pct },
-    { key: 'total', label: 'Net', num: true, f: money, cls: signCls }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
-    { key: 'mnet', label: 'Master alone $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls }], mr, { tabId: 'fa2m' + (big ? 'b' : ''), defKey: 'n', pageSize: 1000 });
+    { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct }, { key: 'total', label: 'Net', num: true, f: money, cls: signCls },
+    { key: 'n', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
+    { key: 'mn', label: 'Master trade count', num: true }, { key: 'cov', label: 'Coverage', num: true, f: pct },
+    { key: 'mnet', label: 'Master alone $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls }], mr, { tabId: 'fa2m' + (big ? 'b' : ''), defKey: 'total', pageSize: 1000 });
 }
 function faPerFader(host, A, faders) {
   const rows = faders.map((x) => { const costs = x.sp + x.cm + x.sw; return { key: x.key, terminal: x.terminal, account: x.account, magic: x.magic, type: x.type, src: x.src,
     n: x.n, net: x.net, xn: x.xn || '', xnet: x.xn ? x.xnet : NaN, total: x.net + x.xnet, master: x.found ? x.mnet : NaN, drag: x.found ? x.net + x.mnet : NaN,
     cpt: x.n ? costs / x.n : NaN, hold: x.durN ? x.dur / x.durN : NaN, mhold: x.mdurN ? x.mdur / x.mdurN : NaN, cov: x.cov, masters: x.mkeys.size }; });
   const cols = [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'magic', label: 'Fader (magic)' }, { key: 'type', label: 'Type' }, { key: 'src', label: 'Source' },
-    { key: 'n', label: 'Firsts n', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extras n', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
+    { key: 'n', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
     { key: 'total', label: 'Total $', num: true, f: money, cls: signCls }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'drag', label: 'Firsts + master (cost drag)', num: true, f: money, cls: signCls },
     { key: 'cpt', label: 'Cost / trade', num: true, f: money, cls: signCls }, { key: 'hold', label: 'Avg hold (fader)', num: true, f: fmtDur }, { key: 'mhold', label: 'Avg hold (master)', num: true, f: fmtDur },
     { key: 'cov', label: 'Coverage', num: true, f: pct }, { key: 'masters', label: 'Masters', num: true }];
@@ -1958,8 +1960,8 @@ function faPerMaster(host, A) {
   }
   if (!rows.length) { host.appendChild(el('p', { class: 'muted' }, 'No master with at least ' + FA.min + ' fader copies.')); return; }
   table(host, [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'magic', label: 'Master (magic)' }, { key: 'label', label: 'Comment' },
-    { key: 'n', label: 'Master trades', num: true }, { key: 'net', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'faders', label: 'Faders', num: true }, { key: 'copies', label: 'Fader copies', num: true },
-    { key: 'cov', label: 'Coverage', num: true, f: pct }, { key: 'fnet', label: 'Combined fader $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extras n', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
+    { key: 'n', label: 'Master trade count', num: true }, { key: 'net', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'faders', label: 'Faders', num: true }, { key: 'copies', label: 'Fader copies', num: true },
+    { key: 'cov', label: 'Coverage', num: true, f: pct }, { key: 'fnet', label: 'Combined fader $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
     { key: 'cnet', label: 'Copied master $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Combined sum', num: true, f: money, cls: signCls },
     { key: 'avgF', label: 'Avg fader $ / fader', num: true, f: money, cls: signCls }, { key: 'avgSum', label: 'Avg fader + master / fader', num: true, f: money, cls: signCls }],
     rows, { tabId: 'fa3', defKey: 'fnet' });
