@@ -229,6 +229,10 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .chip button:hover { background: rgba(244,63,94,.35); }
 .grp1 td { background: rgba(59,130,246,.08) !important; }
 .grp0 td { background: transparent; }
+.btn.tog { padding: 4px 12px; border-radius: 16px; }
+.btn.tog.on { background: rgba(34,197,94,.18); border-color: rgba(34,197,94,.75); color: var(--c-green, #22c55e); font-weight: 600; }
+a.lnk { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); cursor: pointer; }
+a.lnk:hover { filter: brightness(1.2); }
 /* ---- colour layer: accents on top of the base tokens (works in light and dark) ---- */
 :root { --c-blue: #3b82f6; --c-teal: #14b8a6; --c-violet: #8b5cf6; --c-amber: #f59e0b; --c-rose: #f43f5e; --c-green: #22c55e; --c-cyan: #06b6d4; --c-pink: #ec4899; }
 header.top { background: linear-gradient(90deg, rgba(59,130,246,.16), rgba(20,184,166,.10) 55%, rgba(139,92,246,.10)); border-bottom: 1px solid rgba(59,130,246,.35); }
@@ -1516,7 +1520,10 @@ const C = {
   symbols: { label: 'Symbols', num: true, f: (v) => v },
   comments: { label: 'Comments', num: false, f: (v) => v },
   master: { label: 'Master alone $', num: true, f: money, cls: signCls, title: 'What the master made or lost on the trades this fader copied (the fader copies each master trade the other way round).' },
-  copying: { label: 'Copying master', num: false, f: (v) => v || '', render: (td, v, r) => { td.textContent = v || ''; if (r.copyingAll) td.title = r.copyingAll; }, title: 'The master strategy this fader copies: its magic and comment. "+N more" when it copies several.' },
+  firsts: { label: 'Firsts $', num: true, f: money, cls: signCls, title: 'Result of the first (normal) copies of a fader. Net = Firsts $ + Extras $.' },
+  extras: { label: 'Extras $', num: true, f: money, cls: signCls, title: 'Result of the extra (second) copies of an ADD fader (+# in the comment).' },
+  extraN: { label: 'Extras n', num: true, f: (v) => v },
+  copying: { label: 'Copying master', num: false, f: (v) => v || '', render: (td, v, r) => { if (!v) return; const a = el('a', { href: '#', class: 'lnk', title: (r.copyingAll || '') + '\n\nClick for the full list on its own page' }, v); a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(r.account, r.magic); }); td.appendChild(a); }, title: 'The master strategy this fader copies: its magic and comment. "+N more" when it copies several.' },
   masterDiff: { label: 'Both together $', num: true, f: money, cls: signCls, title: 'Fader + master: what you get if the fader and its master run together. The fader alone is the Net column.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
   basketWin: { label: 'Basket win %', num: true, f: pct },
@@ -1528,9 +1535,10 @@ const STD_COLS = ['n', 'winRate', 'net', 'pf', 'exp', 'avgR', 'totR', 'netPct', 
 let BY_TICKET = null;
 function masterExtra(arr) {
   if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
-  const seen = new Set(); let master = 0, found = 0, fnet = 0; const who = new Map();
+  const seen = new Set(); let master = 0, found = 0, fnet = 0, xnet = 0, xn = 0, isF = false; const who = new Map();
   for (const t of arr) {
-    const f = faderOf(t); if (!f.is || f.extra) continue;
+    const f = faderOf(t); if (!f.is) continue; isF = true;
+    if (f.extra) { xn++; xnet += t.net; continue; }
     fnet += t.net;
     if (f.master && !seen.has(f.master)) {
       seen.add(f.master); const m = BY_TICKET.get(f.master);
@@ -1541,9 +1549,10 @@ function masterExtra(arr) {
   const top = [...who].sort((a, b) => b[1] - a[1]);
   const copying = top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) + ' more' : '') : '';
   const copyingAll = top.slice(0, 25).map(([k, n]) => k + '  (' + n + ' trades)').join('\n') + (top.length > 25 ? '\n…' : '');
-  return found ? { master, masterDiff: fnet + master, copying, copyingAll } : { master: NaN, masterDiff: NaN, copying: '', copyingAll: '' };
+  const fx = isF ? { firsts: fnet, extras: xn ? xnet : NaN, extraN: xn || '' } : { firsts: NaN, extras: NaN, extraN: '' };
+  return found ? { master, masterDiff: fnet + master, copying, copyingAll, ...fx } : { master: NaN, masterDiff: NaN, copying: '', copyingAll: '', ...fx };
 }
-const MASTER_COLS = [Object.assign({ key: 'master' }, C.master), Object.assign({ key: 'masterDiff' }, C.masterDiff), Object.assign({ key: 'copying' }, C.copying)];
+const MASTER_COLS = [Object.assign({ key: 'firsts' }, C.firsts), Object.assign({ key: 'extras' }, C.extras), Object.assign({ key: 'master' }, C.master), Object.assign({ key: 'masterDiff' }, C.masterDiff), Object.assign({ key: 'copying' }, C.copying)];
 function sortRows(rows, tabId, defKey, defDir) {
   const st = state.sort[tabId] || { key: defKey, dir: defDir };
   const dir = st.dir === 'asc' ? 1 : -1;
@@ -1663,13 +1672,12 @@ function renderTab() {
     const g = groupBy(T, (t) => (split ? t.account + '|' : '') + t.magic);
     const rows = [...g].map(([k, arr]) => {
       const bs = baskets(arr); const a0 = arr[0]; const acc = DB.accounts.get(a0.account) || {};
-      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: a0.account, magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
+      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
     });
     const lead = [{ key: 'label', label: 'Magic', num: false }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
-    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['master', 'masterDiff', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
+    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['firsts', 'extraN', 'extras', 'master', 'masterDiff', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
     const extra = (bar) => {
-      const cb = el('input', { type: 'checkbox' }); cb.checked = split; cb.addEventListener('change', () => { SPLIT.magic = cb.checked; renderTab(); });
-      const lb = el('label', { class: 'muted', style: 'display:inline-flex;flex-direction:row;align-items:center;gap:6px;cursor:pointer', title: 'One row per account and magic number, so the same magic on different terminals is not added together' }); lb.append(cb, document.createTextNode(' Split by account / terminal')); bar.appendChild(lb);
+      bar.appendChild(toggleBtn('Split by account / terminal', split, (v) => { SPLIT.magic = v; renderTab(); }, 'One row per account and magic number, so the same magic on different terminals is not added together'));
     };
     if (split) rows.sort((a, b) => b.net - a.net);   // inside one magic: best account first (the table sort below is stable)
     let prevMagic = null, shade = 0;
@@ -1802,6 +1810,7 @@ function faderAnalysis() {
 const faLabel = (x) => x.magic + ' ' + x.type + (x.src ? ' ' + x.src : '');
 function renderFaderAnalysis(host) {
   const A = faderAnalysis();
+  if (FA.view === 'detail') { faDetailPage(host, A); return; }
   const faders = [...A.fa.values()].filter((x) => x.n >= FA.min);
   const bar = el('div', { class: 'fa-bar' });
   for (const [v, l] of [['matrix', '1 · Fader × master'], ['fader', '2 · Per fader (first / extra)'], ['master', '3 · Per master']]) {
@@ -1812,8 +1821,7 @@ function renderFaderAnalysis(host) {
   mi.addEventListener('change', () => { FA.min = Math.max(1, parseInt(mi.value, 10) || 1); renderTab(); });
   bar.append(el('span', { class: 'muted' }, 'Min copies'), mi);
   if (FA.view === 'matrix') {
-    const fl = el('input', { type: 'checkbox' }); fl.checked = FA.flip; fl.addEventListener('change', () => { FA.flip = fl.checked; renderTab(); });
-    bar.append(el('label', { class: 'muted' }, ''), fl, el('span', { class: 'muted' }, 'faders as rows'));
+    bar.appendChild(toggleBtn('Faders as rows', FA.flip, (v) => { FA.flip = v; renderTab(); }, 'Swap rows and columns'));
   }
   host.appendChild(bar);
   host.appendChild(el('p', { class: 'sub' }, 'A fader copy is tied 1:1 to its master trade by the ticket at the end of its comment (#BIG<ticket>); "+#" marks an extra (second) copy. Faders cover first copies unless a column says extra. The sum Fader + master is what the pair pays in costs: a fader wins only when its master loses more than the cost drag. Date, account, magic and symbol filters apply; Category is ignored here so masters stay visible.'));
@@ -1874,6 +1882,34 @@ function faMatrix(host, A, faders) {
   toolbar.appendChild(exp); host.appendChild(toolbar);
   const wrap = el('div', { class: 'tablewrap' }); wrap.appendChild(tbl); host.appendChild(wrap);
 }
+// the whole detail of one fader (or of every fader with that magic) on a page of its own; opened from the Copying master cell
+function openFaderDetail(account, magic) {
+  FA.detail = { account, magic, back: state.tab, backView: FA.view };
+  FA.view = 'detail'; state.tab = 'fa'; renderTabsNav(); renderTab(); window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function faDetailPage(host, A) {
+  const d = FA.detail || {};
+  const bar = el('div', { class: 'fa-bar' });
+  const back = el('button', { type: 'button', class: 'btn small' }, '← Back to ' + (TABS.find((t) => t[0] === d.back) || ['', 'the table'])[1]);
+  back.addEventListener('click', () => { FA.view = d.backView || 'matrix'; state.tab = d.back || 'magic'; renderTabsNav(); renderTab(); });
+  bar.appendChild(back); host.appendChild(bar);
+  const list = [...A.fa.values()].filter((x) => String(x.magic) === String(d.magic) && (!d.account || x.account === d.account));
+  if (!list.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader copies for this magic in the current selection.')); return; }
+  for (const x of list) faDetail(host, A, x, true);
+}
+function faDetail(host, A, x, big) {
+  host.appendChild(el('h2', { class: 'section-title' }, (big ? 'Fader ' : 'Pairs of ') + faLabel(x) + ' · ' + (x.terminal ? x.terminal + ' · ' : '') + x.account));
+  if (big) {
+    const costs = x.sp + x.cm + x.sw;
+    host.appendChild(el('p', { class: 'sub' }, x.n + ' first copies ' + money(x.net) + ' · ' + x.xn + ' extra copies ' + money(x.xnet) + ' · all ' + money(x.net + x.xnet) + ' · their masters ' + money(x.mnet) + ' · first copies + masters ' + money(x.net + x.mnet) + ' · costs ' + money(costs) + ' · copies ' + x.mkeys.size + ' master strategies'));
+  }
+  const sr = [...x.sym.values()].map((v) => ({ symbol: v.symbol, n: v.n, net: v.net, master: v.mnet, sum: v.net + v.mnet }));
+  host.appendChild(el('h3', { class: 'section-title' }, 'Per pair (symbol)'));
+  table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'n', label: 'Copies', num: true }, { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Fader + master', num: true, f: money, cls: signCls }], sr, { tabId: 'fa2sym', defKey: 'net' });
+  host.appendChild(el('h3', { class: 'section-title' }, 'Masters copied by ' + faLabel(x) + ' (' + x.mkeys.size + ')'));
+  const mr = []; for (const p of A.pairs.values()) if (p.fk === x.key) { const m = A.ma.get(p.mk); mr.push({ master: m.magic + ' ' + m.label, mmagic: m.magic, comment: m.label, n: p.n, mn: m.n, cov: m.n ? p.n / m.n : NaN, net: p.net, mnet: p.mnet, sum: p.net + p.mnet }); }
+  table(host, [{ key: 'mmagic', label: 'Master magic' }, { key: 'comment', label: 'Master comment' }, { key: 'n', label: 'Copies', num: true }, { key: 'mn', label: 'Master trades', num: true }, { key: 'cov', label: 'Coverage', num: true, f: pct }, { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'mnet', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Fader + master', num: true, f: money, cls: signCls }], mr, { tabId: 'fa2m' + (big ? 'b' : ''), defKey: 'n', pageSize: 1000 });
+}
 function faPerFader(host, A, faders) {
   const rows = faders.map((x) => { const costs = x.sp + x.cm + x.sw; return { key: x.key, terminal: x.terminal, account: x.account, magic: x.magic, type: x.type, src: x.src,
     n: x.n, net: x.net, xn: x.xn || '', xnet: x.xn ? x.xnet : NaN, total: x.net + x.xnet, master: x.found ? x.mnet : NaN, drag: x.found ? x.net + x.mnet : NaN,
@@ -1886,12 +1922,7 @@ function faPerFader(host, A, faders) {
   table(host, cols, rows, { tabId: 'fa2', defKey: 'total', rowHint: 'click a row for its pairs and masters', onRow: (r) => { FA.sel = FA.sel === r.key ? '' : r.key; renderTab(); } });
   const x = FA.sel && A.fa.get(FA.sel);
   if (!x) { host.appendChild(el('p', { class: 'muted' }, 'Click a fader row to see its result per pair (symbol) and per master.')); return; }
-  host.appendChild(el('h2', { class: 'section-title' }, 'Pairs of ' + faLabel(x) + ' · ' + (x.terminal ? x.terminal + ' · ' : '') + x.account));
-  const sr = [...x.sym.values()].map((v) => ({ symbol: v.symbol, n: v.n, net: v.net, master: v.mnet, sum: v.net + v.mnet }));
-  table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'n', label: 'Copies', num: true }, { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Fader + master', num: true, f: money, cls: signCls }], sr, { tabId: 'fa2sym', defKey: 'net' });
-  host.appendChild(el('h2', { class: 'section-title' }, 'Masters copied by ' + faLabel(x)));
-  const mr = []; for (const p of A.pairs.values()) if (p.fk === x.key) { const m = A.ma.get(p.mk); mr.push({ master: m.magic + ' ' + m.label, n: p.n, mn: m.n, cov: m.n ? p.n / m.n : NaN, net: p.net, mnet: p.mnet, sum: p.net + p.mnet }); }
-  table(host, [{ key: 'master', label: 'Master' }, { key: 'n', label: 'Copies', num: true }, { key: 'mn', label: 'Master trades', num: true }, { key: 'cov', label: 'Coverage', num: true, f: pct }, { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'mnet', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Fader + master', num: true, f: money, cls: signCls }], mr, { tabId: 'fa2m', defKey: 'net' });
+  faDetail(host, A, x, false);
 }
 function faPerMaster(host, A) {
   const rows = [];
@@ -2656,6 +2687,11 @@ function buildStatusSet(level, chip, rows, raw) {
 }
 $('#buildStatus').addEventListener('click', (e) => { e.stopPropagation(); const pop = $('#buildPop'); if (pop.childNodes.length) pop.hidden = !pop.hidden; });
 document.addEventListener('click', (e) => { const pop = $('#buildPop'); if (pop && !pop.hidden && !e.target.closest('#buildPop')) pop.hidden = true; });
+// an on / off switch drawn as a button (easier to hit than a tick box)
+function toggleBtn(text, on, change, tip) {
+  const b = el('button', { type: 'button', class: 'btn small tog' + (on ? ' on' : ''), title: tip || '', 'aria-pressed': on ? 'true' : 'false' }, (on ? '✓ ' : '') + text);
+  b.addEventListener('click', () => change(!on)); return b;
+}
 function parseRunLog(t) {
   const o = {}; for (const l of String(t || '').split(/\r?\n/)) { const m = /^(Started|Finished|Result):\s*(.*)$/.exec(l); if (m) o[m[1]] = m[2].trim(); } return o;
 }

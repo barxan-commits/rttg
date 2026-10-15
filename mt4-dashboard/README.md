@@ -227,3 +227,5 @@ Filters: the **← Back** button undoes the last filter change (many steps), the
 By magic: "Split by account / terminal" shows one row per account for each magic number, rows of the same magic one under the other (alternating shading), so the same fader on two terminals can be compared. The Magic menu says "N accounts" for a magic that runs on several accounts.
 
 By magic, By comment and Magic x comment: **Copying master** shows the master strategy a fader copies (its magic and comment, "+N more" when it copies several; hover for the whole list).
+
+By magic: Firsts $ + Extras $ = Net (the first copies and the extra copies of a fader). Click the Copying master cell for a page of its own with every master the fader copies (copies, coverage, fader $, master $, sum) and the result per pair; the on/off switches are buttons (green check = on).
