@@ -219,3 +219,5 @@ Fader detection no longer depends on the magic number or EA version: any comment
 The Faders tab also shows the costs of the first copies and of their masters side by side: spread (estimate), commission, swap and their sum (negative = cost).
 
 **Fader analysis tab** (three views): 1) master x fader matrix (cell = fader $, copies / master trades, fader + master), 2) per fader with first and extra copies, costs per trade, hold time, coverage and a pair (symbol) breakdown on click, 3) per master with every fader that copied it. "Min copies" (default 5) hides noise; the date, account, magic and symbol filters apply.
+
+**Build now button** (online page only): the header button puts a BUILD_NOW file into `_DASHBOARD_BUILD` on Drive; a hidden watcher on the VPS (`INSTALL_BUILD_BUTTON.bat`, run once there) sees it and runs `Build-DashboardData.ps1 -Force`. A small status window shows: request sent, picked up by the VPS, building, finished, dashboard reloaded. The first click asks you to allow the page to create files in Google Drive.

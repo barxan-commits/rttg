@@ -163,6 +163,12 @@ main { padding: 16px; max-width: 1600px; margin: 0 auto; }
 .fa-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
 .fa-bar input[type=number] { width: 64px; }
 .btn.on { background: var(--surface-2); border-color: var(--text-muted); font-weight: 600; }
+.buildpanel { position: fixed; right: 16px; bottom: 16px; width: min(340px, calc(100vw - 32px)); z-index: 50; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 24px rgba(0,0,0,.28); padding: 10px 12px; font-size: 13px; }
+.buildpanel h3 { margin: 0 0 6px; font-size: 13px; display: flex; justify-content: space-between; align-items: center; }
+.buildpanel ul { list-style: none; margin: 6px 0; padding: 0; }
+.buildpanel li { padding: 2px 0; }
+.buildpanel li.ok { color: var(--pos-text); } .buildpanel li.bad { color: var(--neg-text); } .buildpanel li.wait { color: var(--text-secondary); }
+.buildpanel .x { background: none; border: 0; color: var(--text-muted); font-size: 16px; cursor: pointer; }
 .tablewrap { overflow: auto; max-height: 640px; border: 1px solid var(--border); border-radius: 8px; }
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
 th, td { padding: 5px 9px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--grid); }
@@ -224,6 +230,7 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
   </div>
   <div class="actions">
     <button id="driveBtn" class="btn primary" type="button" hidden>Refresh from Drive</button>
+    <button id="buildBtn" class="btn" type="button" hidden title="Ask the VPS to build the dashboard data now">Build now</button>
     <label class="btn primary" id="dirBtn">Choose folder<input id="dirInput" type="file" webkitdirectory directory multiple hidden></label>
     <label class="btn">Choose files<input id="fileInput" type="file" multiple accept=".csv,.txt" hidden></label>
     <button id="themeBtn" class="btn" type="button" title="Switch light / dark">Theme</button>
@@ -2513,6 +2520,77 @@ function driveError(e) {
   return DRIVE_HELP[code] || ('Could not read Google Drive (' + code + (e && e.message ? ': ' + e.message : '') + ').');
 }
 function asObj(p) { if (typeof p === 'string') { try { return JSON.parse(p); } catch (e) { return {}; } } return p || {}; }
+/* ---------------- Build now ----------------
+   The page cannot start a program on the VPS. It puts a small file BUILD_NOW_<time>.txt into _DASHBOARD_BUILD on Drive;
+   the watcher on the VPS (INSTALL_BUILD_BUTTON.bat) sees it through Drive sync and runs the build. The status window
+   follows last_build_<PC>.txt, which the build script writes when it finishes (the watcher writes RUNNING when it starts). */
+const BUILD = { run: 0, poll: window.__BUILD_POLL_MS || 12000 };
+function buildPanelSet(title, rows, opts) {
+  const host = $('#buildPanel'); if (!host) return; host.hidden = false; host.textContent = '';
+  const h = el('h3'); h.appendChild(el('span', null, title));
+  const x = el('button', { class: 'x', type: 'button', title: 'Close (the build keeps going)' }, '×'); x.addEventListener('click', () => { host.hidden = true; }); h.appendChild(x);
+  host.appendChild(h);
+  const ul = el('ul');
+  for (const [cls, text] of rows) ul.appendChild(el('li', { class: cls }, (cls === 'ok' ? '✓ ' : cls === 'bad' ? '✗ ' : '… ') + text));
+  host.appendChild(ul);
+  if (opts && opts.note) host.appendChild(el('div', { class: 'muted' }, opts.note));
+}
+function parseRunLog(t) {
+  const o = {}; for (const l of String(t || '').split(/\r?\n/)) { const m = /^(Started|Finished|Result):\s*(.*)$/.exec(l); if (m) o[m[1]] = m[2].trim(); } return o;
+}
+async function buildNow() {
+  if (!MCP) return;
+  const my = ++BUILD.run; const t0 = Date.now(); const btn = $('#buildBtn'); btn.disabled = true;
+  const rows = [['wait', 'Looking for the build folder in Google Drive']];
+  try {
+    buildPanelSet('Build on VPS', rows);
+    const lg = await driveCall('search_files', { query: "title contains 'last_build_'", pageSize: 10, excludeContentSnippets: true });
+    const logs = (lg.files || []).filter((f) => /^last_build_.*\.txt$/i.test(f.title || '')).sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')));
+    if (!logs.length) { buildPanelSet('Build on VPS', [['bad', 'No last_build_<PC>.txt found in Drive. Install the automatic build on the VPS first (INSTALL_AUTO_UPDATE.bat).']]); return; }
+    const folder = logs[0].parentId;
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    const title = 'BUILD_NOW_' + stamp + '.txt';
+    await driveCall('create_file', { title, parentId: folder, contentMimeType: 'text/plain', disableConversionToGoogleType: true, textContent: 'build requested ' + new Date().toISOString() + '\r\n' });
+    let sawRunning = false, lastWithReq = t0, done = false, reloaded = false;
+    const started = Date.now();
+    while (my === BUILD.run && Date.now() - started < 35 * 60000) {
+      const q = await driveCall('search_files', { query: "parentId = '" + folder + "' and (title contains 'last_build_' or title contains 'BUILD_NOW' or title = 'BUTTON_WATCHER.txt')", pageSize: 30, excludeContentSnippets: true });
+      const fl = q.files || [];
+      const reqLeft = fl.some((f) => /^BUILD_NOW/i.test(f.title || ''));
+      const beat = fl.find((f) => f.title === 'BUTTON_WATCHER.txt');
+      const log = fl.filter((f) => /^last_build_.*\.txt$/i.test(f.title || '')).sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')))[0];
+      const beatAge = beat ? (Date.now() - Date.parse(beat.modifiedTime || '')) / 60000 : Infinity;
+      const logMod = log ? Date.parse(log.modifiedTime || '') : 0;
+      const info = log && logMod >= t0 - 5000 ? parseRunLog(await driveText(log)) : {};
+      const res = info.Result || '';
+      if (/^RUNNING/i.test(res)) sawRunning = true;
+      const fin = /^(OK|FAILED)/i.test(res) && logMod >= t0 - 5000 && (sawRunning || (!reqLeft && logMod > lastWithReq));
+      if (reqLeft) lastWithReq = Date.now();
+      const el1 = Math.round((Date.now() - t0) / 1000);
+      const out = [['ok', 'Request sent (' + title + ')']];
+      const watcherOk = beatAge <= 12;
+      if (reqLeft) out.push(['wait', 'Waiting for the VPS to pick it up (Drive sync + watcher, usually under a minute) · ' + el1 + 's']);
+      else out.push(['ok', 'The VPS picked up the request']);
+      if (reqLeft && !watcherOk) out.push(['bad', beat ? 'The watcher on the VPS has not reported for ' + fmtDur(beatAge * 60) + '. Is the VPS on and are you logged in?' : 'No watcher found on the VPS. Run INSTALL_BUILD_BUTTON.bat there once.']);
+      if (!reqLeft && !fin) out.push(['wait', sawRunning ? 'Building on the VPS… ' + el1 + 's (a build takes about 4 to 15 minutes)' : 'Starting the build… ' + el1 + 's']);
+      if (fin) {
+        const ok = /^OK/i.test(res);
+        out.push([ok ? 'ok' : 'bad', (ok ? 'Build finished: ' : 'Build failed: ') + res.replace(/^(OK|FAILED)\s*-\s*/i, '')]);
+        if (ok) out.push(reloaded ? ['ok', 'Dashboard reloaded from Drive'] : ['wait', 'Reloading the dashboard from Drive…']);
+      }
+      buildPanelSet('Build on VPS', out, { note: watcherOk ? 'Watcher on the VPS: online' : '' });
+      if (fin) {
+        if (/^OK/i.test(res) && !reloaded) { reloaded = true; await loadFromDrive(true); const o2 = out.slice(0, -1).concat([['ok', 'Dashboard reloaded from Drive']]); buildPanelSet('Build on VPS', o2, { note: 'Watcher on the VPS: online' }); }
+        done = true; break;
+      }
+      await new Promise((r) => setTimeout(r, BUILD.poll));
+    }
+    if (!done && my === BUILD.run) buildPanelSet('Build on VPS', [['bad', 'Gave up after 35 minutes without a finished build. Check last_build_<PC>.txt in _DASHBOARD_BUILD.']]);
+  } catch (e) {
+    buildPanelSet('Build on VPS', [['bad', driveError(e)]]);
+  } finally { btn.disabled = false; }
+}
+$('#buildBtn').addEventListener('click', buildNow);
 async function driveCall(tool, input) {
   try { return asObj((await MCP.callTool(DRIVE, tool, input, { cache: false })).payload); }
   catch (e) {
@@ -2601,7 +2679,7 @@ async function loadFromDrive(keepFilters) {
   window.claude.use('downloads').then((d) => { DOWNLOADS = d; }).catch(() => {});
   MCP = await window.claude.use('mcp');
   if (!MCP) return;
-  $('#driveBtn').hidden = false;
+  $('#driveBtn').hidden = false; $('#buildBtn').hidden = false;
   $('#driveNote').hidden = false;
   $('#driveNote').textContent = 'Opened from claude.ai: data is read from MT4_Terminals/_DASHBOARD in your Google Drive automatically.';
   $('#driveBtn').addEventListener('click', () => loadFromDrive(true));
@@ -2666,5 +2744,6 @@ document.addEventListener('drop', async (e) => {
   loadFiles(out);
 });
 </script>
+<div id="buildPanel" class="buildpanel" hidden></div>
 </body>
 </html>
