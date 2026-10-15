@@ -26,8 +26,12 @@ if errorlevel 2 goto :end
 
 :install
 >"%HERE%BUILD_PC.txt" echo %COMPUTERNAME%
-set "RUN=wscript.exe \"%HERE%AUTO_BUILD.vbs\""
-if not exist "%SystemRoot%\System32\vbscript.dll" set "RUN=powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%HERE%Build-DashboardData.ps1\""
+rem Window-free runners, best first: VBScript host (//B = batch, no pop-ups), then a headless console host
+rem (Windows 10 1809 and later, also when VBScript is switched off), then plain hidden PowerShell (can flash a window).
+set "RUN=powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"%HERE%Build-DashboardData.ps1\""
+if exist "%SystemRoot%\System32\conhost.exe" set "RUN=conhost.exe --headless powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"%HERE%Build-DashboardData.ps1\""
+if exist "%SystemRoot%\System32\vbscript.dll" set "RUN=wscript.exe //B //Nologo \"%HERE%AUTO_BUILD.vbs\""
+echo   Task command: %RUN%
 schtasks /Create /TN "%TASK%" /SC MINUTE /MO 10 /TR "%RUN%" /F
 if errorlevel 1 goto :failed
 echo.
