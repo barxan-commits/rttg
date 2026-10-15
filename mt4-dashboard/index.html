@@ -1416,7 +1416,7 @@ function dimRow(key, label, arr, extra) {
 const C = {
   n: { label: 'Trades', num: true, f: (v) => v.toLocaleString('en-US') },
   winRate: { label: 'Win %', num: true, f: pct },
-  net: { label: 'Net', num: true, f: money, cls: signCls },
+  net: { label: 'Net', num: true, f: money, cls: signCls, title: 'Result of these trades (profit + commission + swap). For a fader this is what the fader made or lost on its own, without its master.' },
   gp: { label: 'Gross profit', num: true, f: money },
   gl: { label: 'Gross loss', num: true, f: money },
   pf: { label: 'PF', num: true, f: ratio },
@@ -1450,8 +1450,8 @@ const C = {
   accounts: { label: 'Accounts', num: true, f: (v) => v },
   symbols: { label: 'Symbols', num: true, f: (v) => v },
   comments: { label: 'Comments', num: false, f: (v) => v },
-  master: { label: 'Master $', num: true, f: money, cls: signCls },
-  masterDiff: { label: 'Fader − master', num: true, f: money, cls: signCls },
+  master: { label: 'Master alone $', num: true, f: money, cls: signCls, title: 'What the master made or lost on the trades this fader copied (the fader copies each master trade the other way round).' },
+  masterDiff: { label: 'Both together $', num: true, f: money, cls: signCls, title: 'Fader + master: what you get if the fader and its master run together. The fader alone is the Net column.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
   basketWin: { label: 'Basket win %', num: true, f: pct },
   worstBasket: { label: 'Worst basket', num: true, f: money },
@@ -1468,7 +1468,7 @@ function masterExtra(arr) {
     fnet += t.net;
     if (f.master && !seen.has(f.master)) { seen.add(f.master); const m = BY_TICKET.get(f.master); if (m) { found++; master += m.net; } }
   }
-  return found ? { master, masterDiff: fnet - master } : { master: NaN, masterDiff: NaN };
+  return found ? { master, masterDiff: fnet + master } : { master: NaN, masterDiff: NaN };
 }
 const MASTER_COLS = [Object.assign({ key: 'master' }, C.master), Object.assign({ key: 'masterDiff' }, C.masterDiff)];
 function sortRows(rows, tabId, defKey, defDir) {
@@ -1495,7 +1495,7 @@ function table(host, cols, rows, opts) {
   const wrap = el('div', { class: 'tablewrap' }); const tbl = el('table');
   const thead = el('thead'); const hr = el('tr');
   for (const c of cols) {
-    const th = el('th', { class: c.num ? 'num' : '' }, c.label);
+    const th = el('th', { class: c.num ? 'num' : '', title: c.title || '' }, c.label);
     if (st.key === c.key) th.appendChild(el('span', { class: 'arrow' }, st.dir === 'asc' ? ' ▲' : ' ▼'));
     th.addEventListener('click', () => {
       const cur = state.sort[opts.tabId] || { key: opts.defKey, dir: opts.defDir || 'desc' };

@@ -212,7 +212,7 @@ python tools/make_sample_data.py sample
 
 Then choose the `sample` folder in the page.
 
-The By magic, By comment and Magic x comment tabs also show **Master $** (the master trades the faders copied) and **Fader - master** (fader result minus master result); non-fader rows show a dash.
+The By magic, By comment and Magic x comment tabs also show **Master alone $** (the master trades the faders copied) and **Both together $** (fader + master); non-fader rows show a dash.
 
 Fader detection no longer depends on the magic number or EA version: any comment that ends with a master ticket (`#2052488935`, `+#2052488935` for an extra copy, `#BIG2052488935`) is a fader. Known types: MP, MP FEES/HALF/NOPULL, MP2X/MP0.5X/MP3X, DAY, SPR, ADDL<n>, ADDP<n>, PLAIN; anything else is type COPY.
 
