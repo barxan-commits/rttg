@@ -233,6 +233,8 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .btn.tog.on { background: rgba(34,197,94,.18); border-color: rgba(34,197,94,.75); color: var(--c-green, #22c55e); font-weight: 600; }
 a.lnk { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); cursor: pointer; }
 a.lnk:hover { filter: brightness(1.2); }
+.pbar { height: 7px; border-radius: 4px; background: rgba(127,127,127,.25); margin-top: 5px; overflow: hidden; }
+.pbar i { display: block; height: 100%; background: linear-gradient(90deg, #3b82f6, #22c55e); border-radius: 4px; transition: width .6s; }
 /* ---- colour layer: accents on top of the base tokens (works in light and dark) ---- */
 :root { --c-blue: #3b82f6; --c-teal: #14b8a6; --c-violet: #8b5cf6; --c-amber: #f59e0b; --c-rose: #f43f5e; --c-green: #22c55e; --c-cyan: #06b6d4; --c-pink: #ec4899; }
 header.top { background: linear-gradient(90deg, rgba(59,130,246,.16), rgba(20,184,166,.10) 55%, rgba(139,92,246,.10)); border-bottom: 1px solid rgba(59,130,246,.35); }
@@ -2744,7 +2746,15 @@ function buildStatusSet(level, chip, rows, raw) {
   b.hidden = false; b.className = 'bstat ' + (level === 'ok' ? 'ok' : level === 'bad' ? 'bad' : '');
   b.textContent = (level === 'ok' ? '✓ ' : level === 'bad' ? '✗ ' : '… ') + chip;
   const pop = $('#buildPop'); const wasOpen = !pop.hidden; pop.textContent = '';
-  if (rows && rows.length) { const ul = el('ul'); for (const [c, t] of rows) ul.appendChild(el('li', { class: c }, (c === 'ok' ? '✓ ' : c === 'bad' ? '✗ ' : '… ') + t)); pop.appendChild(ul); }
+  if (rows && rows.length) {
+    const ul = el('ul');
+    for (const [c, t, pct] of rows) {
+      const li = el('li', { class: c }, (c === 'ok' ? '✓ ' : c === 'bad' ? '✗ ' : '… ') + t);
+      if (Number.isFinite(pct)) { const bar = el('div', { class: 'pbar' }); const i = el('i'); i.style.width = pct + '%'; bar.appendChild(i); li.appendChild(bar); }
+      ul.appendChild(li);
+    }
+    pop.appendChild(ul);
+  }
   if (raw) pop.appendChild(el('pre', null, raw.trim()));
   pop.hidden = !wasOpen || !pop.childNodes.length;
 }
@@ -2776,52 +2786,66 @@ async function showLastBuild() {
     const text = await driveText(log); const info = parseRunLog(text); const res = info.Result || '';
     const when = localStamp(Date.parse(log.modifiedTime || ''));
     if (/^OK/i.test(res)) buildStatusSet('ok', 'Build OK · ' + when, logRows(text, true));
-    else if (/^RUNNING/i.test(res) && Date.now() - Date.parse(log.modifiedTime || '') < 40 * 60000) buildStatusSet('wait', 'Build running · since ' + when, logRows(text, false));
+    else if (/^RUNNING/i.test(res) && Date.now() - Date.parse(log.modifiedTime || '') < 40 * 60000) { buildStatusSet('wait', 'Build running · since ' + when, logRows(text, false)); if (!BUILD.busy) buildNow(true); }
     else if (/^(FAILED|RUNNING)/i.test(res)) buildStatusSet('bad', 'Build failed · ' + when, logRows(text, false));
   } catch (e) { /* the status chip is optional */ }
 }
-async function buildNow() {
+// follow = true: a build is already running (started earlier, or by someone else): only watch it, no new request
+async function buildNow(follow) {
   if (!MCP) return;
-  const my = ++BUILD.run; const t0 = Date.now(); const btn = $('#buildBtn'); btn.disabled = true;
+  const my = ++BUILD.run; let t0 = Date.now(); const btn = $('#buildBtn'); btn.disabled = true;
   BUILD.busy = true;
   try {
     buildStatusSet('wait', 'Looking for the build folder…', [['wait', 'Looking for the build folder in Google Drive']]);
     const first = await newestRunLog();
     if (!first) { buildStatusSet('bad', 'No build log in Drive', [['bad', 'No last_build_<PC>.txt found in Drive. Install the automatic build on the VPS first (INSTALL_AUTO_UPDATE.bat).']]); return; }
     const folder = first.parentId;
+    // how long the last finished build took: the basis of the percentage (an estimate, the build writes no progress)
+    let expected = 600;
+    try { const m = /([\d.]+)s\s*$/.exec(parseRunLog(await driveText(first)).Result || ''); if (m && +m[1] > 60) expected = +m[1]; } catch (e) { /* keep the default */ }
     const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-    const title = 'BUILD_NOW_' + stamp + '.txt';
-    await driveCall('create_file', { title, parentId: folder, contentMimeType: 'text/plain', disableConversionToGoogleType: true, textContent: 'build requested ' + new Date().toISOString() + '\r\n' });
-    let sawRunning = false, lastWithReq = t0, done = false, reloaded = false;
+    const title = follow ? '' : 'BUILD_NOW_' + stamp + '.txt';
+    if (follow) t0 = Date.parse(first.modifiedTime || '') || t0;
+    else await driveCall('create_file', { title, parentId: folder, contentMimeType: 'text/plain', disableConversionToGoogleType: true, textContent: 'build requested ' + new Date().toISOString() + '\r\n' });
+    let sawRunning = !!follow, lastWithReq = t0, done = false, reloaded = false, runStart = follow ? t0 : 0;
     const started = Date.now();
     while (my === BUILD.run && Date.now() - started < 35 * 60000) {
       const q = await driveCall('search_files', { query: "parentId = '" + folder + "' and (title contains 'last_build_' or title contains 'BUILD_NOW' or title = 'BUTTON_WATCHER.txt')", pageSize: 30, excludeContentSnippets: true });
       const fl = q.files || [];
-      const reqLeft = fl.some((f) => /^BUILD_NOW/i.test(f.title || ''));
+      const reqLeft = !follow && fl.some((f) => /^BUILD_NOW/i.test(f.title || ''));
       const beat = fl.find((f) => f.title === 'BUTTON_WATCHER.txt');
       const log = fl.filter((f) => /^last_build_.*\.txt$/i.test(f.title || '')).sort((a, b) => String(b.modifiedTime || '').localeCompare(String(a.modifiedTime || '')))[0];
       const beatAge = beat ? (Date.now() - Date.parse(beat.modifiedTime || '')) / 60000 : Infinity;
       const logMod = log ? Date.parse(log.modifiedTime || '') : 0;
       const raw = log && logMod >= t0 - 5000 ? await driveText(log) : '';
       const info = parseRunLog(raw); const res = info.Result || '';
-      if (/^RUNNING/i.test(res)) sawRunning = true;
+      if (/^RUNNING/i.test(res)) { sawRunning = true; if (!runStart) runStart = logMod; }
       const fin = /^(OK|FAILED)/i.test(res) && logMod >= t0 - 5000 && (sawRunning || (!reqLeft && logMod > lastWithReq));
       if (reqLeft) lastWithReq = Date.now();
       const sec = Math.round((Date.now() - t0) / 1000), el1 = fmtDur(sec);
       const watcherOk = beatAge <= 12;
-      const rows = [['ok', 'Request sent (' + title + ')'], reqLeft ? ['wait', 'Waiting for the VPS to pick it up (Drive sync + watcher, usually under a minute) · ' + el1] : ['ok', 'The VPS picked up the request']];
+      const rows = follow ? [['ok', 'A build is running on the VPS']] : [['ok', 'Request sent (' + title + ')'], reqLeft ? ['wait', 'Waiting for the VPS to pick it up (Drive sync + watcher, usually under a minute) · ' + el1] : ['ok', 'The VPS picked up the request']];
       if (fin) {
         const ok = /^OK/i.test(res); const when = localStamp(logMod);
-        rows.push([ok ? 'ok' : 'bad', (ok ? 'Build finished: ' : 'Build failed: ') + buildTrim(res)]);
-        buildStatusSet(ok ? 'ok' : 'bad', ok ? 'Build OK · ' + when : 'Build failed · ' + when, rows.concat(logRows(raw, ok)));
-        if (ok && !reloaded) { reloaded = true; await loadFromDrive(true); }
+        rows.push([ok ? 'ok' : 'bad', (ok ? 'Build finished: ' : 'Build failed: ') + buildTrim(res), ok ? 100 : undefined]);
+        buildStatusSet(ok ? 'ok' : 'bad', ok ? 'Build OK · 100% · ' + when : 'Build failed · ' + when, rows.concat(logRows(raw, ok)));
+        if (ok && !reloaded) {
+          reloaded = true; await loadFromDrive(true);
+          buildStatusSet('ok', 'Build OK · 100% · ' + when, rows.concat([['ok', 'The dashboard reloaded the new data by itself: no need to press Refresh']], logRows(raw, true)));
+        }
         done = true; break;
       }
       if (reqLeft && !watcherOk) {
         rows.push(['bad', beat ? 'The watcher on the VPS has not reported for ' + fmtDur(beatAge * 60) + '. Is the VPS on and are you logged in there?' : 'No watcher found on the VPS. Run INSTALL_BUILD_BUTTON.bat there once.']);
         buildStatusSet('bad', beat ? 'Watcher on VPS silent' : 'No watcher on VPS', rows);
       } else if (reqLeft) buildStatusSet('wait', 'Waiting for the VPS · ' + el1, rows);
-      else { rows.push(['wait', sawRunning ? 'Building on the VPS · ' + el1 + ' (a build takes about 4 to 15 minutes)' : 'Starting the build · ' + el1]); buildStatusSet('wait', (sawRunning ? 'Building · ' : 'Starting · ') + el1, rows); }
+      else if (sawRunning && runStart) {
+        const run = (Date.now() - runStart) / 1000; const pct = Math.min(99, Math.round(run / expected * 100));
+        const late = run > expected * 1.15;
+        rows.push(['wait', 'Building on the VPS · ' + fmtDur(run) + ' · about ' + pct + '% (estimated from the last build, ' + fmtDur(expected) + ')' + (late ? ' · taking longer than the last build' : ''), pct]);
+        rows.push(['wait', 'When it is done this page reloads the new data by itself. There is nothing to refresh.']);
+        buildStatusSet('wait', 'Building · ' + fmtDur(run) + ' · ~' + pct + '%', rows);
+      } else { rows.push(['wait', 'Starting the build · ' + el1]); buildStatusSet('wait', 'Starting · ' + el1, rows); }
       await new Promise((r) => setTimeout(r, BUILD.poll));
     }
     if (!done && my === BUILD.run) buildStatusSet('bad', 'No result after 35 min', [['bad', 'Gave up after 35 minutes without a finished build. Check last_build_<PC>.txt in _DASHBOARD_BUILD.']]);
@@ -2829,7 +2853,7 @@ async function buildNow() {
     buildStatusSet('bad', 'Build request failed', [['bad', driveError(e)]]);
   } finally { btn.disabled = false; BUILD.busy = false; }
 }
-$('#buildBtn').addEventListener('click', buildNow);
+$('#buildBtn').addEventListener('click', () => buildNow(false));
 async function driveCall(tool, input) {
   try { return asObj((await MCP.callTool(DRIVE, tool, input, { cache: false })).payload); }
   catch (e) {
