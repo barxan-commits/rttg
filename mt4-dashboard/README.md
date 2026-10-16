@@ -233,3 +233,5 @@ By magic: Firsts $ + Extras $ = Net (the first copies and the extra copies of a 
 The master list page (click Copying master) has one row per master with: Fader trades (first copies), Extra trade count, Master trade count, Coverage, Net, Firsts $, Extras $, Master alone $ and Both together $. By magic also shows First trade count and Master trades.
 
 The same fader columns (First trade count / Firsts $, Extra trade count / Extras $, Master trade count, Master alone $, Both together $, Copying master) are in By magic, By comment, Magic x comment, By symbol, By account and By campaign, and in the pair table of the master list page.
+
+Fader analysis now opens on a simple **Pairs list**: one row per fader copying one master, with Fader made, Master made, Both together and a Result in words (Works / Fails / Both gain / Both lose), a search box and a Min copies filter. The old matrix is still there as Grid view.
