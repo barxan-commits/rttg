@@ -4,12 +4,12 @@ It is the same dashboard as the online one: same tabs, same filters, the "Build 
 the percentage, the header marks (build time, page loaded, last trade). It reads the folder that Google Drive for
 desktop keeps on this PC:   I:\My Drive\MT4_Terminals\_DASHBOARD   (it also finds G:, H: or D:).
 
-ONE-TIME SETUP
+ONE-TIME SETUP (the folder sits at I:\My Drive\MT4_Terminals\DASH_OFFLINE)
   1. Install "Google Drive for desktop" and sign in with the same Google account as the VPS.
      Wait until I:\My Drive\MT4_Terminals exists.
      Right-click  MT4_Terminals\_DASHBOARD  and  MT4_Terminals\_DASHBOARD_BUILD  ->  Offline access  ->  Available offline.
      (Then the files are really on this PC and not only streamed.)
-  2. Unzip this folder anywhere (for example the desktop).
+  2. This folder (MT4_Terminals\DASH_OFFLINE) is already on Drive: it arrives on this PC by itself.
 
 EVERY DAY
   Double-click OPEN_DASHBOARD.bat. It starts a small hidden helper on this PC (127.0.0.1 only, nothing leaves

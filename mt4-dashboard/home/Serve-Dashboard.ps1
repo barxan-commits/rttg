@@ -16,6 +16,9 @@ try { $own = $single.WaitOne(0) } catch [System.Threading.AbandonedMutexExceptio
 if (-not $own) { exit 0 }
 
 function Find-Root {
+  # this folder normally sits inside MT4_Terminals (MT4_Terminals\DASH_OFFLINE): then the parent is the data root
+  $par = Split-Path -Parent $here
+  if ($par -and (Split-Path -Leaf $par) -ieq 'MT4_Terminals' -and (Test-Path -LiteralPath (Join-Path $par '_DASHBOARD'))) { return $par }
   $f = Join-Path $here 'root.txt'
   if (Test-Path -LiteralPath $f) { $p = (Get-Content -LiteralPath $f | Select-Object -First 1).Trim().Trim('"'); if ($p -and (Test-Path -LiteralPath $p)) { return $p } }
   foreach ($p in @('I:\My Drive\MT4_Terminals', 'G:\My Drive\MT4_Terminals', 'H:\My Drive\MT4_Terminals', 'D:\My Drive\MT4_Terminals')) { if (Test-Path -LiteralPath $p) { return $p } }
@@ -24,6 +27,19 @@ function Find-Root {
 }
 if (-not $Root) { $Root = Find-Root }
 $Allowed = @('_DASHBOARD', '_DASHBOARD_BUILD')
+# index.html may arrive in pieces (index.html.part1of6 ...) through Google Drive: join them once all are here
+function Join-Pieces {
+  $idx = Join-Path $here 'index.html'
+  $pc = @(Get-ChildItem -LiteralPath $here -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^index\.html\.part(\d+)of(\d+)$' })
+  if (-not $pc.Count) { return }
+  $n = [int]([regex]::Match($pc[0].Name, 'of(\d+)$').Groups[1].Value)
+  if ($pc.Count -lt $n) { return }
+  $ord = @($pc | Sort-Object { [int]([regex]::Match($_.Name, 'part(\d+)of').Groups[1].Value) })
+  $ms = New-Object System.IO.MemoryStream
+  foreach ($f in $ord) { $b = Read-Shared $f.FullName; $ms.Write($b, 0, $b.Length) }
+  [System.IO.File]::WriteAllBytes($idx, $ms.ToArray())
+  foreach ($f in $ord) { Remove-Item -LiteralPath $f.FullName -Force -ErrorAction SilentlyContinue }
+}
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 $mime = @{ '.html' = 'text/html; charset=utf-8'; '.js' = 'application/javascript; charset=utf-8'; '.json' = 'application/json; charset=utf-8' }
 
@@ -46,6 +62,7 @@ function Resolve-Item([string]$rel) {
   return [pscustomobject]@{ Dir = $parts[0]; Name = $parts[1]; Path = (Join-Path (Join-Path $Root $parts[0]) $parts[1]) }
 }
 
+try { Join-Pieces } catch { }
 # 127.0.0.1 first; some Windows setups only allow localhost without administrator rights
 $listener = $null; $urlFile = Join-Path $here 'server_url.txt'; $lastErr = ''
 foreach ($h in @('127.0.0.1', 'localhost')) {
