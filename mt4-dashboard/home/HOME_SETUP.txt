@@ -1,22 +1,31 @@
-MT4 DASHBOARD - OFFLINE ON THIS PC (no Claude needed)
-=====================================================
+MT4 DASHBOARD - ON THIS PC (offline, no Claude needed)
+======================================================
+It is the same dashboard as the online one: same tabs, same filters, the "Build now" button with its status window,
+the percentage, the header marks (build time, page loaded, last trade). It reads the folder that Google Drive for
+desktop keeps on this PC:   I:\My Drive\MT4_Terminals\_DASHBOARD   (it also finds G:, H: or D:).
 
 ONE-TIME SETUP
   1. Install "Google Drive for desktop" and sign in with the same Google account as the VPS.
-     Right-click  My Drive\MT4_Terminals\_DASHBOARD  ->  Offline access  ->  Available offline.
-  2. Put this folder anywhere (for example the desktop).
-  3. Double-click OPEN_DASHBOARD.bat. It opens the dashboard in Microsoft Edge.
-  4. Click "Open data folder" and pick  My Drive\MT4_Terminals\_DASHBOARD  (once).
+     Wait until I:\My Drive\MT4_Terminals exists.
+     Right-click  MT4_Terminals\_DASHBOARD  and  MT4_Terminals\_DASHBOARD_BUILD  ->  Offline access  ->  Available offline.
+     (Then the files are really on this PC and not only streamed.)
+  2. Unzip this folder anywhere (for example the desktop).
 
 EVERY DAY
-  Double-click OPEN_DASHBOARD.bat.
-  - It first downloads the newest dashboard version (when the PC is online).
-  - The page remembers the data folder. After the browser was closed it shows a blue
-    button "Reconnect ..." - click it once.
-  - While the page is open it re-reads the folder every 5 minutes (button "Refresh" = now).
+  Double-click OPEN_DASHBOARD.bat. It downloads the newest dashboard version (when online), starts a small hidden
+  helper on this PC (127.0.0.1 only, nothing leaves the PC) and opens the dashboard in Edge. Nothing to click inside.
+  The page re-reads the Drive folder every 15 minutes while it is open ("Refresh from Drive" = now).
 
-The VPS still builds the data every 30 minutes and Google Drive brings it here.
-The "Build now" button exists only in the online (Claude) version.
+WHAT STILL HAPPENS ON THE VPS (not on this PC)
+  The VPS builds the data every 30 minutes and Google Drive brings it here. "Build now" drops a request file into
+  _DASHBOARD_BUILD; Google Drive carries it to the VPS, which builds and writes the result back. That takes a few
+  minutes longer than online, because two Drive syncs are involved. The VPS must be on and logged in.
+  Do NOT run the build script on this PC.
 
-Use Edge or Chrome. Firefox cannot remember a folder.
-If the update never works, the old index.html keeps working; index.previous.html is the copy before the last update.
+IF SOMETHING IS WRONG
+  - "The local dashboard server is not running": close the tab, double-click OPEN_DASHBOARD.bat again.
+  - "No dashboard data found": Google Drive for desktop is not running or the folder is not synced yet.
+    Check that I:\My Drive\MT4_Terminals\_DASHBOARD\mt4dash_manifest.json exists.
+  - Drive letter is not I: and is found anyway; if the folder is somewhere else write its full path
+    (the MT4_Terminals folder) into a file root.txt next to OPEN_DASHBOARD.bat.
+  - Update never works: the old files keep working. index.previous.html is the copy before the last update.
