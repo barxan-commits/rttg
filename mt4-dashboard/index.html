@@ -286,6 +286,7 @@ tbody tr.click:hover td { background: rgba(20,184,166,.13); }
   <div class="actions">
     <button id="driveBtn" class="btn primary" type="button" hidden>Refresh from Drive</button>
     <span class="bwrap" id="buildWrap" hidden><button id="buildBtn" class="btn" type="button" title="Ask the VPS to build the dashboard data now">Build now</button><button id="buildStatus" class="bstat" type="button" hidden></button><div id="buildPop" class="bpop" hidden></div></span>
+    <button id="folderBtn" class="btn primary" type="button" hidden>Open data folder</button>
     <label class="btn primary" id="dirBtn">Choose folder<input id="dirInput" type="file" webkitdirectory directory multiple hidden></label>
     <label class="btn">Choose files<input id="fileInput" type="file" multiple accept=".csv,.txt" hidden></label>
     <button id="themeBtn" class="btn" type="button" title="Switch light / dark">Theme</button>
@@ -888,7 +889,7 @@ function markSpan(level, tip) { const m = MARK[level]; return el('span', { style
 function renderSummary() {
   const host = $('#summary'); if (!host || !SUMMARY) return;
   host.textContent = ''; host.appendChild(document.createTextNode(SUMMARY.base));
-  if (SOURCE.kind === 'drive' && SOURCE.manifest) {
+  if ((SOURCE.kind === 'drive' || SOURCE.kind === 'folder') && SOURCE.manifest) {
     const builtMs = builtMillis(), age = buildAgeMinutes();
     if (Number.isFinite(builtMs)) {
       host.appendChild(document.createTextNode(' · Drive data built ' + localStamp(builtMs) + ' (' + (age < 1 ? 'just now' : fmtDur(age * 60) + ' ago') + ')' + SUMMARY.builtOn));
@@ -924,7 +925,7 @@ function localStamp(ms) {
   try { return new Date(ms).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false }); } catch (e) { return fmtTime(ms) + ' UTC'; }
 }
 function buildAgeMinutes() {
-  if (SOURCE.kind !== 'drive' || !SOURCE.manifest) return NaN;
+  if ((SOURCE.kind !== 'drive' && SOURCE.kind !== 'folder') || !SOURCE.manifest) return NaN;
   const ms = builtMillis();
   return Number.isFinite(ms) ? Math.max(0, (Date.now() - ms) / 60000) : NaN;
 }
@@ -2965,6 +2966,68 @@ async function loadFromDrive(keepFilters) {
   loadFromDrive(false);
   // refresh every 15 minutes while the page is visible; unchanged files come from cache
   setInterval(() => { if (document.visibilityState === 'visible') loadFromDrive(true); }, 15 * 60 * 1000);
+})();
+
+/* ---------------- offline: a remembered data folder (Chrome / Edge, no Claude needed) ----------------
+   Pick the _DASHBOARD folder once. The page remembers it, re-reads it every 5 minutes while it is open and
+   asks for one click to reconnect after the browser was closed. */
+const FOLDER = { handle: null, busy: false };
+async function walkDir(dir, base, depth, out) {
+  for await (const [name, h] of dir.entries()) {
+    if (h.kind === 'file') out.push({ h, name, path: base + name });
+    else if (depth < 3 && !/^_DASHBOARD_BACKUP/i.test(name)) await walkDir(h, base + name + '/', depth + 1, out);
+  }
+}
+async function loadFromFolder(keep) {
+  if (!FOLDER.handle || FOLDER.busy) return;
+  FOLDER.busy = true;
+  try {
+    showProgress('Reading the folder…');
+    const list = []; await walkDir(FOLDER.handle, '', 0, list);
+    const items = []; let manifest = null, manifestTime = NaN;
+    for (const x of list) {
+      if (!(isCandidate(x.name) || /\.csv$/i.test(x.name))) continue;
+      const f = await x.h.getFile();
+      if (/^mt4dash_manifest\.json$/i.test(x.name)) { try { manifest = JSON.parse(await f.text()); manifestTime = f.lastModified; } catch (e) { /* ignore */ } continue; }
+      items.push({ name: x.name, path: x.path, size: f.size, read: async () => { const b = await (await x.h.getFile()).arrayBuffer(); return /\.gz$/i.test(x.name) ? gunzipText(new Uint8Array(b)) : decodeBuffer(b); } });
+    }
+    if (!items.length) { showProgress('No dashboard files in that folder. Pick the _DASHBOARD folder (MT4_Terminals\\_DASHBOARD).'); return; }
+    SOURCE = manifest ? { kind: 'folder', manifest, manifestTime } : { kind: 'local' };
+    KEEP_FILTERS = !!keep;
+    await loadSources(items);
+  } catch (e) {
+    showProgress('Could not read the folder: ' + ((e && e.message) || e) + '. Click Open data folder again.');
+  } finally { FOLDER.busy = false; }
+}
+(async () => {
+  if (window.claude || typeof window.showDirectoryPicker !== 'function') return;   // online (Claude) or an unsupported browser
+  const fb = $('#folderBtn'), rb = $('#driveBtn');
+  fb.hidden = false; $('#dirBtn').hidden = true; $('#dirBtn').style.display = 'none';
+  const note = (t) => { $('#driveNote').hidden = false; $('#driveNote').textContent = t; };
+  const start = () => {
+    fb.textContent = 'Change folder'; rb.hidden = false; rb.textContent = 'Refresh'; rb.disabled = false;
+    note('Offline: reading "' + FOLDER.handle.name + '" on this PC. It re-reads the folder every 5 minutes while this page is open.');
+    loadFromFolder(false);
+  };
+  rb.addEventListener('click', () => loadFromFolder(true));
+  setInterval(() => { if (FOLDER.handle && document.visibilityState === 'visible') loadFromFolder(true); }, 5 * 60 * 1000);
+  fb.addEventListener('click', async () => {
+    try {
+      if (FOLDER.handle && fb.dataset.mode === 'reconnect') {
+        if (await FOLDER.handle.requestPermission({ mode: 'read' }) === 'granted') { fb.dataset.mode = ''; start(); }
+        return;
+      }
+      const h = await window.showDirectoryPicker({ mode: 'read', id: 'mt4dash' });
+      FOLDER.handle = h; fb.dataset.mode = ''; idb.put('__folder', h); start();
+    } catch (e) { /* cancelled */ }
+  });
+  const saved = await idb.get('__folder');
+  if (saved && saved.kind === 'directory') {
+    FOLDER.handle = saved;
+    let perm = 'prompt'; try { perm = await saved.queryPermission({ mode: 'read' }); } catch (e) { /* ignore */ }
+    if (perm === 'granted') start();
+    else { fb.textContent = 'Reconnect "' + saved.name + '"'; fb.dataset.mode = 'reconnect'; note('Click the blue button once to let this page read the folder again (the browser asks after it was closed).'); }
+  }
 })();
 
 /* ---------------- events ---------------- */

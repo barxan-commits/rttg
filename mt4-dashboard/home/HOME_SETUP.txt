@@ -1,0 +1,22 @@
+MT4 DASHBOARD - OFFLINE ON THIS PC (no Claude needed)
+=====================================================
+
+ONE-TIME SETUP
+  1. Install "Google Drive for desktop" and sign in with the same Google account as the VPS.
+     Right-click  My Drive\MT4_Terminals\_DASHBOARD  ->  Offline access  ->  Available offline.
+  2. Put this folder anywhere (for example the desktop).
+  3. Double-click OPEN_DASHBOARD.bat. It opens the dashboard in Microsoft Edge.
+  4. Click "Open data folder" and pick  My Drive\MT4_Terminals\_DASHBOARD  (once).
+
+EVERY DAY
+  Double-click OPEN_DASHBOARD.bat.
+  - It first downloads the newest dashboard version (when the PC is online).
+  - The page remembers the data folder. After the browser was closed it shows a blue
+    button "Reconnect ..." - click it once.
+  - While the page is open it re-reads the folder every 5 minutes (button "Refresh" = now).
+
+The VPS still builds the data every 30 minutes and Google Drive brings it here.
+The "Build now" button exists only in the online (Claude) version.
+
+Use Edge or Chrome. Firefox cannot remember a folder.
+If the update never works, the old index.html keeps working; index.previous.html is the copy before the last update.
