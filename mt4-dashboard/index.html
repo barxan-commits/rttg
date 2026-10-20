@@ -2850,8 +2850,8 @@ async function buildNow(follow) {
         done = true; break;
       }
       if (reqLeft && !watcherOk) {
-        rows.push(['bad', beat ? 'The watcher on the VPS has not reported for ' + fmtDur(beatAge * 60) + '. Is the VPS on and are you logged in there?' : 'No watcher found on the VPS. Run INSTALL_BUILD_BUTTON.bat there once.']);
-        buildStatusSet('bad', beat ? 'Watcher on VPS silent' : 'No watcher on VPS', rows);
+        rows.push(['wait', 'The Build now helper on the VPS is not running at the moment. It restarts by itself with the next automatic build (within 30 minutes) and then builds this request. Nothing to do.']);
+        buildStatusSet('wait', 'Queued · starts within 30 min', rows);
       } else if (reqLeft) buildStatusSet('wait', 'Waiting for the VPS · ' + el1, rows);
       else if (sawRunning && runStart) {
         const run = (Date.now() - runStart) / 1000; const pct = Math.min(99, Math.round(run / expected * 100));
