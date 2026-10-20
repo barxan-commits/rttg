@@ -906,7 +906,7 @@ function renderSummary() {
     // compare with the newest activity any terminal reported (both are broker server time), so no time zone is needed
     let newest = 0; for (const a of DB.accounts.values()) if (a.lastSeen > newest) newest = a.lastSeen;
     const gap = (newest - last) / 60000;
-    if (Number.isFinite(gap)) host.appendChild(gap <= 30 ? markSpan('ok', 'Trades are closing: the newest trade is within 30 minutes of the newest terminal report.') : gap <= 240 ? markSpan('warn', 'No trade closed for ' + fmtDur(gap * 60) + ' while terminals kept reporting.') : markSpan('bad', 'No trade closed for ' + fmtDur(gap * 60) + ' while terminals kept reporting (market closed, or the EAs stopped trading).'));
+    if (Number.isFinite(gap)) host.appendChild(gap <= 30 ? markSpan('ok', 'Trades are closing: the newest trade is within 30 minutes of the newest terminal report.') : markSpan('warn', 'No trade closed for ' + fmtDur(gap * 60) + ' while terminals kept reporting (quiet market, weekend, or the EAs stopped trading).'));
   }
   host.title = 'Built = when the VPS last wrote the data to Google Drive (your time zone). Page loaded = when this page last read Drive; it refreshes every 15 minutes. '
     + 'Last closed trade = newest trade in the data, in the broker\'s server time. Green check = fine, amber warning = late, red cross = problem. '
@@ -2212,7 +2212,8 @@ function terminalAccounts() {
 const IDLE_MIN = 24 * 60;
 function healthAdvice(r) {
   if (/SOURCE NOT DISCOVERED/i.test(r.sync)) return 'AutoSync cannot find account ' + (r.account || '?') + ' on this PC. If the terminal now runs another account, put the new account in the AutoSync identity map; otherwise attach HistoryExporter_AUTOID_v2 to one chart once.';
-  if (SYNC_BAD(r.sync)) return 'Sync problem: ' + r.sync + '. Run AutoSync again on ' + (r.machine || 'its PC') + '.';
+  if (r.syncBad) return 'Sync problem: ' + r.sync + '. Run AutoSync again on ' + (r.machine || 'its PC') + '.';
+  if (r.level === 'idle' && r.syncOld) return 'The PC that syncs this terminal is not running (its last sync is hours old). Nothing to do if you are not using it.';
   if (r.level === 'idle') return 'No snapshot or log for over a day. Fine if retired; otherwise start the terminal and the collector.';
   if (r.label === 'Critical') return 'The EA failed to close a position. Check this terminal\'s open trades now (Problems below).';
   if (r.label === 'Disconnected') return 'Not connected to the broker: check login, password and server in this terminal.';
@@ -2244,6 +2245,10 @@ function buildHealthRows() {
     }
     rows.push(r);
   }
+  // a sync status written by a PC that has stopped syncing (its run is hours behind the newest run of any PC, e.g. a home PC that is switched off) is old news, not a problem
+  const runOf = (r) => { const sy = DB.sync.terminals.get(r.terminal); return sy ? parseMT(sy.run) : NaN; };
+  const newestRun = Math.max(-Infinity, ...rows.map(runOf).filter(Number.isFinite));
+  for (const r of rows) { const run = runOf(r); r.syncOld = Number.isFinite(run) && Number.isFinite(newestRun) && newestRun - run > 3 * 3600000; r.syncBad = SYNC_BAD(r.sync) && !r.syncOld; }
   // staleness: compare like with like (broker server time for snapshots, log time for logs)
   const newestSnap = Math.max(-Infinity, ...rows.map((r) => r.lastSnap).filter(Number.isFinite));
   const newestLog = Math.max(-Infinity, ...rows.map((r) => r.lastLog).filter(Number.isFinite));
@@ -2252,10 +2257,10 @@ function buildHealthRows() {
     // retired or switched-off terminals: no snapshot and no log line for a day
     const quietSnap = Number.isFinite(newestSnap) ? !(r.lag <= IDLE_MIN) : true;
     const quietLog = Number.isFinite(newestLog) ? !(r.lastLog > newestLog - IDLE_MIN * 60000) : true;
-    r.idle = !SYNC_BAD(r.sync) && (Number.isFinite(newestSnap) || Number.isFinite(newestLog)) && quietSnap && quietLog;
+    r.idle = !r.syncBad && (r.syncOld || ((Number.isFinite(newestSnap) || Number.isFinite(newestLog)) && quietSnap && quietLog));
     r.stale = r.lag > 30 && !r.idle;
     r.collectorWarn = SYNC_WARN(r.sync) && !r.idle;
-    if (SYNC_BAD(r.sync)) { r.level = 'critical'; r.label = 'Not syncing'; }
+    if (r.syncBad) { r.level = 'critical'; r.label = 'Not syncing'; }
     else if (r.idle) { r.level = 'idle'; r.label = 'Inactive'; }
     else if (r.critical) { r.level = 'critical'; r.label = 'Critical'; }
     else if (/^no$/i.test(r.connected)) { r.level = 'serious'; r.label = 'Disconnected'; }
@@ -2272,8 +2277,8 @@ function buildHealthRows() {
 // one line per kind of problem, worst first, naming the terminals
 function renderHealthTodo(host, rows) {
   const kinds = [
-    ['Not syncing', (r) => /SOURCE NOT DISCOVERED/i.test(r.sync), 'AutoSync cannot find the account it expects for these terminals. If a terminal now runs a different account, put the new account in the AutoSync identity map for it (unmapped accounts are listed under the table); otherwise attach HistoryExporter_AUTOID_v2 to one chart once.'],
-    ['Sync problem', (r) => SYNC_BAD(r.sync) && !/SOURCE NOT DISCOVERED/i.test(r.sync), 'Run AutoSync again on their PC.'],
+    ['Not syncing', (r) => r.syncBad && /SOURCE NOT DISCOVERED/i.test(r.sync), 'AutoSync cannot find the account it expects for these terminals. If a terminal now runs a different account, put the new account in the AutoSync identity map for it (unmapped accounts are listed under the table); otherwise attach HistoryExporter_AUTOID_v2 to one chart once.'],
+    ['Sync problem', (r) => r.syncBad && !/SOURCE NOT DISCOVERED/i.test(r.sync), 'Run AutoSync again on their PC.'],
     ['Critical', (r) => r.label === 'Critical', 'The EA gave up closing a position (AEP close exhausted). Check the open trades on these terminals now; details in Problems in the logs.'],
     ['Disconnected', (r) => r.label === 'Disconnected', 'Not connected to the broker: check login, password and server.'],
     ['Stale', (r) => r.label === 'Stale' || r.label === 'Collector warning', 'The collector stopped writing: re-attach MT4Collector_Quant (AutoTrading on) or restart the terminal.'],
@@ -2299,7 +2304,7 @@ function healthModel() {
   const events = DB.health.filter((h) => terms.has(h.terminal) && dimOk('magic', h.magic));
   const summary = { critical: 0, errors: 0, warnings: 0, stale: 0, notSyncing: 0, inactive: 0 };
   for (const h of events) { if (h.severity === 'critical') summary.critical += h.count; else if (h.severity === 'error') summary.errors += h.count; else if (h.severity === 'warning') summary.warnings += h.count; }
-  for (const r of rows) { if (r.stale || r.collectorWarn) summary.stale++; if (SYNC_BAD(r.sync)) summary.notSyncing++; if (r.idle) summary.inactive++; }
+  for (const r of rows) { if (r.stale || r.collectorWarn) summary.stale++; if (r.syncBad) summary.notSyncing++; if (r.idle) summary.inactive++; }
   return { rows, events, summary };
 }
 function renderHealth(host) {
