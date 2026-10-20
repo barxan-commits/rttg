@@ -872,7 +872,7 @@ async function loadSources(files) {
   SUMMARY = { base: DB.trades.length.toLocaleString('en-US') + ' closed trades · ' + DB.accounts.size + ' accounts · ' + tf + ' trade files', builtOn, loadedAt: Date.now() };
   renderSummary();
   DB.staleWarning = builtAge > STALE_BUILD_MIN ? 'The data in Google Drive was last built ' + fmtDur(builtAge * 60) + ' ago (' + SOURCE.manifest.generatedAt + builtOn
-    + '), so newer trades, open positions and comments are missing. To rebuild it automatically every 10 minutes, open MT4_Terminals\\_DASHBOARD_BUILD in Google Drive on the VPS and double-click INSTALL_AUTO_UPDATE.bat once. If you already did, check that the VPS is on, you are logged in there and Google Drive is running.' : '';
+    + '), so newer trades, open positions and comments are missing. It rebuilds by itself on a schedule, so just check on the VPS that the terminals and Google Drive are running and that Windows is logged in (the build only runs while logged in). If it never ran, double-click INSTALL_AUTO_UPDATE.bat once in MT4_Terminals\\_DASHBOARD_BUILD.' : '';
   const failed = DB.files.filter((f) => f.kind === 'failed').length;
   if (failed) DB.loadWarning = failed + ' file(s) could not be downloaded from Drive, so figures may be incomplete. See the Files tab and press Refresh from Drive.';
   else DB.loadWarning = '';
@@ -1193,14 +1193,16 @@ function renderKPIs(T, s) {
   tile('Expectancy / trade', money(s.exp), (Number.isFinite(s.avgR) ? fmtSigned(s.avgR, 2) + ' R · ' : '') + 'avg win ' + money(s.avgWin) + ' · loss ' + money(s.avgLoss), signCls(s.exp));
   tile('Max drawdown (closed)', money(-s.maxDD), 'Recovery factor ' + fmtNum(s.recovery, 2), s.maxDD > 0 ? 'neg' : '');
   // equity drawdown including floating, per account (prop-firm style): show the worst account in view
-  const eqs = accountsInView().map(equityStats).filter((e) => e.n);
+  // equity and floating loss exist per ACCOUNT only: with a magic / comment / symbol ... filter they would show other EAs' losses
+  const dimFilter = state.magic || state.comment || state.symbol || state.side || state.category || state.faderType;
+  const eqs = dimFilter ? [] : accountsInView().map(equityStats).filter((e) => e.n);
   const worstDD = eqs.reduce((w, e) => (!w || e.maxDD > w.maxDD ? e : w), null);
   const worstFl = eqs.reduce((w, e) => (Number.isFinite(e.worstFl) && (!w || e.worstFl < w.worstFl) ? e : w), null);
   const multi = eqs.length > 1 ? ' (worst of ' + eqs.length + ' accounts)' : '';
   tile('Max equity drawdown', worstDD && worstDD.maxDD > 0 ? money(-worstDD.maxDD) : '–',
-    worstDD && worstDD.maxDD > 0 ? pct(worstDD.maxDDPct) + ' · ' + fmtTime(worstDD.ddTime) + (eqs.length > 1 ? ' · ' + accLabel(worstDD.acc) : '') : 'needs account snapshots', worstDD && worstDD.maxDD > 0 ? 'neg' : '', false, 'Includes floating loss' + multi);
+    worstDD && worstDD.maxDD > 0 ? pct(worstDD.maxDDPct) + ' · ' + fmtTime(worstDD.ddTime) + (eqs.length > 1 ? ' · ' + accLabel(worstDD.acc) : '') : dimFilter ? 'account level only: not split by magic / comment (see Max drawdown (closed))' : 'needs account snapshots', worstDD && worstDD.maxDD > 0 ? 'neg' : '', false, 'Includes floating loss' + multi);
   tile('Worst floating loss', worstFl ? money(worstFl.worstFl) : '–',
-    worstFl ? fmtTime(worstFl.worstFlTime) + (eqs.length > 1 ? ' · ' + accLabel(worstFl.acc) : '') : 'needs account snapshots', worstFl && worstFl.worstFl < 0 ? 'neg' : '');
+    worstFl ? fmtTime(worstFl.worstFlTime) + (eqs.length > 1 ? ' · ' + accLabel(worstFl.acc) : '') : dimFilter ? 'account level only: not split by magic / comment' : 'needs account snapshots', worstFl && worstFl.worstFl < 0 ? 'neg' : '');
   tile('Net % of balance', Number.isFinite(s.netPct) ? fmtSigned(s.netPct, 2) + '%' : '–',
     Number.isFinite(s.totR) ? 'Total ' + fmtSigned(s.totR, 1) + ' R over ' + s.rN.toLocaleString('en-US') + ' trades with SL' : 'per-trade net ÷ balance at entry', signCls(s.netPct));
   const hm = healthModel();
@@ -1217,15 +1219,18 @@ function renderKPIs(T, s) {
   const ol = op.reduce((a, p) => a + p.lots, 0);
   tile('Open positions', op.length.toLocaleString('en-US'), nfLots.format(ol) + ' lots, latest file per account');
   // floating P/L: per position when the patched collector writes it, otherwise the account snapshot
-  const dimFilter = state.magic || state.comment || state.symbol || state.side || state.category || state.faderType;
   const withPnl = op.filter((p) => Number.isFinite(p.pnl));
   let fl = 0, any = false, flNote = '';
   if (dimFilter && withPnl.length) {
     for (const p of withPnl) fl += p.pnl; any = true;
     flNote = 'open positions in filter' + (withPnl.length < op.length ? ', ' + withPnl.length + ' of ' + op.length + ' have P/L data' : '');
+  } else if (dimFilter && !op.length) {
+    any = true; flNote = 'no open positions in this filter';
+  } else if (dimFilter) {
+    flNote = 'open positions have no P/L data: update the collector for per-magic P/L';
   } else {
     for (const a of accountsInView()) { const sn = DB.snaps.get(a); if (sn && sn.length) { const v = sn[sn.length - 1].floating; if (Number.isFinite(v)) { fl += v; any = true; } } }
-    flNote = dimFilter ? 'account level: update the collector for per-magic P/L' : 'latest account snapshot';
+    flNote = 'latest account snapshot';
   }
   tile('Floating P/L', any ? money(fl) : '–', flNote, signCls(fl));
 }
@@ -2766,11 +2771,20 @@ function toggleBtn(text, on, change, tip) {
   b.addEventListener('click', () => change(!on)); return b;
 }
 function parseRunLog(t) {
-  const o = {}; for (const l of String(t || '').split(/\r?\n/)) { const m = /^(Started|Finished|Result):\s*(.*)$/.exec(l); if (m) o[m[1]] = m[2].trim(); } return o;
+  const o = {}; for (const l of String(t || '').split(/\r?\n/)) { const m = /^(Started|Finished|Result|RunStartUtc):\s*(.*)$/.exec(l); if (m) o[m[1]] = m[2].trim(); } return o;
 }
 // the build log as status rows: a green check per line when the build is OK, a red cross on the result when it failed
 function logRows(text, ok) {
   return String(text || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => [ok ? 'ok' : (/^(Result|Stuck at):/i.test(l) ? 'bad' : 'wait'), l]);
+}
+// the build writes its steps while it runs: finished steps with their seconds, slow items, and what it is doing now
+function progressRows(text) {
+  const rows = [];
+  for (const l of String(text || '').split(/\r?\n/)) {
+    const m = /^(Step|Slow|Now):\s*(.*)$/.exec(l); if (!m) continue;
+    rows.push([m[1] === 'Step' ? 'ok' : 'wait', (m[1] === 'Step' ? 'done: ' : m[1] === 'Slow' ? 'slow: ' : 'now: ') + m[2].trim()]);
+  }
+  return rows;
 }
 const buildTrim = (res) => res.replace(/^(OK|FAILED|RUNNING)\s*-\s*/i, '');
 async function newestRunLog(folder) {
@@ -2807,7 +2821,7 @@ async function buildNow(follow) {
     const title = follow ? '' : 'BUILD_NOW_' + stamp + '.txt';
     if (follow) t0 = Date.parse(first.modifiedTime || '') || t0;
     else await driveCall('create_file', { title, parentId: folder, contentMimeType: 'text/plain', disableConversionToGoogleType: true, textContent: 'build requested ' + new Date().toISOString() + '\r\n' });
-    let sawRunning = !!follow, lastWithReq = t0, done = false, reloaded = false, runStart = follow ? t0 : 0;
+    let sawRunning = !!follow, lastWithReq = t0, done = false, reloaded = false, runStart = 0;
     const started = Date.now();
     while (my === BUILD.run && Date.now() - started < 35 * 60000) {
       const q = await driveCall('search_files', { query: "parentId = '" + folder + "' and (title contains 'last_build_' or title contains 'BUILD_NOW' or title = 'BUTTON_WATCHER.txt')", pageSize: 30, excludeContentSnippets: true });
@@ -2819,7 +2833,7 @@ async function buildNow(follow) {
       const logMod = log ? Date.parse(log.modifiedTime || '') : 0;
       const raw = log && logMod >= t0 - 5000 ? await driveText(log) : '';
       const info = parseRunLog(raw); const res = info.Result || '';
-      if (/^RUNNING/i.test(res)) { sawRunning = true; if (!runStart) runStart = logMod; }
+      if (/^RUNNING/i.test(res)) { sawRunning = true; if (!runStart) runStart = Date.parse(info.RunStartUtc || '') || logMod; }
       const fin = /^(OK|FAILED)/i.test(res) && logMod >= t0 - 5000 && (sawRunning || (!reqLeft && logMod > lastWithReq));
       if (reqLeft) lastWithReq = Date.now();
       const sec = Math.round((Date.now() - t0) / 1000), el1 = fmtDur(sec);
@@ -2843,6 +2857,7 @@ async function buildNow(follow) {
         const run = (Date.now() - runStart) / 1000; const pct = Math.min(99, Math.round(run / expected * 100));
         const late = run > expected * 1.15;
         rows.push(['wait', 'Building on the VPS · ' + fmtDur(run) + ' · about ' + pct + '% (estimated from the last build, ' + fmtDur(expected) + ')' + (late ? ' · taking longer than the last build' : ''), pct]);
+        const pr = progressRows(raw); if (pr.length) rows.push(...pr);
         rows.push(['wait', 'When it is done this page reloads the new data by itself. There is nothing to refresh.']);
         buildStatusSet('wait', 'Building · ' + fmtDur(run) + ' · ~' + pct + '%', rows);
       } else { rows.push(['wait', 'Starting the build · ' + el1]); buildStatusSet('wait', 'Starting · ' + el1, rows); }

@@ -69,14 +69,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$BuilderVersion = '2026-10-14'
+$BuilderVersion = '2026-10-16'
 $pc = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
 $here = $PSScriptRoot
 $runLog = if ($here) { Join-Path $here ('last_build_' + $pc + '.txt') } else { '' }
 $started = Get-Date
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
 $timing = New-Object System.Collections.Generic.List[string]
-function Add-Timing([string]$Step) { $timing.Add(('{0} {1:n0}s' -f $Step, $sw.Elapsed.TotalSeconds)); $sw.Reset(); $sw.Start() }
+function Add-Timing([string]$Step) { $timing.Add(('{0} {1:n0}s' -f $Step, $sw.Elapsed.TotalSeconds)); try { [Mt4DashV2.Watchdog]::StepDone($Step, $sw.Elapsed.TotalSeconds) } catch { }; $sw.Reset(); $sw.Start() }
 
 # every run leaves a short note next to the script, so a failing scheduled run is visible on Drive
 function Write-RunLog([string]$Result, [string[]]$More) {
@@ -88,6 +88,7 @@ function Write-RunLog([string]$Result, [string[]]$More) {
     ('Result:   ' + $Result),
     ('Project:  ' + $ProjectRoot),
     ('Builder:  ' + $BuilderVersion)) + @($More)
+  try { [Mt4DashV2.Watchdog]::StopBeat(); $lines += @(([Mt4DashV2.Watchdog]::Extra()) -split "`r?`n" | Where-Object { $_ }) } catch { }
   try { [System.IO.File]::WriteAllText($runLog, ($lines -join "`r`n") + "`r`n", (New-Object System.Text.UTF8Encoding($false))) } catch { }
 }
 trap {
@@ -173,15 +174,55 @@ using System.Text.RegularExpressions;
 namespace Mt4DashV2 {
   // ends a run that hangs (e.g. a file Google Drive cannot fetch), so the next scheduled run can start
   public static class Watchdog {
-    static System.Threading.Timer timer;
+    static System.Threading.Timer timer, beat;
+    static readonly object sync = new object();
     // what the build is doing right now; written to the run log when the watchdog ends a hung run
     public static volatile string Where = "starting";
+    static DateTime whereSince = DateTime.UtcNow;
+    static List<string> steps = new List<string>(), slow = new List<string>();
+    static string beatPath, beatHead;
     public static void Start(int minutes, string logPath, string logText) {
       timer = new System.Threading.Timer(delegate(object o) {
-        try { if (!string.IsNullOrEmpty(logPath)) File.WriteAllText(logPath, logText + "Stuck at: " + Where + "\r\n"); } catch (Exception) { }
+        try { if (!string.IsNullOrEmpty(logPath)) File.WriteAllText(logPath, logText + Progress() + "Stuck at: " + Where + "\r\n"); } catch (Exception) { }
         Environment.Exit(3);
       }, null, (long)minutes * 60000L, System.Threading.Timeout.Infinite);
     }
+    // a new piece of work starts; the one before it is remembered when it took 5 seconds or more
+    public static void Begin(string what) {
+      lock (sync) {
+        double sec = (DateTime.UtcNow - whereSince).TotalSeconds;
+        if (sec >= 5 && Where != "starting") slow.Add(Where + "  " + sec.ToString("n0") + "s");
+        Where = what; whereSince = DateTime.UtcNow;
+      }
+    }
+    public static void StepDone(string name, double sec) { lock (sync) { steps.Add(name + "  " + sec.ToString("n0") + "s"); } }
+    // the step list, the slow items and what is happening now, as lines of the run log
+    public static string Progress() {
+      lock (sync) {
+        StringBuilder sb = new StringBuilder();
+        foreach (string x in steps) sb.Append("Step:     ").Append(x).Append("\r\n");
+        foreach (string x in slow) sb.Append("Slow:     ").Append(x).Append("\r\n");
+        sb.Append("Now:      ").Append(Where).Append("  (").Append(((int)(DateTime.UtcNow - whereSince).TotalSeconds).ToString()).Append("s)\r\n");
+        return sb.ToString();
+      }
+    }
+    public static string Extra() {
+      lock (sync) {
+        StringBuilder sb = new StringBuilder();
+        foreach (string x in steps) sb.Append("Step:     ").Append(x).Append("\r\n");
+        foreach (string x in slow) sb.Append("Slow:     ").Append(x).Append("\r\n");
+        return sb.ToString();
+      }
+    }
+    // while the build runs, the run log shows every 20 seconds which step it is in and how long each took
+    public static void StartBeat(string logPath, string head) {
+      beatPath = logPath; beatHead = head;
+      beat = new System.Threading.Timer(delegate(object o) { Beat(); }, null, 5000L, 20000L);
+    }
+    static void Beat() {
+      try { if (!string.IsNullOrEmpty(beatPath)) lock (sync) { File.WriteAllText(beatPath, beatHead + Progress()); } } catch (Exception) { }
+    }
+    public static void StopBeat() { lock (sync) { if (beat != null) { beat.Dispose(); beat = null; } } }
   }
   public class Csv {
     public string[] Header;
@@ -401,7 +442,7 @@ namespace Mt4DashV2 {
     public static List<string> BuildTrades(string[] files, string outDir, int maxRows, out int total) {
       Dictionary<string, Rec> map = new Dictionary<string, Rec>();
       foreach (string f in files) {
-        Watchdog.Where = "reading statement " + f;
+        Watchdog.Begin("reading statement " + f);
         Csv c;
         bool isImport = f.EndsWith(".htm", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
         try { c = isImport ? ReadHtml(f) : Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
@@ -470,7 +511,7 @@ namespace Mt4DashV2 {
       Dictionary<string, List<string[]>> best = new Dictionary<string, List<string[]>>();
       Dictionary<string, string> bestSeen = new Dictionary<string, string>();
       foreach (string f in files) {
-        Watchdog.Where = "reading open file " + f;
+        Watchdog.Begin("reading open file " + f);
         Csv c;
         try { c = Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
         int[] ix = new int[OpenCols.Length];
@@ -502,7 +543,7 @@ namespace Mt4DashV2 {
     public static List<string> BuildEquity(string[] files, string outDir, int minutes) {
       Dictionary<string, SortedDictionary<string, Slot>> per = new Dictionary<string, SortedDictionary<string, Slot>>();
       foreach (string f in files) {
-        Watchdog.Where = "reading snapshot file " + f;
+        Watchdog.Begin("reading snapshot file " + f);
         Csv c;
         try { c = Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
         int[] ix = new int[SnapCols.Length];
@@ -561,7 +602,7 @@ namespace Mt4DashV2 {
     public static List<string> BuildBundle(string[] files, string[] labels, string outDir, string name) {
       StringBuilder sb = new StringBuilder();
       for (int i = 0; i < files.Length; i++) {
-        Watchdog.Where = "reading " + name + " source " + files[i];
+        Watchdog.Begin("reading " + name + " source " + files[i]);
         try { sb.Append("#FILE: ").Append(labels[i]).Append('\n').Append(ReadAllText(files[i]).Replace("\r", "")).Append('\n'); }
         catch (Exception e) { Log.Add("SKIP " + files[i] + " : " + e.Message); }
       }
@@ -710,7 +751,7 @@ namespace Mt4DashV2 {
       Array.Sort(order, delegate(int a, int b) { return string.CompareOrdinal(Path.GetFileName(files[a]), Path.GetFileName(files[b])); });
       foreach (int k in order) {
         string f = files[k]; string fn = Path.GetFileNameWithoutExtension(f);
-        Watchdog.Where = "reading log " + f;
+        Watchdog.Begin("reading log " + f);
         if (fn.Length != 8) continue;
         string date = fn.Substring(0, 4) + "." + fn.Substring(4, 2) + "." + fn.Substring(6, 2);
         long lines = 0;
@@ -761,6 +802,14 @@ namespace Mt4DashV2 {
   ('Project:  ' + $ProjectRoot),
   ('Builder:  ' + $BuilderVersion)) -join "`r`n") + "`r`n")
 
+# live progress: every 20 seconds the run log says which step the build is in, how long each step took and which items were slow
+[Mt4DashV2.Watchdog]::StartBeat($runLog, ((@(
+  ('MT4 Dashboard build on ' + $pc),
+  ('Started:  ' + $started.ToString('yyyy-MM-dd HH:mm:ss')),
+  ('RunStartUtc: ' + $started.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')),
+  'Result:   RUNNING - build in progress',
+  ('Project:  ' + $ProjectRoot),
+  ('Builder:  ' + $BuilderVersion)) -join "`r`n") + "`r`n"))
 [Mt4DashV2.Builder]::MaxLogBytes = [long]$MaxLogMB * 1MB
 Add-Timing 'start'
 [Mt4DashV2.Builder]::Log.Clear()
@@ -774,7 +823,7 @@ $dirs = New-Object System.Collections.Generic.Stack[string]
 foreach ($r in $roots) { $dirs.Push($r.Path) }
 while ($dirs.Count -gt 0) {
   $d = $dirs.Pop()
-  [Mt4DashV2.Watchdog]::Where = 'listing folder ' + $d
+  [Mt4DashV2.Watchdog]::Begin(('listing folder ' + $d))
   try {
     foreach ($f in [System.IO.Directory]::EnumerateFiles($d)) {
       $n = [System.IO.Path]::GetFileName($f)
@@ -832,7 +881,7 @@ Write-Host ("Found {0} statement, {1} open, {2} snapshot, {3} status, {4} sync, 
   $tradeFiles.Count, $openFiles.Count, $snapFiles.Count, $statusFiles.Count, $syncFiles.Count, $logFiles.Count)
 Add-Timing 'scan'
 
-[Mt4DashV2.Watchdog]::Where = 'building trades'
+[Mt4DashV2.Watchdog]::Begin('building trades')
 $total = 0
 $produced = New-Object System.Collections.Generic.List[string]
 $produced.AddRange([Mt4DashV2.Builder]::BuildTrades([string[]]$tradeFiles, $OutDir, $MaxRowsPerFile, [ref]$total))
@@ -870,7 +919,7 @@ $manifest = [ordered]@{
 $json = $manifest | ConvertTo-Json -Depth 4
 [void][Mt4DashV2.Builder]::WriteIfChanged((Join-Path $OutDir 'mt4dash_manifest.json'), [System.Text.UTF8Encoding]::new($false).GetBytes($json))
 
-[Mt4DashV2.Watchdog]::Where = 'writing manifest / daily snapshot zip'
+[Mt4DashV2.Watchdog]::Begin('writing manifest / daily snapshot zip')
 # one snapshot of the finished _DASHBOARD per day, so a bad build or a lost collector file can be undone
 $backupNotes = New-Object System.Collections.Generic.List[string]
 if ($BackupDays -gt 0) {
