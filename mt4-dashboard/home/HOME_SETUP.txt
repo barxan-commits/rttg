@@ -12,8 +12,8 @@ ONE-TIME SETUP
   2. Unzip this folder anywhere (for example the desktop).
 
 EVERY DAY
-  Double-click OPEN_DASHBOARD.bat. It downloads the newest dashboard version (when online), starts a small hidden
-  helper on this PC (127.0.0.1 only, nothing leaves the PC) and opens the dashboard in Edge. Nothing to click inside.
+  Double-click OPEN_DASHBOARD.bat. It starts a small hidden helper on this PC (127.0.0.1 only, nothing leaves
+  the PC, nothing is downloaded) and opens the dashboard in Edge. Nothing to click inside.
   The page re-reads the Drive folder every 15 minutes while it is open ("Refresh from Drive" = now).
 
 WHAT STILL HAPPENS ON THE VPS (not on this PC)
@@ -28,4 +28,5 @@ IF SOMETHING IS WRONG
     Check that I:\My Drive\MT4_Terminals\_DASHBOARD\mt4dash_manifest.json exists.
   - Drive letter is not I: and is found anyway; if the folder is somewhere else write its full path
     (the MT4_Terminals folder) into a file root.txt next to OPEN_DASHBOARD.bat.
-  - Update never works: the old files keep working. index.previous.html is the copy before the last update.
+  - A newer dashboard page: if a file index.html is placed in MT4_Terminals\_DASHBOARD_BUILD on Drive, this PC uses it
+    instead of the copy in this folder.

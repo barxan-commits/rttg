@@ -66,7 +66,9 @@ while ($listener.IsListening) {
     $path = $req.Url.AbsolutePath
     if (-not $hostOk) { SendText $res 403 'forbidden' }
     elseif ($path -eq '/' -or $path -eq '/index.html') {
+      # a newer page placed in MT4_Terminals\_DASHBOARD_BUILD (it arrives through Google Drive) wins over the copy in this folder
       $idx = Join-Path $here 'index.html'
+      if ($Root) { $viaDrive = Join-Path (Join-Path $Root '_DASHBOARD_BUILD') 'index.html'; if (Test-Path -LiteralPath $viaDrive) { $idx = $viaDrive } }
       $html = $utf8.GetString((Read-Shared $idx))
       $at = $html.IndexOf('<head>'); if ($at -ge 0) { $html = $html.Insert($at + 6, '<script src="/shim.js"></script>') }
       SendText $res 200 $html 'text/html; charset=utf-8'
