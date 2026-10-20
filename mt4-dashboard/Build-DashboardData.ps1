@@ -65,11 +65,13 @@ param(
   [ValidateRange(1, 4096)]
   [int]$MaxLogMB = 32,
   # build even when BUILD_PC.txt names another PC
-  [switch]$Force
+  [switch]$Force,
+  # read every file again instead of reusing what an earlier run remembers (kept in %LOCALAPPDATA%\MT4DashCache)
+  [switch]$NoCache
 )
 
 $ErrorActionPreference = 'Stop'
-$BuilderVersion = '2026-10-16'
+$BuilderVersion = '2026-10-21'
 $pc = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
 $here = $PSScriptRoot
 $runLog = if ($here) { Join-Path $here ('last_build_' + $pc + '.txt') } else { '' }
@@ -229,6 +231,46 @@ namespace Mt4DashV2 {
     public Dictionary<string, int> Index;
     public List<string[]> Rows = new List<string[]>();
     public int Get(string name) { int i; return Index.TryGetValue(name, out i) ? i : -1; }
+  }
+
+  // Remembers what was read from a file that has not changed (same path, size and write time), so only new or
+  // changed files are read again. Lives on the build PC (not in Google Drive); any problem simply means "read the file".
+  public static class Cache {
+    public static string Dir = "";
+    public static string Salt = "";
+    public static long Hits, Misses;
+    static readonly HashSet<string> used = new HashSet<string>();
+    static string PathFor(string kind, string f, string extra) {
+      if (string.IsNullOrEmpty(Dir)) return null;
+      try {
+        FileInfo fi = new FileInfo(f);
+        string key = kind + "|" + Salt + "|" + extra + "|" + f.ToLowerInvariant() + "|" + fi.Length + "|" + fi.LastWriteTimeUtc.Ticks;
+        using (System.Security.Cryptography.SHA1 sha = System.Security.Cryptography.SHA1.Create())
+          return Path.Combine(Dir, kind + "_" + BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(key))).Replace("-", "") + ".bin");
+      } catch (Exception) { return null; }
+    }
+    public static BinaryReader Open(string kind, string f, string extra, out string path) {
+      path = PathFor(kind, f, extra);
+      if (path == null || !File.Exists(path)) { Misses++; return null; }
+      try { BinaryReader r = new BinaryReader(new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 65536)); used.Add(path); Hits++; return r; }
+      catch (Exception) { Misses++; return null; }
+    }
+    // write to a temp name and rename, so a half-written cache file is never used
+    public static void Save(string path, Action<BinaryWriter> write) {
+      if (path == null) return;
+      string tmp = path + ".tmp";
+      try {
+        Directory.CreateDirectory(Dir);
+        using (BinaryWriter w = new BinaryWriter(new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 65536))) write(w);
+        if (File.Exists(path)) File.Delete(path);
+        File.Move(tmp, path); used.Add(path);
+      } catch (Exception) { try { if (File.Exists(tmp)) File.Delete(tmp); } catch (Exception) { } }
+    }
+    // cache files of files that changed or no longer exist are not needed any more
+    public static void Prune() {
+      if (string.IsNullOrEmpty(Dir) || !Directory.Exists(Dir)) return;
+      try { foreach (string f in Directory.GetFiles(Dir, "*.bin")) if (!used.Contains(f)) File.Delete(f); } catch (Exception) { }
+    }
   }
 
   public static class Builder {
@@ -443,30 +485,55 @@ namespace Mt4DashV2 {
       Dictionary<string, Rec> map = new Dictionary<string, Rec>();
       foreach (string f in files) {
         Watchdog.Begin("reading statement " + f);
-        Csv c;
-        bool isImport = f.EndsWith(".htm", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
-        try { c = isImport ? ReadHtml(f) : Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
-        int[] ix = new int[TradeCols.Length];
-        for (int i = 0; i < TradeCols.Length; i++) ix[i] = c.Get(TradeCols[i]);
-        int iType = c.Get("type"), iAcc = c.Get("account"), iTicket = c.Get("ticket"), iClose = c.Get("close_time");
-        int iVer = c.Get("collector_version"), iRec = c.Get("recorded_at");
-        string tag = isImport ? "import" : TagOf(Path.GetFileName(f));
-        int used = 0;
-        foreach (string[] r in c.Rows) {
-          string type = Cell(r, iType).ToUpperInvariant();
-          if (type != "BUY" && type != "SELL") continue;
-          string acc = Cell(r, iAcc), ticket = Cell(r, iTicket);
-          if (acc.Length == 0 || ticket.Length == 0 || Cell(r, iClose).Length < 10) continue;
-          string[] o = new string[TradeCols.Length + 1];
-          for (int i = 0; i < TradeCols.Length; i++) o[i] = Cell(r, ix[i]);
-          o[TradeCols.Length] = tag;
-          Rec rec = new Rec(); rec.Out = o; rec.Version = Num(Cell(r, iVer)); rec.Recorded = Cell(r, iRec);
-          string key = acc + "|" + ticket; Rec prev;
+        List<Rec> recs = new List<Rec>(); int rowCount = 0;
+        string cpath; BinaryReader cr = Cache.Open("trades", f, TradeCols.Length.ToString(), out cpath);
+        bool cached = false;
+        if (cr != null) {
+          try {
+            using (cr) {
+              rowCount = cr.ReadInt32(); int n = cr.ReadInt32();
+              for (int k = 0; k < n; k++) {
+                Rec rec = new Rec(); rec.Out = new string[TradeCols.Length + 1];
+                for (int i = 0; i < rec.Out.Length; i++) rec.Out[i] = cr.ReadString();
+                rec.Version = cr.ReadDouble(); rec.Recorded = cr.ReadString(); recs.Add(rec);
+              }
+            }
+            cached = true;
+          } catch (Exception) { recs.Clear(); }
+        }
+        if (!cached) {
+          Csv c;
+          bool isImport = f.EndsWith(".htm", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
+          try { c = isImport ? ReadHtml(f) : Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
+          int[] ix = new int[TradeCols.Length];
+          for (int i = 0; i < TradeCols.Length; i++) ix[i] = c.Get(TradeCols[i]);
+          int iType = c.Get("type"), iAcc = c.Get("account"), iTicket = c.Get("ticket"), iClose = c.Get("close_time");
+          int iVer = c.Get("collector_version"), iRec = c.Get("recorded_at");
+          string tag = isImport ? "import" : TagOf(Path.GetFileName(f));
+          rowCount = c.Rows.Count;
+          foreach (string[] r in c.Rows) {
+            string type = Cell(r, iType).ToUpperInvariant();
+            if (type != "BUY" && type != "SELL") continue;
+            string acc = Cell(r, iAcc), ticket = Cell(r, iTicket);
+            if (acc.Length == 0 || ticket.Length == 0 || Cell(r, iClose).Length < 10) continue;
+            string[] o = new string[TradeCols.Length + 1];
+            for (int i = 0; i < TradeCols.Length; i++) o[i] = Cell(r, ix[i]);
+            o[TradeCols.Length] = tag;
+            Rec rec = new Rec(); rec.Out = o; rec.Version = Num(Cell(r, iVer)); rec.Recorded = Cell(r, iRec);
+            recs.Add(rec);
+          }
+          List<Rec> toSave = recs; int rc = rowCount;
+          Cache.Save(cpath, delegate(BinaryWriter w) {
+            w.Write(rc); w.Write(toSave.Count);
+            foreach (Rec rec in toSave) { foreach (string x in rec.Out) w.Write(x ?? ""); w.Write(rec.Version); w.Write(rec.Recorded ?? ""); }
+          });
+        }
+        foreach (Rec rec in recs) {
+          string key = rec.Out[0] + "|" + rec.Out[1]; Rec prev;
           if (!map.TryGetValue(key, out prev) || rec.Version > prev.Version ||
               (rec.Version == prev.Version && string.CompareOrdinal(rec.Recorded, prev.Recorded) > 0)) map[key] = rec;
-          used++;
         }
-        Log.Add("trades " + Path.GetFileName(f) + " rows=" + c.Rows.Count + " used=" + used);
+        Log.Add("trades " + Path.GetFileName(f) + " rows=" + rowCount + " used=" + recs.Count + (cached ? " (reused)" : ""));
       }
       // imported history has no machine / terminal / campaign: take them from the account's collector rows
       Dictionary<string, string[]> latest = new Dictionary<string, string[]>();
@@ -540,39 +607,88 @@ namespace Mt4DashV2 {
     // ---------------- equity ----------------
     class Slot { public string[] Last; public double MinEq = double.MaxValue, MaxEq = double.MinValue, MinFloat = double.MaxValue; public string MinEqTime = ""; }
 
+    static void WriteSlots(BinaryWriter w, Dictionary<string, SortedDictionary<string, Slot>> part, int rows) {
+      w.Write(rows); w.Write(part.Count);
+      foreach (KeyValuePair<string, SortedDictionary<string, Slot>> kv in part) {
+        w.Write(kv.Key); w.Write(kv.Value.Count);
+        foreach (KeyValuePair<string, Slot> sk in kv.Value) {
+          w.Write(sk.Key); Slot s = sk.Value;
+          w.Write(s.Last != null); if (s.Last != null) foreach (string x in s.Last) w.Write(x ?? "");
+          w.Write(s.MinEq); w.Write(s.MaxEq); w.Write(s.MinFloat); w.Write(s.MinEqTime ?? "");
+        }
+      }
+    }
+    static Dictionary<string, SortedDictionary<string, Slot>> ReadSlots(BinaryReader r, out int rows) {
+      Dictionary<string, SortedDictionary<string, Slot>> part = new Dictionary<string, SortedDictionary<string, Slot>>();
+      rows = r.ReadInt32(); int na = r.ReadInt32();
+      for (int a = 0; a < na; a++) {
+        string acc = r.ReadString(); int nb = r.ReadInt32();
+        SortedDictionary<string, Slot> d = new SortedDictionary<string, Slot>(StringComparer.Ordinal); part[acc] = d;
+        for (int b = 0; b < nb; b++) {
+          string bucket = r.ReadString(); Slot s = new Slot();
+          if (r.ReadBoolean()) { s.Last = new string[SnapCols.Length]; for (int i = 0; i < s.Last.Length; i++) s.Last[i] = r.ReadString(); }
+          s.MinEq = r.ReadDouble(); s.MaxEq = r.ReadDouble(); s.MinFloat = r.ReadDouble(); s.MinEqTime = r.ReadString();
+          d[bucket] = s;
+        }
+      }
+      return part;
+    }
+
     public static List<string> BuildEquity(string[] files, string outDir, int minutes) {
       Dictionary<string, SortedDictionary<string, Slot>> per = new Dictionary<string, SortedDictionary<string, Slot>>();
       foreach (string f in files) {
         Watchdog.Begin("reading snapshot file " + f);
-        Csv c;
-        try { c = Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
-        int[] ix = new int[SnapCols.Length];
-        for (int i = 0; i < SnapCols.Length; i++) ix[i] = c.Get(SnapCols[i]);
-        int iEq = ix[7], iFl = ix[8];
-        foreach (string[] r in c.Rows) {
-          string acc = Cell(r, ix[0]), t = Cell(r, ix[5]);
-          if (acc.Length == 0 || t.Length < 16) continue;
-          int hh, mm;
-          if (!int.TryParse(t.Substring(11, 2), out hh) || !int.TryParse(t.Substring(14, 2), out mm)) continue;
-          int slotNo = (hh * 60 + mm) / minutes;
-          string bucket = t.Substring(0, 10) + "#" + slotNo.ToString("0000");
-          SortedDictionary<string, Slot> d;
-          if (!per.TryGetValue(acc, out d)) { d = new SortedDictionary<string, Slot>(StringComparer.Ordinal); per[acc] = d; }
-          Slot s;
-          if (!d.TryGetValue(bucket, out s)) { s = new Slot(); d[bucket] = s; }
-          double eq, fl;
-          if (TryNum(Cell(r, iEq), out eq)) {
-            if (eq < s.MinEq) { s.MinEq = eq; s.MinEqTime = t; }
-            if (eq > s.MaxEq) s.MaxEq = eq;
+        Dictionary<string, SortedDictionary<string, Slot>> part = null; int rowCount = 0; bool cached = false;
+        string cpath; BinaryReader cr = Cache.Open("equity", f, minutes.ToString() + "|" + SnapCols.Length, out cpath);
+        if (cr != null) { try { using (cr) part = ReadSlots(cr, out rowCount); cached = true; } catch (Exception) { part = null; } }
+        if (part == null) {
+          Csv c;
+          try { c = Read(f); } catch (Exception e) { Log.Add("SKIP " + f + " : " + e.Message); continue; }
+          part = new Dictionary<string, SortedDictionary<string, Slot>>();
+          rowCount = c.Rows.Count;
+          int[] ix = new int[SnapCols.Length];
+          for (int i = 0; i < SnapCols.Length; i++) ix[i] = c.Get(SnapCols[i]);
+          int iEq = ix[7], iFl = ix[8];
+          foreach (string[] r in c.Rows) {
+            string acc = Cell(r, ix[0]), t = Cell(r, ix[5]);
+            if (acc.Length == 0 || t.Length < 16) continue;
+            int hh, mm;
+            if (!int.TryParse(t.Substring(11, 2), out hh) || !int.TryParse(t.Substring(14, 2), out mm)) continue;
+            int slotNo = (hh * 60 + mm) / minutes;
+            string bucket = t.Substring(0, 10) + "#" + slotNo.ToString("0000");
+            SortedDictionary<string, Slot> d;
+            if (!part.TryGetValue(acc, out d)) { d = new SortedDictionary<string, Slot>(StringComparer.Ordinal); part[acc] = d; }
+            Slot s;
+            if (!d.TryGetValue(bucket, out s)) { s = new Slot(); d[bucket] = s; }
+            double eq, fl;
+            if (TryNum(Cell(r, iEq), out eq)) {
+              if (eq < s.MinEq) { s.MinEq = eq; s.MinEqTime = t; }
+              if (eq > s.MaxEq) s.MaxEq = eq;
+            }
+            if (TryNum(Cell(r, iFl), out fl) && fl < s.MinFloat) s.MinFloat = fl;
+            if (s.Last == null || string.CompareOrdinal(s.Last[5], t) < 0) {
+              string[] o = new string[SnapCols.Length];
+              for (int i = 0; i < SnapCols.Length; i++) o[i] = Cell(r, ix[i]);
+              s.Last = o;
+            }
           }
-          if (TryNum(Cell(r, iFl), out fl) && fl < s.MinFloat) s.MinFloat = fl;
-          if (s.Last == null || string.CompareOrdinal(s.Last[5], t) < 0) {
-            string[] o = new string[SnapCols.Length];
-            for (int i = 0; i < SnapCols.Length; i++) o[i] = Cell(r, ix[i]);
-            s.Last = o;
+          Dictionary<string, SortedDictionary<string, Slot>> toSave = part; int rc = rowCount;
+          Cache.Save(cpath, delegate(BinaryWriter w) { WriteSlots(w, toSave, rc); });
+        }
+        // combine with what the other files said about the same account and time slot (files in order, same rules as one pass)
+        foreach (KeyValuePair<string, SortedDictionary<string, Slot>> pk in part) {
+          SortedDictionary<string, Slot> d;
+          if (!per.TryGetValue(pk.Key, out d)) { per[pk.Key] = pk.Value; continue; }
+          foreach (KeyValuePair<string, Slot> sk in pk.Value) {
+            Slot dst, src = sk.Value;
+            if (!d.TryGetValue(sk.Key, out dst)) { d[sk.Key] = src; continue; }
+            if (src.MinEq < dst.MinEq) { dst.MinEq = src.MinEq; dst.MinEqTime = src.MinEqTime; }
+            if (src.MaxEq > dst.MaxEq) dst.MaxEq = src.MaxEq;
+            if (src.MinFloat < dst.MinFloat) dst.MinFloat = src.MinFloat;
+            if (src.Last != null && (dst.Last == null || string.CompareOrdinal(dst.Last[5], src.Last[5]) < 0)) dst.Last = src.Last;
           }
         }
-        Log.Add("snapshots " + Path.GetFileName(f) + " rows=" + c.Rows.Count);
+        Log.Add("snapshots " + Path.GetFileName(f) + " rows=" + rowCount + (cached ? " (reused)" : ""));
       }
       string[] cols = new string[SnapCols.Length + 4];
       Array.Copy(SnapCols, cols, SnapCols.Length);
@@ -795,6 +911,10 @@ namespace Mt4DashV2 {
 '@
 }
 
+# remember what was read from files that have not changed; the memory lives on this PC, not in Google Drive
+[Mt4DashV2.Cache]::Salt = $BuilderVersion
+[Mt4DashV2.Cache]::Dir = $(if ($NoCache) { '' } else { Join-Path $(if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { [System.IO.Path]::GetTempPath() }) 'MT4DashCache' })
+
 [Mt4DashV2.Watchdog]::Start(30, $runLog, (@(
   ('MT4 Dashboard build on ' + $pc),
   ('Started:  ' + $started.ToString('yyyy-MM-dd HH:mm:ss')),
@@ -898,6 +1018,7 @@ Add-Timing 'status+sync'
 $produced.AddRange([Mt4DashV2.Builder]::BuildHealth([string[]]@($logFiles | ForEach-Object { $_.Path }),
   [string[]]@($logFiles | ForEach-Object { $_.Terminal }), [string[]]@($logFiles | ForEach-Object { $_.Kind }), $OutDir))
 Add-Timing 'logs'
+[Mt4DashV2.Cache]::Prune()
 
 # remove outputs that are no longer produced (e.g. a month split differently)
 Get-ChildItem -LiteralPath $OutDir -File | Where-Object {
@@ -944,6 +1065,6 @@ $result = '{0} unique closed trades. {1} output files, {2} changed. {3:n1}s' -f 
 Write-Host $result
 foreach ($s in $skipped) { if ($s -notlike 'Snapshot written*') { Write-Warning $s } }
 Add-Timing 'write'
-Write-RunLog ('OK - ' + $result) (@('Timing:   ' + ($timing -join ', ')) + @($skipped))
+Write-RunLog ('OK - ' + $result) (@('Timing:   ' + ($timing -join ', ')) + @('Cache:    ' + [Mt4DashV2.Cache]::Hits + ' files reused, ' + [Mt4DashV2.Cache]::Misses + ' read again') + @($skipped))
 $mutex.ReleaseMutex()
 if ($VerbosePreference -eq 'Continue') { [Mt4DashV2.Builder]::Log | ForEach-Object { Write-Verbose $_ } }
