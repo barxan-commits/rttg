@@ -2245,10 +2245,13 @@ function buildHealthRows() {
     }
     rows.push(r);
   }
-  // a sync status written by a PC that has stopped syncing (its last run is over 45 minutes behind the newest run of any PC, e.g. a home PC that is switched off) is old news, not a problem
+  // a PC that has stopped syncing (e.g. a home PC that is switched off) leaves its last sync status behind. Judged per PC (profile):
+  // when its newest run is over 25 minutes behind the newest run of any PC, its terminals are not a problem, just not running.
   const runOf = (r) => { const sy = DB.sync.terminals.get(r.terminal); return sy ? parseMT(sy.run) : NaN; };
-  const newestRun = Math.max(-Infinity, ...rows.map(runOf).filter(Number.isFinite));
-  for (const r of rows) { const run = runOf(r); r.syncOld = Number.isFinite(run) && Number.isFinite(newestRun) && newestRun - run > 45 * 60000; r.syncBad = SYNC_BAD(r.sync) && !r.syncOld; }
+  const profOf = (r) => { const sy = DB.sync.terminals.get(r.terminal); return sy && sy.profile ? sy.profile : ''; };
+  const profRun = new Map(); let newestRun = -Infinity;
+  for (const r of rows) { const run = runOf(r); if (!Number.isFinite(run)) continue; const k = profOf(r) || r.terminal; if (!(run <= profRun.get(k))) profRun.set(k, run); if (run > newestRun) newestRun = run; }
+  for (const r of rows) { const run = profRun.get(profOf(r) || r.terminal); r.syncOld = Number.isFinite(run) && Number.isFinite(newestRun) && newestRun - run > 25 * 60000; r.syncBad = SYNC_BAD(r.sync) && !r.syncOld; }
   // staleness: compare like with like (broker server time for snapshots, log time for logs)
   const newestSnap = Math.max(-Infinity, ...rows.map((r) => r.lastSnap).filter(Number.isFinite));
   const newestLog = Math.max(-Infinity, ...rows.map((r) => r.lastLog).filter(Number.isFinite));
