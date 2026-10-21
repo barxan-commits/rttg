@@ -176,6 +176,8 @@ th, td { padding: 5px 9px; text-align: left; white-space: nowrap; border-bottom:
 th { position: sticky; top: 0; background: var(--surface-2); color: var(--text-secondary); font-weight: 600; cursor: pointer; user-select: none; z-index: 1; }
 th.num, td.num { text-align: right; font-variant-numeric: tabular-nums; }
 th .arrow { color: var(--text-primary); }
+th .rz { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; user-select: none; touch-action: none; }
+th .rz:hover { background: rgba(59,130,246,.45); }
 tbody tr:hover { background: var(--hover); }
 tbody tr.click { cursor: pointer; }
 tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bottom: 0; }
@@ -1593,6 +1595,17 @@ function sortRows(rows, tabId, defKey, defDir) {
   });
   return st;
 }
+// column widths the user dragged, per table and column, kept in this browser
+const COLW = (() => { try { return JSON.parse(localStorage.getItem('mt4dash-colw') || '{}') || {}; } catch (e) { return {}; } })();
+function saveColW() { try { localStorage.setItem('mt4dash-colw', JSON.stringify(COLW)); } catch (e) { /* storage unavailable */ } }
+function setColW(tbl, idx, px) {
+  const v = px ? px + 'px' : '';
+  for (const r of tbl.rows) {
+    const c = r.children[idx]; if (!c) continue;
+    c.style.width = v; c.style.minWidth = v; c.style.maxWidth = v;
+    c.style.overflow = px ? 'hidden' : ''; c.style.textOverflow = px ? 'ellipsis' : '';
+  }
+}
 // cols: [{key, label, num, f, cls}], rows: objects. opts: {tabId, onRow, pageSize, footer}
 function table(host, cols, rows, opts) {
   const st = sortRows(rows, opts.tabId, opts.defKey, opts.defDir || 'desc');
@@ -1605,7 +1618,8 @@ function table(host, cols, rows, opts) {
   host.appendChild(toolbar);
   const wrap = el('div', { class: 'tablewrap' }); const tbl = el('table');
   const thead = el('thead'); const hr = el('tr');
-  for (const c of cols) {
+  for (let ci = 0; ci < cols.length; ci++) {
+    const c = cols[ci];
     const th = el('th', { class: c.num ? 'num' : '', title: c.title || '' }, c.label);
     if (st.key === c.key) th.appendChild(el('span', { class: 'arrow' }, st.dir === 'asc' ? ' ▲' : ' ▼'));
     th.addEventListener('click', () => {
@@ -1613,6 +1627,18 @@ function table(host, cols, rows, opts) {
       state.sort[opts.tabId] = { key: c.key, dir: cur.key === c.key && cur.dir === 'desc' ? 'asc' : 'desc' };
       state.page[opts.tabId] = 0; renderTab();
     });
+    // drag the right edge of a header to change the column width; double-click resets it; widths are remembered in this browser
+    const rz = el('span', { class: 'rz', title: 'Drag to resize · double-click to reset' });
+    rz.addEventListener('click', (e) => e.stopPropagation());
+    rz.addEventListener('dblclick', (e) => { e.stopPropagation(); setColW(tbl, ci, 0); if (COLW[opts.tabId]) { delete COLW[opts.tabId][c.key]; saveColW(); } });
+    rz.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const x0 = e.clientX, w0 = th.getBoundingClientRect().width; rz.setPointerCapture(e.pointerId);
+      const mv = (ev) => { const w = Math.max(40, Math.round(w0 + ev.clientX - x0)); setColW(tbl, ci, w); (COLW[opts.tabId] = COLW[opts.tabId] || {})[c.key] = w; };
+      const up = () => { rz.removeEventListener('pointermove', mv); rz.removeEventListener('pointerup', up); saveColW(); };
+      rz.addEventListener('pointermove', mv); rz.addEventListener('pointerup', up);
+    });
+    th.appendChild(rz);
     hr.appendChild(th);
   }
   thead.appendChild(hr); tbl.appendChild(thead);
@@ -1637,6 +1663,7 @@ function table(host, cols, rows, opts) {
     tf.appendChild(tr); tbl.appendChild(tf);
   }
   wrap.appendChild(tbl); host.appendChild(wrap);
+  cols.forEach((c, i) => { const w = (COLW[opts.tabId] || {})[c.key]; if (w) setColW(tbl, i, w); });
   if (pages > 1) {
     const pg = el('div', { class: 'pager' });
     const prev = el('button', { class: 'btn small', type: 'button' }, '‹ Prev'); prev.disabled = page === 0;
