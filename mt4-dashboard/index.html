@@ -2232,7 +2232,7 @@ function buildHealthRows() {
     const sn = DB.snaps.get(acc) || [];
     const r = { key: term, terminal: term, account: acc, machine: a.machine || (sync && sync.profile) || '', sync: sync ? sync.status : '', syncDetail: sync ? sync.detail : '',
       lastSnap: sn.length ? sn[sn.length - 1].t : NaN, lastTrade: lastClose.has(acc) ? lastClose.get(acc) : NaN, statusUpdated: st.updatedMs, version: st.version || '',
-      connected: st['connected'] || '', critical: 0, error: 0, warning: 0, conn: 0, logins: 0, pingMax: NaN, pingLast: NaN, stalls: 0, lastLog: NaN };
+      connected: st['connected'] || '', critical: 0, error: 0, warning: 0, conn: 0, logins: 0, pingMax: NaN, pingLast: NaN, stalls: 0, lastLog: NaN, lastErr: NaN };
     let pingT = -Infinity;
     for (const h of DB.health) {
       if (h.terminal !== term) continue;
@@ -2241,6 +2241,7 @@ function buildHealthRows() {
       if (h.category === 'Login') r.logins += h.count;
       if (h.category === 'Ping (ms)') { if (!(h.max <= r.pingMax)) r.pingMax = h.max; if (h.last > pingT) { pingT = h.last; const m = /([\d.]+) ms/.exec(h.sample); r.pingLast = m ? +m[1] : NaN; } }
       if (h.category === 'Collector timer stall') r.stalls += h.count;
+      if ((h.severity === 'critical' || h.severity === 'error') && Number.isFinite(h.last) && !(h.last <= r.lastErr)) r.lastErr = h.last;
       if (Number.isFinite(h.last) && !(h.last <= r.lastLog)) r.lastLog = h.last;
     }
     rows.push(r);
@@ -2324,7 +2325,7 @@ function renderHealth(host) {
     { key: 'lastSnap', label: 'Last snapshot', f: fmtTime }, { key: 'lastTrade', label: 'Last close', f: fmtTime },
     { key: 'critical', label: 'Critical', num: true }, { key: 'error', label: 'Errors', num: true }, { key: 'warning', label: 'Warnings', num: true },
     { key: 'conn', label: 'Conn. failures', num: true }, { key: 'logins', label: 'Logins', num: true },
-    { key: 'pingLast', label: 'Ping (last)', num: true, f: (v) => (Number.isFinite(v) ? nf0.format(v) + ' ms' : '–') }, { key: 'pingMax', label: 'Ping (max)', num: true, f: (v) => (Number.isFinite(v) ? nf0.format(v) + ' ms' : '–') },
+    { key: 'pingLast', label: 'Ping (last)', num: true, f: (v) => (Number.isFinite(v) ? nf0.format(v) + ' ms' : '–') }, { key: 'lastErr', label: 'Last error', f: fmtTime },
     { key: 'stalls', label: 'Timer stalls', num: true }, { key: 'version', label: 'Collector' }, { key: 'connected', label: 'Connected' },
     { key: 'sync', label: 'Sync', render: (td, v, r) => { td.textContent = v || '–'; if (r.syncDetail) td.title = r.syncDetail; } },
     { key: 'todo', label: 'What to do' },
