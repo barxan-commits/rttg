@@ -240,7 +240,7 @@ a.lnk:hover { filter: brightness(1.2); }
 .pbar i { display: block; height: 100%; background: linear-gradient(90deg, #3b82f6, #22c55e); border-radius: 4px; transition: width .6s; }
 /* ---- colour layer: accents on top of the base tokens (works in light and dark) ---- */
 :root { --c-blue: #3b82f6; --c-teal: #14b8a6; --c-violet: #8b5cf6; --c-amber: #f59e0b; --c-rose: #f43f5e; --c-green: #22c55e; --c-cyan: #06b6d4; --c-pink: #ec4899; }
-header.top { background: linear-gradient(90deg, rgba(59,130,246,.16), rgba(20,184,166,.10) 55%, rgba(139,92,246,.10)); border-bottom: 1px solid rgba(59,130,246,.35); }
+header.top { background: linear-gradient(90deg, rgba(59,130,246,.16), rgba(20,184,166,.10) 55%, rgba(139,92,246,.10)), var(--surface-1); border-bottom: 1px solid rgba(59,130,246,.35); }
 h1 { background: linear-gradient(90deg, var(--c-blue), var(--c-teal)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; font-weight: 700; letter-spacing: .2px; }
 .btn { border-radius: 8px; transition: background .15s, border-color .15s, box-shadow .15s; }
 .btn:hover { border-color: var(--c-blue); box-shadow: 0 0 0 2px rgba(59,130,246,.18); }
@@ -278,6 +278,20 @@ tbody tr.click:hover td { background: rgba(20,184,166,.13); }
 .bpop li.wait { color: #60a5fa; background: rgba(59,130,246,.12); }
 .bpop li.bad { color: #fb7185; background: rgba(244,63,94,.13); }
 .bpop pre { font-family: Consolas, "Cascadia Mono", monospace; color: var(--c-green); background: rgba(34,197,94,.07); border-radius: 7px; padding: 8px 10px; }
+/* ---- phone: a compact top bar that stays at the top (summary on one line, tap it to read all; buttons scroll sideways) ---- */
+header.top { position: -webkit-sticky; position: sticky; top: 0; z-index: 50; }
+@media (max-width: 700px) {
+  header.top { padding: 6px 10px; gap: 4px; }
+  .brand { width: 100%; flex-wrap: nowrap; align-items: center; gap: 8px; min-width: 0; }
+  h1 { font-size: 15px; flex: 0 0 auto; }
+  #summary { flex: 1 1 auto; min-width: 0; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+  #summary.open { white-space: normal; max-height: 38vh; overflow: auto; }
+  .actions { width: 100%; flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding-bottom: 2px; scrollbar-width: none; }
+  .actions > * { flex: 0 0 auto; }
+  .actions .btn { padding: 4px 10px; font-size: 12px; }
+  .bstat { font-size: 12px; padding: 2px 8px; }
+  .bpop { position: fixed; left: 8px; right: 8px; width: auto; max-height: 60vh; overflow: auto; }
+}
 </style>
 </head>
 <body>
@@ -2816,8 +2830,14 @@ function buildStatusSet(level, chip, rows, raw) {
   }
   if (raw) pop.appendChild(el('pre', null, raw.trim()));
   pop.hidden = !wasOpen || !pop.childNodes.length;
+  placePop();
 }
-$('#buildStatus').addEventListener('click', (e) => { e.stopPropagation(); const pop = $('#buildPop'); if (pop.childNodes.length) pop.hidden = !pop.hidden; });
+// on a phone the build popover is fixed to the screen, just under the top bar
+function placePop() {
+  const pop = $('#buildPop'), h = document.querySelector('header.top'); if (!pop || !h) return;
+  pop.style.top = matchMedia('(max-width: 700px)').matches ? Math.round(h.getBoundingClientRect().bottom + 4) + 'px' : '';
+}
+$('#buildStatus').addEventListener('click', (e) => { e.stopPropagation(); const pop = $('#buildPop'); if (pop.childNodes.length) pop.hidden = !pop.hidden; placePop(); });
 document.addEventListener('click', (e) => { const pop = $('#buildPop'); if (pop && !pop.hidden && !e.target.closest('#buildPop')) pop.hidden = true; });
 // an on / off switch drawn as a button (easier to hit than a tick box)
 function toggleBtn(text, on, change, tip) {
@@ -3109,6 +3129,7 @@ function dateInput() {
 }
 $('#fFrom').addEventListener('change', dateInput); $('#fTo').addEventListener('change', dateInput);
 $('#resetBtn').addEventListener('click', () => resetFilters(true));
+$('#summary').addEventListener('click', () => $('#summary').classList.toggle('open'));
 $('#backBtn').addEventListener('click', goBack);
 $('#themeBtn').addEventListener('click', () => {
   const root = document.documentElement; const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
