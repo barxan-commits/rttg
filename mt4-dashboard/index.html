@@ -1902,7 +1902,7 @@ function renderFaderAnalysis(host) {
   }
   host.appendChild(bar);
   const help = {
-    list: 'Each row is ONE fader copying ONE master strategy. Read it left to right: how many trades the fader made, what the fader made, what the master made on the same trades, and what you get if both run together. The Result column says only whether the fader gained or lost. Click a row for the full page of that fader.',
+    list: 'Each row is ONE fader copying ONE master strategy. Read it left to right: how many trades the fader made, what the fader made, what the master made on the same trades, and what you get if both run together. The Result column says it in words. Click a row for the full page of that fader.',
     matrix: 'Grid: rows are masters, columns are faders; a cell shows the fader $ and under it copies / master trades · Σ (fader + master). Most cells are empty because a fader only copies the masters of its own account. The Pairs list is easier to read.',
     fader: 'One row per fader: first copies, extra copies, and what its masters did. Click a row for its pairs and masters.',
     master: 'One row per master strategy with every fader that copied it added together.'
@@ -1925,11 +1925,11 @@ function faPairs(host, A) {
     const fader = faLabel(x), master = m.magic + ' ' + m.label, where = (x.terminal ? x.terminal + ' · ' : '') + x.account;
     if (q && !(fader + ' ' + master + ' ' + where).toLowerCase().includes(q)) continue;
     const sum = p.net + p.mnet;
-    const result = p.net > 0 ? 'Fader gains' : p.net < 0 ? 'Fader loses' : 'Fader flat';   // only what the fader made
+    const result = p.net > 0 && p.mnet < 0 ? (sum > 0 ? 'Works: fader gains more than the master loses' : 'Fader gains, master loses more') : p.net < 0 && p.mnet > 0 ? 'Fails: master gains, fader loses' : p.net > 0 ? 'Both gain' : 'Both lose';
     rows.push({ fk: p.fk, master, mmagic: m.magic, fader, where, account: x.account, magic: x.magic, n: p.n, xn: xp.xn || '', mn: m.n, cov: m.n ? p.n / m.n : NaN, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.mnet, sum, result });
   }
   if (!rows.length) { host.appendChild(el('p', { class: 'muted' }, 'No pairs with at least ' + FA.min + ' first copies' + (q ? ' matching "' + FA.q + '"' : '') + '. Lower "Min copies" or widen the date range.')); return; }
-  const resCls = (r) => (/^Fader gains/.test(r) ? 'pos' : /^Fader loses/.test(r) ? 'neg' : '');
+  const resCls = (r) => (/^Works/.test(r) ? 'pos' : /^Fails/.test(r) ? 'neg' : '');
   table(host, [
     { key: 'master', label: 'Master (strategy that is copied)' }, { key: 'fader', label: 'Fader (the copier)' }, { key: 'where', label: 'Terminal · account' },
     { key: 'net', label: 'Fader made', num: true, f: money, cls: signCls, title: 'Result of the first copies' },
