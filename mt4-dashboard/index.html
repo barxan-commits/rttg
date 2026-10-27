@@ -2946,14 +2946,15 @@ async function showLastBuild() {
     const text = await driveText(log); const info = parseRunLog(text); const res = info.Result || '';
     const when = localStamp(Date.parse(log.modifiedTime || ''));
     if (/^OK/i.test(res)) buildStatusSet('ok', 'Build OK · ' + when, logRows(text, true));
-    else if (/^RUNNING/i.test(res) && Date.now() - Date.parse(log.modifiedTime || '') < 40 * 60000) { buildStatusSet('wait', 'Build running · since ' + when, logRows(text, false)); if (!BUILD.busy) buildNow(true); }
-    else if (/^(FAILED|RUNNING)/i.test(res)) buildStatusSet('bad', 'Build failed · ' + when, logRows(text, false));
+    else if (/^RUNNING/i.test(res) && Date.now() - Date.parse(log.modifiedTime || '') < 10 * 60000) { buildStatusSet('wait', 'Build running · since ' + when, logRows(text, false)); if (!BUILD.busy) buildNow(true); }
+    else if (/^RUNNING/i.test(res)) buildStatusSet('bad', 'Build did not finish · ' + when, [['bad', 'A build was started at ' + when + ' but it never reported progress or a result (the build on the VPS stopped or never started). Press Build now to start a new one.']].concat(logRows(text, false)));
+    else if (/^FAILED/i.test(res)) buildStatusSet('bad', 'Build failed · ' + when, logRows(text, false));
   } catch (e) { /* the status chip is optional */ }
 }
 // follow = true: a build is already running (started earlier, or by someone else): only watch it, no new request
 async function buildNow(follow) {
   if (!MCP) return;
-  const my = ++BUILD.run; let t0 = Date.now(); const btn = $('#buildBtn'); btn.disabled = true;
+  const my = ++BUILD.run; let t0 = Date.now(); const btn = $('#buildBtn'); btn.disabled = !follow;   // following someone else's build must never lock the button
   BUILD.busy = true;
   try {
     buildStatusSet('wait', 'Looking for the build folder…', [['wait', 'Looking for the build folder in Google Drive']]);
@@ -2993,6 +2994,10 @@ async function buildNow(follow) {
           reloaded = true; await loadFromDrive(true);
           buildStatusSet('ok', 'Build OK · 100% · ' + when, rows.concat([['ok', 'The dashboard reloaded the new data by itself: no need to press Refresh']], logRows(raw, true)));
         }
+        done = true; break;
+      }
+      if (!reqLeft && /^RUNNING/i.test(res) && logMod && Date.now() - logMod > 10 * 60000) {
+        buildStatusSet('bad', 'Build did not finish', rows.concat([['bad', 'No progress for over 10 minutes: the build on the VPS stopped or never started. Press Build now to try again.']], logRows(raw, false)));
         done = true; break;
       }
       if (reqLeft && !watcherOk) {
