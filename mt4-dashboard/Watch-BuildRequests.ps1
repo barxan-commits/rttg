@@ -40,9 +40,22 @@ while ($true) {
         $started = Get-Date
         $lines = @(('MT4 Dashboard build on ' + $pc), ('Started:  ' + $started.ToString('yyyy-MM-dd HH:mm:ss')), 'Result:   RUNNING - started by the dashboard Build now button')
         [System.IO.File]::WriteAllText($runLog, ($lines -join "`r`n") + "`r`n", $utf8)
-        $a = @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $buildScript, '-Force')
-        if ($IsLinux -or $IsMacOS) { Start-Process -FilePath $ps -ArgumentList $a -Wait | Out-Null }
-        else { Start-Process -FilePath $ps -ArgumentList $a -WindowStyle Hidden -Wait | Out-Null }
+        # Windows PowerShell 5.1 does not quote the items of an -ArgumentList array: "I:\My Drive\..." was split at the space,
+        # the builder died at once and this note stayed on RUNNING for ever. One string with the path in quotes avoids that.
+        $argLine = '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $buildScript + '" -Force'
+        $code = $null
+        try {
+          if ($IsLinux -or $IsMacOS) { $pr = Start-Process -FilePath $ps -ArgumentList $argLine -Wait -PassThru }
+          else { $pr = Start-Process -FilePath $ps -ArgumentList $argLine -WindowStyle Hidden -Wait -PassThru }
+          $code = $pr.ExitCode
+        } catch { $code = 'could not start: ' + $_.Exception.Message }
+        # the builder rewrites this note itself; if it is still the watcher's note, the builder ended without a word
+        $now = @(Get-Content -LiteralPath $runLog -TotalCount 3 -ErrorAction SilentlyContinue)
+        if (($now -join ' ') -match 'RUNNING - started by the dashboard Build now button') {
+          $lines = @(('MT4 Dashboard build on ' + $pc), ('Started:  ' + $started.ToString('yyyy-MM-dd HH:mm:ss')), ('Finished: ' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')),
+            ('Result:   FAILED - the build process ended without writing a result (exit code ' + $code + '). Another build may have been running; press Build now again.'))
+          [System.IO.File]::WriteAllText($runLog, ($lines -join "`r`n") + "`r`n", $utf8)
+        }
       }
     }
   } catch { }
