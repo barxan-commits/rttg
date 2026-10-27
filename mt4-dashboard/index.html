@@ -233,6 +233,12 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .grp0 td { background: transparent; }
 .btn.tog { padding: 4px 12px; border-radius: 16px; }
 .btn.tog.on { background: rgba(34,197,94,.18); border-color: rgba(34,197,94,.75); color: var(--c-green, #22c55e); font-weight: 600; }
+.cm { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.cm-name { color: var(--text); font-weight: 600; }
+.cm-magic { color: var(--text-dim, #8a94a6); font-size: 11px; }
+.cm-more { background: var(--surface-2, #2a3140); color: var(--text-dim, #aab3c5); border-radius: 9px; padding: 1px 7px; font-size: 11px; }
+.cm-open { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
+.cm:hover .cm-open, .cm-open:hover { background: var(--accent); color: #fff; }
 a.lnk { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); cursor: pointer; }
 a.lnk:hover { filter: brightness(1.2); }
 .btn[hidden], button[hidden] { display: none !important; }
@@ -1550,7 +1556,18 @@ const C = {
   extraN: { label: 'Extra trade count', num: true, f: (v) => v, title: 'Number of extra (second) copies of the fader.' },
   firstN: { label: 'First trade count', num: true, f: (v) => v, title: 'Number of first (normal) copies of the fader.' },
   masterN: { label: 'Master trade count', num: true, f: (v) => v, title: 'Number of master trades the fader copied (each counted once).' },
-  copying: { label: 'Copying master', num: false, f: (v) => v || '', render: (td, v, r) => { if (!v) return; const a = el('a', { href: '#', class: 'lnk', title: (r.copyingAll || '') + '\n\nClick for the full list on its own page' }, v); a.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(r.account, r.magic); }); td.appendChild(a); }, title: 'The master strategy this fader copies: its magic and comment. "+N more" when it copies several.' },
+  copying: { label: 'Copying master', num: false, f: (v) => v || '', render: (td, v, r) => {
+    if (!v) return;
+    const m = /^(\S+)\s+(.*?)(?:\s+\+(\d+) more)?$/.exec(v) || [0, '', v, ''];
+    const go = (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(r.account, r.magic); };
+    const box = el('span', { class: 'cm', title: (r.copyingAll || '') + '\n\nClick to open this fader\'s page' });
+    box.appendChild(el('span', { class: 'cm-name' }, m[2]));
+    box.appendChild(el('span', { class: 'cm-magic' }, ' ' + m[1]));
+    if (m[3]) box.appendChild(el('span', { class: 'cm-more' }, '+' + m[3] + ' more'));
+    box.appendChild(el('button', { class: 'cm-open', type: 'button' }, 'Open ›'));
+    box.addEventListener('click', go);
+    td.appendChild(box);
+  }, title: 'The master strategy this fader copies (name, then its magic). "+N more" = it copies other masters too (hover to see them). Press Open to see the fader\'s full page.' },
   masterDiff: { label: 'Both together $', num: true, f: money, cls: signCls, title: 'Fader + master: what you get if the fader and its master run together. The fader alone is the Net column.' },
   mcov: { label: 'Coverage', num: true, f: pct, title: 'Share of the master strategy\'s trades (same account, magic and comment, in the selected dates) that this fader copied.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
