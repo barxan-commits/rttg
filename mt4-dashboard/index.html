@@ -2932,6 +2932,22 @@ function progressRows(text) {
   }
   return rows;
 }
+// the same information in 3 short lines: finished steps, the 3 slowest items (terminal folder + seconds), what it is doing now
+function compactRows(text, wantNow) {
+  const steps = [], slow = []; let now = '';
+  const short = (t) => t.replace(/[A-Za-z]:[\\/]+My Drive[\\/]+MT4_Terminals[\\/]+([^\\/]+)[\\/]*\S*/g, '$1');
+  for (const l of String(text || '').split(/\r?\n/)) {
+    const m = /^(Step|Slow|Now):\s*(.*)$/.exec(l); if (!m) continue; const t = m[2].trim();
+    if (m[1] === 'Step') steps.push(t);
+    else if (m[1] === 'Slow') { const sec = /(\d+)s\s*$/.exec(t); const kind = /reading (\w+)/.exec(t); slow.push({ sec: sec ? +sec[1] : 0, label: short(t).replace(/^reading \w+( file)?\s*/, '').replace(/\s*\d+s\s*$/, '') + (kind ? ' (' + kind[1] + ')' : '') }); }
+    else now = short(t);
+  }
+  const rows = [];
+  if (steps.length) rows.push(['ok', 'Done: ' + steps.join(' · ')]);
+  if (slow.length) rows.push(['wait', 'Slowest: ' + slow.sort((a, b) => b.sec - a.sec).slice(0, 3).map((x) => x.label + ' ' + x.sec + 's').join(' · ')]);
+  if (wantNow && now) rows.push(['wait', 'Now: ' + now]);
+  return rows;
+}
 const buildTrim = (res) => res.replace(/^(OK|FAILED|RUNNING)\s*-\s*/i, '');
 async function newestRunLog(folder) {
   const q = folder ? "parentId = '" + folder + "' and title contains 'last_build_'" : "title contains 'last_build_'";
@@ -2945,7 +2961,7 @@ async function showLastBuild() {
     const log = await newestRunLog(); if (!log) return;
     const text = await driveText(log); const info = parseRunLog(text); const res = info.Result || '';
     const when = localStamp(Date.parse(log.modifiedTime || ''));
-    if (/^OK/i.test(res)) buildStatusSet('ok', 'Build OK · ' + when, logRows(text, true));
+    if (/^OK/i.test(res)) buildStatusSet('ok', 'Build OK · ' + when, [['ok', 'Result: ' + buildTrim(res)]].concat(compactRows(text, false)));
     else if (/^RUNNING/i.test(res) && Date.now() - Date.parse(log.modifiedTime || '') < 10 * 60000) { buildStatusSet('wait', 'Build running · since ' + when, logRows(text, false)); if (!BUILD.busy) buildNow(true); }
     else if (/^RUNNING/i.test(res)) buildStatusSet('bad', 'Build did not finish · ' + when, [['bad', 'A build was started at ' + when + ' but it never reported progress or a result (the build on the VPS stopped or never started). Press Build now to start a new one.']].concat(logRows(text, false)));
     else if (/^FAILED/i.test(res)) buildStatusSet('bad', 'Build failed · ' + when, logRows(text, false));
@@ -2985,14 +3001,14 @@ async function buildNow(follow) {
       if (reqLeft) lastWithReq = Date.now();
       const sec = Math.round((Date.now() - t0) / 1000), el1 = fmtDur(sec);
       const watcherOk = beatAge <= 12;
-      const rows = follow ? [['ok', 'A build is running on the VPS']] : [['ok', 'Request sent (' + title + ')'], reqLeft ? ['wait', 'Waiting for the VPS to pick it up (Drive sync + watcher, usually under a minute) · ' + el1] : ['ok', 'The VPS picked up the request']];
+      const rows = follow ? [['ok', 'A build is running on the VPS']] : [reqLeft ? ['wait', 'Request sent (' + title + ') · waiting for the VPS to pick it up (usually under a minute) · ' + el1] : ['ok', 'Request sent and picked up by the VPS']];
       if (fin) {
         const ok = /^OK/i.test(res); const when = localStamp(logMod);
         rows.push([ok ? 'ok' : 'bad', (ok ? 'Build finished: ' : 'Build failed: ') + buildTrim(res), ok ? 100 : undefined]);
-        buildStatusSet(ok ? 'ok' : 'bad', ok ? 'Build OK · 100% · ' + when : 'Build failed · ' + when, rows.concat(logRows(raw, ok)));
+        buildStatusSet(ok ? 'ok' : 'bad', ok ? 'Build OK · 100% · ' + when : 'Build failed · ' + when, rows.concat(ok ? compactRows(raw, false) : logRows(raw, false)));
         if (ok && !reloaded) {
           reloaded = true; await loadFromDrive(true);
-          buildStatusSet('ok', 'Build OK · 100% · ' + when, rows.concat([['ok', 'The dashboard reloaded the new data by itself: no need to press Refresh']], logRows(raw, true)));
+          buildStatusSet('ok', 'Build OK · 100% · ' + when, rows.concat(compactRows(raw, false), [['ok', 'The dashboard reloaded the new data by itself: no need to press Refresh']]));
         }
         done = true; break;
       }
@@ -3008,8 +3024,8 @@ async function buildNow(follow) {
         const run = (Date.now() - runStart) / 1000; const pct = Math.min(99, Math.round(run / expected * 100));
         const late = run > expected * 1.15;
         rows.push(['wait', 'Building on the VPS · ' + fmtDur(run) + ' · about ' + pct + '% (estimated from the last build, ' + fmtDur(expected) + ')' + (late ? ' · taking longer than the last build' : ''), pct]);
-        const pr = progressRows(raw); if (pr.length) rows.push(...pr);
-        rows.push(['wait', 'When it is done this page reloads the new data by itself. There is nothing to refresh.']);
+        rows.push(...compactRows(raw, true));
+        rows.push(['wait', 'When it is done this page reloads the new data by itself.']);
         buildStatusSet('wait', 'Building · ' + fmtDur(run) + ' · ~' + pct + '%', rows);
       } else { rows.push(['wait', 'Starting the build · ' + el1]); buildStatusSet('wait', 'Starting · ' + el1, rows); }
       await new Promise((r) => setTimeout(r, BUILD.poll));
