@@ -1,3 +1,11 @@
+# MT4_Terminals AUTO-ID + Quant Drive Sync v3.7-VPS
+# v3.7 changes:
+#   - STALE IDENTITY FILE. A leftover GPT_MT4_TERMINAL_ID_<old account>.txt always won over the live collector files, so a terminal
+#     that changed account was reported as the OLD account and the new one as SOURCE NOT DISCOVERED. The identity is now taken from
+#     the NEWEST signal (ID file, QuantV2 file, Statement, Trades), not from the ID file first.
+#   - The status files now say what was seen: every terminal folder with the account it returned and where that came from,
+#     in _sync_status.txt (when a terminal is not found) and in _terminal_identity_map_VPS.txt.
+#   - $ExtraDataPaths: list a terminal data folder that is NOT under %APPDATA%\MetaQuotes\Terminal (portable install).
 # MT4_Terminals AUTO-ID + Quant Drive Sync v3.6-VPS
 # v3.6 changes:
 #   - RUNAWAY LOGS. A log bigger than $MaxLogBytes (10 MB) is copied as its LAST $MaxLogBytes only, so one
@@ -36,10 +44,12 @@ $ProgressPreference = 'SilentlyContinue'
 $ProjectFolderName = 'MT4_Terminals'
 $LookbackDays       = 3
 $MachineLabel       = 'VPS'
-$SyncVersion        = 'MT4-T-AUTOID-3.6-VPS-QUANT'
+$SyncVersion        = 'MT4-T-AUTOID-3.7-VPS-QUANT'
 $CollectorStaleMinutes = 10
 $MaxLogBytes = 10MB      # logs bigger than this are copied as their last 10 MB only
 $script:cutLogs = @()
+# Terminal data folders outside %APPDATA%\MetaQuotes\Terminal (portable installs), e.g. 'C:\MT4\Terminal_x'. Leave empty if none.
+$ExtraDataPaths = @()
 
 # Canonical-only policy: this script may write only under My Drive\MT4_Terminals.
 # It must never mirror Terminal_9 into the older MT4 RSI EA Data/VPS/M1_Terminal tree.
@@ -52,6 +62,7 @@ $AccountMap = [ordered]@{
     '48750175' = 'Terminal_4'
     '48740502' = 'Terminal_9'
     '3001225' = 'Terminal_live1'
+    '48754540' = 'Terminal_tolive1'
    
 
 }
@@ -89,34 +100,36 @@ function Find-DriveProjectRoot {
     throw "Could not find Google Drive project folder 'My Drive\\MT4_Terminals'."
 }
 
-function Get-AccountFromTerminalFolder([string]$DataPath) {
+# Every identity signal a terminal folder has: [account, time, where it came from]. The NEWEST one is the live identity.
+function Get-IdentityCandidates([string]$DataPath) {
+    $c = @()
     $filesPath = Join-Path $DataPath 'MQL4\Files'
-    if (-not (Test-Path -LiteralPath $filesPath)) { return $null }
+    if (-not (Test-Path -LiteralPath $filesPath)) { return $c }
 
-    # Strongest identity: new AUTO-ID file.
-    $id = Get-ChildItem -LiteralPath $filesPath -Filter 'GPT_MT4_TERMINAL_ID_*.txt' -File -ErrorAction SilentlyContinue |
-          Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($id -and $id.BaseName -match 'GPT_MT4_TERMINAL_ID_(\d+)$') { return $Matches[1] }
-
-    # QuantV2 identity fallback: files live one level deeper in MQL4\Files\GPT_REPORTS.
+    foreach ($f in @(Get-ChildItem -LiteralPath $filesPath -Filter 'GPT_MT4_TERMINAL_ID_*.txt' -File -ErrorAction SilentlyContinue)) {
+        if ($f.BaseName -match 'GPT_MT4_TERMINAL_ID_(\d+)$') { $c += [pscustomobject]@{ Account=$Matches[1]; Time=$f.LastWriteTime; Source='ID file'; Rank=0 } }
+    }
+    # QuantV2 files live one level deeper in MQL4\Files\GPT_REPORTS (.tmp = in-progress write, ignored).
     $qPath = Join-Path $filesPath 'GPT_REPORTS'
     if (Test-Path -LiteralPath $qPath) {
         $q = Get-ChildItem -LiteralPath $qPath -File -ErrorAction SilentlyContinue |
              Where-Object { $_.Extension -ne '.tmp' -and $_.Name -match '_\d+_Quant[A-Za-z0-9]*_' } |
              Sort-Object LastWriteTime -Descending | Select-Object -First 1
-        if ($q -and $q.Name -match '_(\d+)_Quant[A-Za-z0-9]*_') { return $Matches[1] }
+        if ($q -and $q.Name -match '_(\d+)_Quant[A-Za-z0-9]*_') { $c += [pscustomobject]@{ Account=$Matches[1]; Time=$q.LastWriteTime; Source='Quant file'; Rank=1 } }
     }
-
-    # Immediate backward-compatible identity: Statement_<account>.csv.
     $st = Get-ChildItem -LiteralPath $filesPath -Filter 'Statement_*.csv' -File -ErrorAction SilentlyContinue |
           Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($st -and $st.BaseName -match '^Statement_(\d+)$') { return $Matches[1] }
-
-    # Daily report also identifies account.
+    if ($st -and $st.BaseName -match '^Statement_(\d+)$') { $c += [pscustomobject]@{ Account=$Matches[1]; Time=$st.LastWriteTime; Source='Statement'; Rank=2 } }
     $tr = Get-ChildItem -LiteralPath $filesPath -Filter 'Trades_*_????-??-??.csv' -File -ErrorAction SilentlyContinue |
           Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($tr -and $tr.Name -match '^Trades_(\d+)_') { return $Matches[1] }
-    return $null
+    if ($tr -and $tr.Name -match '^Trades_(\d+)_') { $c += [pscustomobject]@{ Account=$Matches[1]; Time=$tr.LastWriteTime; Source='Trades file'; Rank=3 } }
+    return $c
+}
+
+function Get-AccountFromTerminalFolder([string]$DataPath) {
+    $c = @(Get-IdentityCandidates $DataPath)
+    if (-not $c.Count) { return $null }
+    return ($c | Sort-Object -Property @{Expression='Time';Descending=$true}, @{Expression='Rank';Descending=$false} | Select-Object -First 1).Account
 }
 
 function Get-CollectorHealth([string]$ReportsDir, [string]$Logical, [string]$Acct) {
@@ -205,12 +218,18 @@ if (-not (Test-Path -LiteralPath $metaRoot)) { throw "MetaQuotes Terminal root n
 
 # Discover every actual MT4 data folder by its current account identity.
 $discovered = @()
-Get-ChildItem -LiteralPath $metaRoot -Directory -ErrorAction Stop | ForEach-Object {
-    $dp = $_.FullName
-    if (-not (Test-Path -LiteralPath (Join-Path $dp 'MQL4'))) { return }
+$scanned = @()
+$folders = @(Get-ChildItem -LiteralPath $metaRoot -Directory -ErrorAction Stop)
+foreach ($x in $ExtraDataPaths) { if ($x -and (Test-Path -LiteralPath $x)) { $folders += Get-Item -LiteralPath $x } }
+foreach ($fd in $folders) {
+    $dp = $fd.FullName
+    if (-not (Test-Path -LiteralPath (Join-Path $dp 'MQL4'))) { continue }
+    $cand = @(Get-IdentityCandidates $dp)
     $acct = Get-AccountFromTerminalFolder $dp
+    $what = if ($cand.Count) { ($cand | Sort-Object Time -Descending | ForEach-Object { "$($_.Source) $($_.Account) $($_.Time.ToString('MM-dd HH:mm'))" }) -join '; ' } else { 'no identity files' }
+    $scanned += "$($fd.Name) | account=$(if ($acct) { $acct } else { '-' }) | $what"
     if ($acct) {
-        $discovered += [pscustomobject]@{ Account=$acct; DataPath=$dp; Hash=$_.Name }
+        $discovered += [pscustomobject]@{ Account=$acct; DataPath=$dp; Hash=$fd.Name }
     }
 }
 
@@ -252,8 +271,9 @@ foreach ($acct in $AccountMap.Keys) {
             "Expected account: $acct",
             "Run started: $($runStart.ToString('yyyy-MM-dd HH:mm:ss'))",
             'STATUS: SOURCE NOT DISCOVERED',
-            'Hint: attach HistoryExporter_AUTOID_v2 once, or ensure Statement_<account>.csv exists in MQL4\\Files.'
-        ) -join "`r`n"
+            'Hint: attach HistoryExporter_AUTOID_v2 once, or ensure Statement_<account>.csv exists in MQL4\\Files.',
+            "Terminal folders scanned: $($scanned.Count) (folder | account used | identity signals, newest first)"
+        ) + @($scanned | ForEach-Object { '  ' + $_ }) -join "`r`n"
         Set-Content -LiteralPath (Join-Path $destRoot '_sync_status.txt') -Value $status -Encoding UTF8
         $allStatus += "$logical account=$acct SOURCE_NOT_DISCOVERED"
         continue
@@ -426,6 +446,8 @@ foreach ($acct in $active.Keys | Sort-Object) {
     $logical = if ($AccountMap.Contains($acct)) {$AccountMap[$acct]} else {'UNMAPPED'}
     $mapLines += "$logical | account=$acct | hash=$($active[$acct].Hash) | data=$($active[$acct].DataPath)"
 }
+$mapLines += ''; $mapLines += 'Terminal folders scanned (folder | account used | identity signals, newest first):'
+$mapLines += @($scanned | ForEach-Object { '  ' + $_ })
 Set-Content -LiteralPath (Join-Path $projectRoot '_terminal_identity_map_VPS.txt') -Value ($mapLines -join "`r`n") -Encoding UTF8
 
 # Release single-instance lock.
