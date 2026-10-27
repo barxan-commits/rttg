@@ -239,6 +239,8 @@ tfoot td { font-weight: 600; background: var(--surface-2); position: sticky; bot
 .cm-more { background: var(--surface-2, #2a3140); color: var(--text-dim, #aab3c5); border-radius: 9px; padding: 1px 7px; font-size: 11px; }
 .cm-open { background: transparent; color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 1px 8px; font-size: 11px; cursor: pointer; }
 .cm:hover .cm-open, .cm-open:hover { background: var(--accent); color: #fff; }
+table.fa-groups td.gl { white-space: nowrap; } table.fa-groups tr.gr { background: var(--surface-1); } table.fa-groups tr.gr td { border-top: 1px solid var(--border); padding-top: 7px; padding-bottom: 7px; }
+table.fa-groups tr.kid td { font-size: 12.5px; color: var(--text-secondary); } table.fa-groups td.kl { padding-left: 34px; } .gar { display: inline-block; width: 14px; color: var(--accent); }
 /* fader detail page: four plain summary tiles */
 .fa-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; margin: 8px 0; }
 a.lnk { color: var(--accent); text-decoration: none; border-bottom: 1px dotted var(--accent); cursor: pointer; }
@@ -2067,9 +2069,7 @@ function faDetail(host, A, x, big) {
   }
   if (simple) {
     host.appendChild(el('p', { class: 'sub' }, 'Fader $ = what the fader made on its copies of that master · Master $ = what the master made on those same trades · Both together = the two added. Coverage = share of the master\'s trades this fader copied.'));
-    for (const r of mr) r.mname = r.comment + ' · ' + r.mmagic;
-    table(host, [{ key: 'mname', label: 'Master' }, { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct },
-      { key: 'total', label: 'Fader $', num: true, f: money, cls: signCls }, { key: 'mnet', label: 'Master $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls }, { key: 'cov', label: 'Coverage', num: true, f: pct }], mr, { tabId: 'fa2mS', defKey: 'total', pageSize: 1000 });
+    faMasterGroups(host, mr);
     return;
   }
   host.appendChild(el('p', { class: 'sub' }, 'Trades = first + extra trade count. First trade count = first copies, Extra trade count = second copies (+#), Master trade count = all trades of that master strategy in the selected period. Net = Firsts $ + Extras $. Both together = Firsts $ + Master alone $.'));
@@ -2078,6 +2078,38 @@ function faDetail(host, A, x, big) {
     { key: 'n', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
     { key: 'mn', label: 'Master trade count', num: true }, { key: 'cov', label: 'Coverage', num: true, f: pct },
     { key: 'mnet', label: 'Master alone $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls }], mr, { tabId: 'fa2m' + (big ? 'b' : ''), defKey: 'total', pageSize: 1000 });
+}
+// one row per MASTER MAGIC (what the fader fades from that master), click a row to see its comments underneath
+function faMasterGroups(host, mr) {
+  const g = new Map();
+  for (const r of mr) {
+    let o = g.get(r.mmagic); if (!o) g.set(r.mmagic, o = { magic: r.mmagic, trades: 0, wins: 0, total: 0, mnet: 0, hasM: false, sum: 0, hasS: false, n: 0, mn: 0, kids: [] });
+    o.trades += r.trades; o.wins += Number.isFinite(r.win) ? r.win * r.trades : 0; o.total += r.total; o.n += r.n; o.mn += r.mn;
+    if (Number.isFinite(r.mnet)) { o.mnet += r.mnet; o.hasM = true; } if (Number.isFinite(r.sum)) { o.sum += r.sum; o.hasS = true; }
+    o.kids.push(r);
+  }
+  const groups = [...g.values()].sort((a, b) => b.total - a.total);
+  const tbl = el('table', { class: 'fa-groups' }); const hr = el('tr');
+  for (const [l, num] of [['Master magic', 0], ['Trades', 1], ['Win %', 1], ['Fader $', 1], ['Master $', 1], ['Both together $', 1], ['Coverage', 1]]) hr.appendChild(el('th', { class: num ? 'num' : '' }, l));
+  tbl.appendChild(el('thead', null)).appendChild(hr);
+  const tb = el('tbody'); tbl.appendChild(tb);
+  const cells = (tr, label, o, kid) => {
+    tr.appendChild(label);
+    const nums = [[String(o.trades), ''], [o.trades ? pct((kid ? (Number.isFinite(o.win) ? o.win * o.trades : 0) : o.wins) / o.trades) : '', ''], [money(o.total), signCls(o.total)],
+      [(kid ? Number.isFinite(o.mnet) : o.hasM) ? money(o.mnet) : '', signCls(o.mnet)], [(kid ? Number.isFinite(o.sum) : o.hasS) ? money(o.sum) : '', signCls(o.sum)], [o.mn ? pct(o.n / o.mn) : (Number.isFinite(o.cov) ? pct(o.cov) : ''), '']];
+    for (const [t, c] of nums) tr.appendChild(el('td', { class: 'num ' + c }, t));
+  };
+  for (const o of groups) {
+    const lab = el('td', { class: 'gl' }); const arrow = el('span', { class: 'gar' }, o.kids.length > 1 ? '▸' : ' ');
+    lab.append(arrow, el('b', null, ' ' + o.magic), el('span', { class: 'muted' }, o.kids.length > 1 ? '  ·  ' + o.kids.length + ' comments' : '  ·  ' + o.kids[0].comment));
+    const tr = el('tr', { class: 'gr' + (o.kids.length > 1 ? ' click' : '') }); cells(tr, lab, o, false); tb.appendChild(tr);
+    if (o.kids.length < 2) continue;
+    const kids = o.kids.slice().sort((a, b) => b.total - a.total).map((k) => {
+      const kr = el('tr', { class: 'kid', hidden: '' }); cells(kr, el('td', { class: 'kl' }, k.comment), k, true); tb.appendChild(kr); return kr; });
+    tr.addEventListener('click', () => { const open = arrow.textContent === '▾'; arrow.textContent = open ? '▸' : '▾'; for (const kr of kids) kr.hidden = open; });
+  }
+  const wrap = el('div', { class: 'tablewrap' }); wrap.appendChild(tbl); host.appendChild(wrap);
+  host.appendChild(el('p', { class: 'muted' }, 'One row per master magic. Click a row with several comments to see them one by one.'));
 }
 function faPerFader(host, A, faders) {
   const rows = faders.map((x) => { const costs = x.sp + x.cm + x.sw; return { key: x.key, terminal: x.terminal, account: x.account, magic: x.magic, type: x.type, src: x.src,
