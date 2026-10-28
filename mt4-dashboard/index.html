@@ -1713,7 +1713,7 @@ function csvCell(v) { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' +
 function exportCSV(cols, rows, name) {
   const plain = (c, v) => {
     if (v === null || v === undefined) return '';
-    if (c.key === 'first' || c.key === 'last' || /time|Time$/.test(c.key)) return Number.isFinite(v) ? fmtTime(v) : v;
+    if (c.key === 'first' || c.key === 'last' || c.key === 'lastSeen' || /time|Time$/.test(c.key)) return Number.isFinite(v) ? fmtTime(v) : v;
     if (typeof v === 'number') return Number.isFinite(v) ? +v.toFixed(6) : (v === Infinity ? 'inf' : '');
     return v;
   };
@@ -2198,6 +2198,26 @@ function renderTime(host, T) {
   const wd = [...groupBy(T, (t) => new Date(t.closeTime).getUTCDay())].map(([k, arr]) => dimRow(k, names[k], arr, { wd: k, wdName: names[k] }));
   table(b, colsOf(['n', 'winRate', 'net', 'pf', 'exp', 'lots'], [{ key: 'wd', label: 'Weekday', num: false, f: (v) => names[v] }]), wd, { tabId: 'weekday', defKey: 'wd', defDir: 'asc' });
 }
+// role of a trade and, for a fader copy, the master trade it copied (looked up by ticket in the closed trades, then in the open positions)
+let TK_CLOSED = null, TK_OPEN = null, TK_DB = null;
+function copiedMaster(x) {
+  if (TK_DB !== DB.trades) { TK_CLOSED = new Map(); for (const t of DB.trades) TK_CLOSED.set(t.ticket, t); TK_OPEN = new Map(); for (const o of DB.open) TK_OPEN.set(o.ticket, o); TK_DB = DB.trades; }
+  const f = faderOf(x);
+  const base = { role: f.is ? (f.extra ? 'Fader extra copy' : 'Fader first copy') : 'Master / other', faderType: f.is ? f.type : '', masterTicket: f.master || '', masterAccount: '', masterMagic: '', masterComment: '', masterState: '', masterProfit: NaN };
+  if (!f.master) return base;
+  const m = TK_CLOSED.get(f.master); const o = m ? null : TK_OPEN.get(f.master);
+  if (m) return Object.assign(base, { masterAccount: m.account, masterMagic: m.magic, masterComment: m.comment, masterState: 'closed', masterProfit: m.net });
+  if (o) return Object.assign(base, { masterAccount: o.account, masterMagic: o.magic, masterComment: o.comment, masterState: 'open', masterProfit: o.pnl });
+  return Object.assign(base, { masterState: 'not found in the loaded data' });
+}
+const copyCols = [{ key: 'role', label: 'Role' }, { key: 'faderType', label: 'Fader type' }, { key: 'masterTicket', label: 'Copied master ticket' }, { key: 'masterAccount', label: 'Copied master account' },
+  { key: 'masterMagic', label: 'Copied master magic' }, { key: 'masterComment', label: 'Copied master comment' }, { key: 'masterState', label: 'Copied master state' }, { key: 'masterProfit', label: 'Copied master profit (net / floating)', num: true }];
+// a second button next to Export CSV: every field the collector wrote, plus the role / copied-master columns (the table itself shows fewer columns)
+function exportAllButton(tb, cols, rowsFn, name) {
+  const b = el('button', { class: 'btn small', type: 'button', title: 'One row per ticket with every available column, including the master ticket each fader copy copied' }, 'Export CSV (all columns)');
+  b.addEventListener('click', () => exportCSV(cols, rowsFn().map((r) => Object.assign({}, r, copiedMaster(r))), name));
+  tb.appendChild(b);
+}
 function renderTrades(host, T) {
   const q = state.search.trim().toLowerCase();
   const rows = (q ? T.filter((t) => (t.ticket + ' ' + t.symbol + ' ' + t.magic + ' ' + t.comment + ' ' + t.account + ' ' + t.basket + ' ' + t.exit).toLowerCase().includes(q)) : T.slice())
@@ -2211,7 +2231,19 @@ function renderTrades(host, T) {
     { key: 'duration', label: 'Hold', num: true, f: fmtDur }, { key: 'mfe', label: 'MFE pts', num: true, f: (v) => fmtNum(v, 0) }, { key: 'mae', label: 'MAE pts', num: true, f: (v) => fmtNum(v, 0) },
     { key: 'maxSpread', label: 'Max spread', num: true, f: (v) => fmtNum(v, 0) }, { key: 'basket', label: 'Basket' }, { key: 'leg', label: 'Leg', num: true, f: (v) => (Number.isFinite(v) ? v : '') }, { key: 'tag', label: 'File tag' },
   ];
+  const allCols = [
+    { key: 'closeTime', label: 'Close time' }, { key: 'openTime', label: 'Open time' }, { key: 'account', label: 'Account' }, { key: 'terminal', label: 'Terminal' }, { key: 'machine', label: 'Machine' }, { key: 'campaign', label: 'Campaign' },
+    { key: 'server', label: 'Server' }, { key: 'currency', label: 'Account currency' }, { key: 'ticket', label: 'Ticket' }, { key: 'symbol', label: 'Symbol' }, { key: 'type', label: 'Type' }, { key: 'lots', label: 'Lots', num: true },
+    { key: 'openPrice', label: 'Open price', num: true }, { key: 'closePrice', label: 'Close price', num: true },
+    { key: 'initialSL', label: 'Initial SL', num: true }, { key: 'initialTP', label: 'Initial TP', num: true }, { key: 'finalSL', label: 'Final SL', num: true }, { key: 'finalTP', label: 'Final TP', num: true },
+    { key: 'slPts', label: 'Initial SL points', num: true }, { key: 'tpPts', label: 'Initial TP points', num: true },
+    { key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment (full)' }, { key: 'base', label: 'Base comment' }, { key: 'exit', label: 'Exit reason' },
+    { key: 'profit', label: 'Profit', num: true }, { key: 'commission', label: 'Commission', num: true }, { key: 'swap', label: 'Swap', num: true }, { key: 'net', label: 'Net', num: true },
+    { key: 'duration', label: 'Hold seconds', num: true }, { key: 'avgSpread', label: 'Avg spread points', num: true }, { key: 'maxSpread', label: 'Max spread points', num: true }, { key: 'spreadCost', label: 'Spread cost estimate', num: true },
+    { key: 'mfe', label: 'MFE points', num: true }, { key: 'mae', label: 'MAE points', num: true }, { key: 'basket', label: 'Basket' }, { key: 'leg', label: 'Basket leg', num: true },
+    { key: 'tag', label: 'File tag' }, { key: 'version', label: 'Collector version', num: true }].concat(copyCols);
   table(host, cols, rows, { tabId: 'trades', defKey: 'closeTime', pageSize: 200, toolbarExtra: (tb) => {
+    exportAllButton(tb, allCols, () => rows, 'trades_all_columns');
     const inp = el('input', { type: 'search', placeholder: 'Search ticket, symbol, magic, comment…' }); inp.value = state.search;
     inp.addEventListener('input', debounce(() => { state.search = inp.value; state.page.trades = 0; renderTab(); const i2 = document.querySelector('#tabBody input[type=search]'); if (i2) { i2.focus(); i2.setSelectionRange(i2.value.length, i2.value.length); } }, 250));
     tb.appendChild(inp);
@@ -2248,7 +2280,12 @@ function renderOpen(host) {
     { key: 'profit', label: 'Profit', num: true, f: money }, { key: 'swap', label: 'Swap', num: true, f: money }, { key: 'commission', label: 'Comm', num: true, f: money },
     { key: 'mfe', label: 'MFE pts', num: true, f: (v) => fmtNum(v, 0) }, { key: 'mae', label: 'MAE pts', num: true, f: (v) => fmtNum(v, 0) },
     { key: 'lastSeen', label: 'Last seen', render: (td, v, r) => { td.textContent = fmtTime(v) + ' '; if (r.stale) td.appendChild(el('span', { class: 'badge stale', title: 'Older than the newest open-positions file by more than 1 hour' }, 'stale')); } },
-  ], rows2, { tabId: 'openPos', defKey: 'openTime', pageSize: 300 });
+  ], rows2, { tabId: 'openPos', defKey: 'openTime', pageSize: 300, toolbarExtra: (tb) => exportAllButton(tb, [
+    { key: 'account', label: 'Account' }, { key: 'terminal', label: 'Terminal' }, { key: 'machine', label: 'Machine' }, { key: 'campaign', label: 'Campaign' }, { key: 'ticket', label: 'Ticket' }, { key: 'symbol', label: 'Symbol' },
+    { key: 'type', label: 'Type' }, { key: 'lots', label: 'Lots', num: true }, { key: 'openTime', label: 'Open time' }, { key: 'openPrice', label: 'Open price', num: true }, { key: 'sl', label: 'SL', num: true }, { key: 'tp', label: 'TP', num: true },
+    { key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment (full)' }, { key: 'base', label: 'Base comment' }, { key: 'profit', label: 'Profit', num: true }, { key: 'swap', label: 'Swap', num: true },
+    { key: 'commission', label: 'Commission', num: true }, { key: 'pnl', label: 'Floating P/L', num: true }, { key: 'mfe', label: 'MFE points', num: true }, { key: 'mae', label: 'MAE points', num: true }, { key: 'lastSeen', label: 'Last seen' }].concat(copyCols),
+  () => rows2, 'open_positions_all_columns') });
 }
 function renderAccounts(host, T) {
   const byAcc = groupBy(T, (t) => t.account);
