@@ -357,8 +357,8 @@ header.top { position: -webkit-sticky; position: sticky; top: 0; z-index: 50; }
       <label>To <input type="date" id="fTo"></label>
       <label>Account <select id="fAccount"></select></label>
       <label>Campaign <select id="fCampaign"></select></label>
-      <label>Magic <select id="fMagic"></select></label>
-      <label>Comment <select id="fComment"></select></label>
+      <label>Magic <select id="fMagic"></select><input id="qMagic" list="dlMagic" placeholder="or type a magic…" autocomplete="off" title="Type a magic number (or part of it). Pick from the suggestions for an exact match."><datalist id="dlMagic"></datalist></label>
+      <label>Comment <select id="fComment"></select><input id="qComment" list="dlComment" placeholder="or type a comment…" autocomplete="off" title="Type any part of a comment. Pick from the suggestions for an exact match."><datalist id="dlComment"></datalist></label>
       <label>Symbol <select id="fSymbol"></select></label>
       <label>Category <select id="fCategory"><option value="">All</option><option value="fader">Faders (all copies)</option><option value="first">Faders: first copies</option><option value="extra">Faders: extra copies (+#)</option><option value="other">Not faders</option></select></label>
       <label>Fader type <select id="fFaderType"></select></label>
@@ -1023,6 +1023,7 @@ function dimOk(dim, v) {
   const want = state[dim];
   if (!want) return true;
   if (want === ALL_ACTIVE || want === ALL_IDLE) { const act = DB.active && DB.active[dim] ? DB.active[dim].has(v) : true; return want === ALL_ACTIVE ? act : !act; }
+  if (want.charAt(0) === '~') return String(v).toLowerCase().includes(want.slice(1).toLowerCase());   // typed text: contains
   return v === want;
 }
 // "All", "All active", "All not active", then the two groups; counts are closed trades
@@ -1040,9 +1041,33 @@ function fillActiveSelect(sel, dim, counts, labelFn, sortFn, noun) {
     for (const v of list) g.appendChild(item(v));
     sel.appendChild(g);
   }
-  const ok = state[dim] === '' || counts.has(state[dim]) || ((state[dim] === ALL_ACTIVE || state[dim] === ALL_IDLE) && on.length && off.length);
+  const typed = String(state[dim] || '').charAt(0) === '~' && state[dim].length > 1;
+  if (typed) { let n = 0; for (const [v, c] of counts) if (String(v).toLowerCase().includes(state[dim].slice(1).toLowerCase())) n++; sel.insertBefore(opt(state[dim], 'Contains "' + state[dim].slice(1) + '"  (' + n + ' ' + noun + ')'), sel.firstChild.nextSibling); }
+  const ok = state[dim] === '' || typed || counts.has(state[dim]) || ((state[dim] === ALL_ACTIVE || state[dim] === ALL_IDLE) && on.length && off.length);
   if (!ok) state[dim] = '';
   sel.value = state[dim];
+  syncTyped(dim);
+}
+// typing boxes under the Magic and Comment lists: an exact entry picks it, anything else filters by 'contains'
+function fillDatalist(id, values) { const dl = $(id); if (!dl) return; dl.textContent = ''; for (const v of values) dl.appendChild(el('option', { value: v })); }
+const TYPED = { magic: '#qMagic', comment: '#qComment' };
+function syncTyped(dim, force) {
+  const box = TYPED[dim] && $(TYPED[dim]); if (!box || (!force && document.activeElement === box)) return;
+  const v = String(state[dim] || '');
+  box.value = v.charAt(0) === '~' ? v.slice(1) : (v && v !== ALL_ACTIVE && v !== ALL_IDLE ? v : '');
+}
+function applyTyped(dim) {
+  const box = $(TYPED[dim]); const txt = box.value.trim();
+  const sel = $(dim === 'magic' ? '#fMagic' : '#fComment');
+  const exact = txt && [...sel.options].some((o) => o.value === txt && !o.value.startsWith('~'));
+  state[dim] = !txt ? '' : exact ? txt : '~' + txt; state.page = {};
+  buildFilterOptions(); render();
+}
+for (const dim of ['magic', 'comment']) {
+  const box = document.querySelector(TYPED[dim]);
+  box.addEventListener('input', debounce(() => applyTyped(dim), 350));
+  box.addEventListener('change', () => applyTyped(dim));
+  box.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyTyped(dim); box.blur(); } });
 }
 // account list entries: terminal first, so the list reads like the terminals on screen
 function accOption(acc) {
@@ -1084,6 +1109,8 @@ function buildFilterOptions() {
   const magicAccs = new Map(); for (const t of T) { let q = magicAccs.get(t.magic); if (!q) magicAccs.set(t.magic, q = new Set()); q.add(t.account); }
   fillActiveSelect($('#fMagic'), 'magic', magics, (v) => v + (magicAccs.has(v) && magicAccs.get(v).size > 1 ? ' · ' + magicAccs.get(v).size + ' accounts' : ''), (a, b) => (+a) - (+b) || a.localeCompare(b), 'magics');
   const comments = withOpen(countBy(T, commentOf), commentOf);
+  fillDatalist('#dlMagic', [...magics.keys()].sort((a, b) => (+a) - (+b) || a.localeCompare(b)));
+  fillDatalist('#dlComment', [...comments.keys()].sort((a, b) => a.localeCompare(b)));
   fillActiveSelect($('#fComment'), 'comment', comments, (v) => v, (a, b) => comments.get(b) - comments.get(a) || a.localeCompare(b), 'comments');
   const ft = $('#fFaderType'); ft.textContent = ''; ft.appendChild(el('option', { value: '' }, 'All'));
   const typeN = countBy(ALL.filter((t) => faderOf(t).is), (t) => faderOf(t).type);
@@ -1568,7 +1595,10 @@ const C = {
     box.appendChild(el('span', { class: 'cm-name' }, m[2]));
     box.appendChild(el('span', { class: 'cm-magic' }, ' ' + m[1]));
     if (m[3]) box.appendChild(el('span', { class: 'cm-more' }, '+' + m[3] + ' more'));
-    box.appendChild(el('button', { class: 'cm-open', type: 'button' }, 'Open ›'));
+    const sm = el('button', { class: 'cm-open', type: 'button', title: 'Show this master on its own: every table filters to its magic ' + m[1] + (m[3] ? ' (the main one of ' + (+m[3] + 1) + ' masters; the others are on the fader page)' : '') }, 'Show master');
+    sm.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); showMaster(m[1]); });
+    box.appendChild(sm);
+    box.appendChild(el('button', { class: 'cm-open', type: 'button' }, 'Open fader ›'));
     box.addEventListener('click', go);
     td.appendChild(box);
   }, title: 'The master strategy this fader copies (name, then its magic). "+N more" = it copies other masters too (hover to see them). Press Open to see the fader\'s full page.' },
@@ -2012,6 +2042,12 @@ function faMatrix(host, A, faders) {
   });
   toolbar.appendChild(exp); host.appendChild(toolbar);
   const wrap = el('div', { class: 'tablewrap' }); wrap.appendChild(tbl); host.appendChild(wrap);
+}
+// a master strategy on its own: filter everything to its magic (the master is not a fader, so the fader category is cleared)
+function showMaster(magic) {
+  state.magic = String(magic); state.comment = ''; state.category = ''; state.faderType = ''; state.account = ''; state.page = {};
+  if ($('#fCategory')) $('#fCategory').value = '';
+  syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 // the whole detail of one fader (or of every fader with that magic) on a page of its own; opened from the Copying master cell
 function openFaderDetail(account, magic) {
@@ -3264,7 +3300,7 @@ async function loadFromFolder(keep) {
 $('#dirInput').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 $('#fileInput').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 for (const [id, key] of [['#fAccount', 'account'], ['#fCampaign', 'campaign'], ['#fMagic', 'magic'], ['#fComment', 'comment'], ['#fSymbol', 'symbol'], ['#fSide', 'side']]) {
-  $(id).addEventListener('change', (e) => { state[key] = e.target.value; state.page = {}; render(); });
+  $(id).addEventListener('change', (e) => { state[key] = e.target.value; state.page = {}; if (TYPED[key]) syncTyped(key, true); render(); });
 }
 $('#fCategory').addEventListener('change', (e) => { state.category = e.target.value; state.page = {}; buildFilterOptions(); render(); });
 $('#fFaderType').addEventListener('change', (e) => { state.faderType = e.target.value; if (state.faderType && (!state.category || state.category === 'other')) { state.category = 'fader'; $('#fCategory').value = 'fader'; } state.page = {}; buildFilterOptions(); render(); });
