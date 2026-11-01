@@ -776,7 +776,7 @@ function upsertSync(term, info) {
 }
 function ingestSync(text, label) {
   const name = String(label).split('/').pop();
-  const lines = text.split(/\r?\n/).map((l) => l.replace(/^\uFEFF/, ''));
+  const lines = text.split(/\r?\n/).map((l) => (l.charCodeAt(0) === 0xFEFF ? l.slice(1) : l));
   const field = (re) => { for (const l of lines) { const m = re.exec(l); if (m) return m[1].trim(); } return ''; };
   if (/_terminal_identity_map/i.test(name)) {
     const profile = /VPS/i.test(name) ? 'VPS' : /HOME/i.test(name) ? 'HOME' : '';
@@ -1823,8 +1823,8 @@ function renderTab() {
     const cols = [{ key: 'label', label: state.commentMode === 'raw' ? 'Raw comment' : 'Base comment' }, { key: 'magics', label: 'Magics' }].concat(STD_COLS.slice(0, 3).map(statCol), MASTER_KEYS.map(statCol), STD_COLS.slice(3).map(statCol), [Object.assign({ key: 'accounts' }, C.accounts), Object.assign({ key: 'symbols' }, C.symbols)]);
     table(host, cols, rows, { tabId: id, defKey: 'net', onRow: setF('comment'), footer: totalsFooter(T, 'label') });
   } else if (id === 'magiccomment') {
-    const g = groupBy(T, (t) => t.magic + '\u0000' + commentOf(t));
-    const rows = [...g].map(([k, arr]) => { const [mg, cm] = k.split('\u0000'); return dimRow(k, mg, arr, { ...masterExtra(arr), magic: mg, comment: cm }); });
+    const g = groupBy(T, (t) => t.magic + '\x00' + commentOf(t));
+    const rows = [...g].map(([k, arr]) => { const [mg, cm] = k.split('\x00'); return dimRow(k, mg, arr, { ...masterExtra(arr), magic: mg, comment: cm }); });
     const cols = [{ key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }].concat(STD_COLS.slice(0, 3).map(statCol), MASTER_KEYS.map(statCol), STD_COLS.slice(3).map(statCol));
     table(host, cols, rows, { tabId: id, defKey: 'net', onRow: (r) => { state.magic = r.magic; state.comment = r.comment; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); }, footer: totalsFooter(T, 'magic') });
   } else if (id === 'symbol') {
