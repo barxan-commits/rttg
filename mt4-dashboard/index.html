@@ -587,6 +587,9 @@ function normExit(x, comment) {
   return v;
 }
 
+// the same account / terminal / symbol / comment text appears on thousands of trades: keep ONE copy of each (also stops a field from holding a whole file's text alive)
+let INTERN = new Map();
+function S(v) { let x = INTERN.get(v); if (x === undefined) { x = ('x' + v).slice(1); INTERN.set(x, x); } return x; }
 function ingestTrades(rows, file, report) {
   const header = rows[0]; const idx = headerIndex(header);
   const g = (r, k) => { const i = idx[k]; return i === undefined ? '' : (r[i] || '').trim(); };
@@ -603,18 +606,18 @@ function ingestTrades(rows, file, report) {
     const profit = num0(g(r, 'profit')), commission = num0(g(r, 'commission')), swap = num0(g(r, 'swap'));
     let net = num(g(r, 'net_profit')); if (Number.isNaN(net)) net = profit + commission + swap;
     const t = {
-      account, ticket, tag: g(r, 'file_tag') || fileTag,
+      account: S(account), ticket, tag: S(g(r, 'file_tag') || fileTag),
       version: num0(g(r, 'collector_version')),
-      machine: g(r, 'machine_label'), terminal: g(r, 'terminal_label'), campaign: g(r, 'campaign') || '(none)',
-      currency: g(r, 'account_currency'), server: g(r, 'server'),
+      machine: S(g(r, 'machine_label')), terminal: S(g(r, 'terminal_label')), campaign: S(g(r, 'campaign') || '(none)'),
+      currency: S(g(r, 'account_currency')), server: S(g(r, 'server')),
       openTime: parseMT(g(r, 'open_time')), closeTime: parseMT(g(r, 'close_time')),
-      type, lots: num0(g(r, 'lots')), symbol: g(r, 'symbol'), digits: num(g(r, 'digits')),
+      type: S(type), lots: num0(g(r, 'lots')), symbol: S(g(r, 'symbol')), digits: num(g(r, 'digits')),
       openPrice: num(g(r, 'open_price')), closePrice: num(g(r, 'close_price')),
       initialSL: num(g(r, 'initial_sl')), initialTP: num(g(r, 'initial_tp')),
       finalSL: num(g(r, 'final_sl')), finalTP: num(g(r, 'final_tp')),
       slPts: num(g(r, 'initial_sl_points')), tpPts: num(g(r, 'initial_tp_points')),
-      magic: g(r, 'magic') || '0', comment, base,
-      exit: normExit(g(r, 'exit_reason'), comment),
+      magic: S(g(r, 'magic') || '0'), comment: S(comment), base: S(base),
+      exit: S(normExit(g(r, 'exit_reason'), comment)),
       profit, commission, swap, net,
       duration: num(g(r, 'duration_seconds')),
       avgSpread: num(g(r, 'avg_spread_points')), maxSpread: num(g(r, 'max_spread_points')),
@@ -839,7 +842,7 @@ let SOURCE = { kind: 'none' };
 async function loadSources(files) {
   showProgress('Reading ' + files.length + ' files…');
   // fresh load each time
-  TRADE_MAP = new Map(); SNAP_RAW = new Map(); OPEN_FILES = [];
+  TRADE_MAP = new Map(); SNAP_RAW = new Map(); OPEN_FILES = []; INTERN = new Map();
   Object.assign(DB, { trades: [], other: 0, snaps: new Map(), open: [], openMeta: new Map(), status: new Map(), accounts: new Map(), files: [],
     health: [], sync: { terminals: new Map(), identity: new Map(), unmapped: [] }, pointValue: new Map() });
   let done = 0;
@@ -882,7 +885,7 @@ async function loadSources(files) {
     done++;
     if (done % 5 === 0) { showProgress('Reading files… ' + done + ' / ' + files.length); await new Promise((r) => setTimeout(r, 0)); }
   }
-  BY_TICKET = null; BY_ACC_TICKET = null;
+  BY_TICKET = null; BY_ACC_TICKET = null; TK_CLOSED = null; TK_OPEN = null; TK_DB = null; MC_CACHE = null; MC_DB = null;   // lookups built on the old data must not keep it alive
   DB.trades = Array.from(TRADE_MAP.values()).sort((a, b) => a.closeTime - b.closeTime || (a.ticket < b.ticket ? -1 : 1));
   TRADE_MAP = new Map();
   finalizeSnaps(); finalizeOpen(); computeDerived();
@@ -1740,16 +1743,25 @@ function table(host, cols, rows, opts) {
   }
 }
 function csvCell(v) { const s = String(v ?? ''); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
-function exportCSV(cols, rows, name) {
+// Math.min(...array) / Math.max(...array) overflow the call stack on a few 100,000 items: plain loops
+const minOf = (a) => { let m = Infinity; for (let i = 0; i < a.length; i++) if (a[i] < m) m = a[i]; return m; };
+const maxOf = (a) => { let m = -Infinity; for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; };
+// enrich(row) may return extra fields per row without copying the row; the file is built in chunks (a 400,000 row export must not build one giant string array)
+function exportCSV(cols, rows, name, enrich) {
   const plain = (c, v) => {
     if (v === null || v === undefined) return '';
     if (c.key === 'first' || c.key === 'last' || c.key === 'lastSeen' || /time|Time$/.test(c.key)) return Number.isFinite(v) ? fmtTime(v) : v;
     if (typeof v === 'number') return Number.isFinite(v) ? +v.toFixed(6) : (v === Infinity ? 'inf' : '');
     return v;
   };
-  const lines = [cols.map((c) => csvCell(c.label)).join(',')];
-  for (const r of rows) lines.push(cols.map((c) => csvCell(plain(c, r[c.key]))).join(','));
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/csv' });
+  const parts = [cols.map((c) => csvCell(c.label)).join(',')]; let buf = [];
+  for (const r of rows) {
+    const e = enrich ? enrich(r) : null;
+    buf.push(cols.map((c) => csvCell(plain(c, e && c.key in e ? e[c.key] : r[c.key]))).join(','));
+    if (buf.length >= 5000) { parts.push('\r\n' + buf.join('\r\n')); buf = []; }
+  }
+  if (buf.length) parts.push('\r\n' + buf.join('\r\n'));
+  const blob = new Blob(parts, { type: 'text/csv' });
   const filename = 'mt4_' + name + '.csv';
   if (DOWNLOADS) {
     DOWNLOADS.save({ filename, data: blob }).catch((e) => {
@@ -1793,7 +1805,7 @@ function renderTab() {
     const g = groupBy(T, (t) => (split ? t.account + '|' : '') + t.magic);
     const rows = [...g].map(([k, arr]) => {
       const bs = baskets(arr); const a0 = arr[0]; const acc = DB.accounts.get(a0.account) || {};
-      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? Math.min(...bs.map((b) => b.net)) : NaN });
+      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
     });
     const lead = [{ key: 'label', label: 'Magic', num: false }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
     const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
@@ -2259,7 +2271,7 @@ const fileStamp = (ms) => (Number.isFinite(ms) ? fmtTime(ms).replace(/[^0-9]/g, 
 // a second button next to Export CSV: every field the collector wrote, plus the role / copied-master columns (the table itself shows fewer columns)
 function exportAllButton(tb, cols, rowsFn, nameFn, enrichFn, label) {
   const b = el('button', { class: 'btn small', type: 'button', title: 'One row per ticket with every available column, including the master ticket each fader copy copied' }, label || 'Export CSV (all columns)');
-  b.addEventListener('click', () => { const rows = rowsFn(); const scope = exportScope(); exportCSV(cols, rows.map((r) => Object.assign({}, r, copiedMaster(r), enrichFn ? enrichFn(r) : null, { scope })), typeof nameFn === 'function' ? nameFn(rows) : nameFn); });
+  b.addEventListener('click', () => { const rows = rowsFn(); const scope = exportScope(); exportCSV(cols, rows, typeof nameFn === 'function' ? nameFn(rows) : nameFn, (r) => Object.assign(copiedMaster(r), enrichFn ? enrichFn(r) : null, { scope })); });
   tb.appendChild(b);
   return b;
 }
@@ -2288,7 +2300,7 @@ function renderTrades(host, T) {
     { key: 'mfe', label: 'MFE points', num: true }, { key: 'mae', label: 'MAE points', num: true }, { key: 'basket', label: 'Basket' }, { key: 'leg', label: 'Basket leg', num: true },
     { key: 'tag', label: 'File tag' }, { key: 'version', label: 'Collector version', num: true }].concat(copyCols, [{ key: 'scope', label: 'Export scope (filters, build, time)' }]);
   table(host, cols, rows, { tabId: 'trades', defKey: 'closeTime', pageSize: 200, toolbarExtra: (tb) => {
-    exportAllButton(tb, allCols, () => rows, (rs) => { const ct = rs.map((r) => r.closeTime).filter(Number.isFinite); return 'closed_trades_all_columns_' + (state.symbol || 'allsymbols') + '_' + fileStamp(Math.min(...ct)) + '_to_' + fileStamp(Math.max(...ct)) + '_' + rs.length + 'rows'; });
+    exportAllButton(tb, allCols, () => rows, (rs) => { const ct = rs.map((r) => r.closeTime).filter(Number.isFinite); return 'closed_trades_all_columns_' + (state.symbol || 'allsymbols') + '_' + fileStamp(minOf(ct)) + '_to_' + fileStamp(maxOf(ct)) + '_' + rs.length + 'rows'; });
     const inp = el('input', { type: 'search', placeholder: 'Search ticket, symbol, magic, comment…' }); inp.value = state.search;
     inp.addEventListener('input', debounce(() => { state.search = inp.value; state.page.trades = 0; renderTab(); const i2 = document.querySelector('#tabBody input[type=search]'); if (i2) { i2.focus(); i2.setSelectionRange(i2.value.length, i2.value.length); } }, 250));
     tb.appendChild(inp);
@@ -2332,7 +2344,7 @@ function renderOpen(host) {
   const g = groupBy(P, (p) => p.magic);
   const rows = [...g].map(([k, arr]) => ({ key: k, magic: k, n: arr.length, pnl: arr.some((p) => Number.isFinite(p.pnl)) ? arr.reduce((a, p) => a + (Number.isFinite(p.pnl) ? p.pnl : 0), 0) : NaN,
     buyLots: arr.filter((p) => p.type === 'BUY').reduce((a, p) => a + p.lots, 0), sellLots: arr.filter((p) => p.type === 'SELL').reduce((a, p) => a + p.lots, 0),
-    symbols: [...new Set(arr.map((p) => p.symbol))].join(', '), accounts: new Set(arr.map((p) => p.account)).size, oldest: Math.min(...arr.map((p) => p.openTime)),
+    symbols: [...new Set(arr.map((p) => p.symbol))].join(', '), accounts: new Set(arr.map((p) => p.account)).size, oldest: minOf(arr.map((p) => p.openTime)),
     comments: [...new Set(arr.map((p) => (state.commentMode === 'raw' ? p.comment : p.base)))].slice(0, 3).join(', ') }));
   table(host, [{ key: 'magic', label: 'Magic' }, { key: 'comments', label: 'Comments' }, { key: 'n', label: 'Positions', num: true }, { key: 'pnl', label: 'Floating P/L', num: true, f: money, cls: signCls }, { key: 'buyLots', label: 'Buy lots', num: true, f: (v) => nfLots.format(v) },
     { key: 'sellLots', label: 'Sell lots', num: true, f: (v) => nfLots.format(v) }, { key: 'symbols', label: 'Symbols' }, { key: 'accounts', label: 'Accounts', num: true }, { key: 'oldest', label: 'Oldest open', f: fmtTime }],
