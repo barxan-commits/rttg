@@ -852,7 +852,7 @@ async function loadSources(files) {
     try {
       if (/^mt4dash_manifest\.json$/i.test(f.name)) continue;
       const text = f.text !== undefined ? f.text : await f.read();
-      if (text === null) { report.kind = 'failed'; report.note = f.note || report.note; DB.files.push(report); continue; }
+      if (text === null) { report.kind = 'failed'; DB.files.push(report); continue; }
       let kind = classify(f.name, null);
       if (kind === 'status') { report.kind = 'status'; ingestStatus(text, f, report); }
       else if (kind === 'statusAll') {
@@ -3204,31 +3204,26 @@ async function loadFromDrive(keepFilters) {
       files = files.concat(page.files || []); token = page.nextPageToken || '';
     } while (token && files.length < 5000);
     files = files.filter((f) => /^(trades_.*\.csv\.gz|equity_.*\.csv\.gz|open_now\.csv\.gz|health_events\.csv\.gz|status_all\.txt|sync_all\.txt|mt4dash_manifest\.json)$/i.test(f.title || ''));
-    // The files are read one after another and each file's text is dropped as soon as it is parsed (a few downloads run ahead).
-    // Before, every file's text was downloaded first and all of it was held in memory at once.
-    const sorted = files.slice().sort((a, b) => String(a.title).localeCompare(String(b.title)));
-    const FATAL = ['needs_reauth', 'server_not_connected', 'selection_required', 'not_in_manifest', 'consent_required', 'blocked_by_policy', 'approval_required'];
     let manifest = null;
-    const mf = sorted.find((f) => /^mt4dash_manifest\.json$/i.test(f.title || ''));
-    if (mf) {
-      // first, so a sign-in or permission problem shows up before any data is replaced
-      try { manifest = JSON.parse(await driveText(mf)); }
-      catch (e) { if (e && FATAL.includes(e.code)) throw e; }
-    }
-    const AHEAD = 3, pend = new Map();
-    const fetchAt = (i) => { if (i < sorted.length && !pend.has(i)) pend.set(i, driveText(sorted[i]).then((t) => ({ t }), (e) => ({ e }))); };
-    const items = sorted.map((f, i) => {
-      const item = { name: f.title, path: 'Google Drive/_DASHBOARD/' + f.title, size: +f.fileSize || 0 };
-      item.read = async () => {
-        for (let k = 0; k <= AHEAD; k++) fetchAt(i + k);
-        const r = await pend.get(i); pend.delete(i);
-        if (r.e) { item.note = 'download failed: ' + ((r.e && (r.e.code || r.e.message)) || 'error'); return null; }
-        return r.t;
-      };
-      return item;
-    });
+    const items = []; let done = 0; const queue = files.slice();
+    const worker = async () => {
+      while (queue.length) {
+        const f = queue.shift();
+        const item = { name: f.title, path: 'Google Drive/_DASHBOARD/' + f.title, size: +f.fileSize || 0, text: null };
+        try { item.text = await driveText(f); }
+        catch (e) {
+          if (e && ['needs_reauth', 'server_not_connected', 'selection_required', 'not_in_manifest', 'consent_required', 'blocked_by_policy', 'approval_required'].includes(e.code)) throw e;
+          item.note = 'download failed: ' + ((e && (e.code || e.message)) || 'error');
+        }
+        if (/^mt4dash_manifest\.json$/i.test(f.title) && item.text) { try { manifest = JSON.parse(item.text); } catch (e) { /* ignore */ } }
+        items.push(item); done++;
+        showProgress('Downloading from Google Drive… ' + done + ' / ' + files.length + ' files (unchanged files come from this browser\'s cache)');
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
     SOURCE = { kind: 'drive', manifest, manifestTime: Date.parse(mans[0].modifiedTime || '') };
     KEEP_FILTERS = !!keepFilters;
+    items.sort((a, b) => a.name.localeCompare(b.name));
     await loadSources(items);
     if (!BUILD.busy) showLastBuild();
   } catch (e) {
