@@ -2277,13 +2277,13 @@ function exportAllButton(tb, cols, rowsFn, nameFn, enrichFn, label) {
 }
 function renderTrades(host, T) {
   const q = state.search.trim().toLowerCase();
-  const rows = (q ? T.filter((t) => (t.ticket + ' ' + t.symbol + ' ' + t.magic + ' ' + t.comment + ' ' + t.account + ' ' + t.basket + ' ' + t.exit).toLowerCase().includes(q)) : T.slice())
-    .map((t) => Object.assign({}, t, { cmt: t.comment }));
+  // the trade objects themselves (no copy of 400,000 rows just to rename a field)
+  const rows = q ? T.filter((t) => (t.ticket + ' ' + t.symbol + ' ' + t.magic + ' ' + t.comment + ' ' + t.account + ' ' + t.basket + ' ' + t.exit).toLowerCase().includes(q)) : T.slice();
   const cols = [
     { key: 'closeTime', label: 'Close time', f: fmtTime }, { key: 'openTime', label: 'Open time', f: fmtTime }, { key: 'account', label: 'Account' }, { key: 'terminal', label: 'Terminal' },
     { key: 'ticket', label: 'Ticket' }, { key: 'symbol', label: 'Symbol' }, { key: 'type', label: 'Type' }, { key: 'lots', label: 'Lots', num: true, f: (v) => nfLots.format(v) },
     { key: 'openPrice', label: 'Open', num: true, f: (v) => (Number.isFinite(v) ? String(v) : '–') }, { key: 'closePrice', label: 'Close', num: true, f: (v) => (Number.isFinite(v) ? String(v) : '–') },
-    { key: 'magic', label: 'Magic' }, { key: 'cmt', label: 'Comment' }, { key: 'exit', label: 'Exit' },
+    { key: 'magic', label: 'Magic' }, { key: 'comment', label: 'Comment' }, { key: 'exit', label: 'Exit' },
     { key: 'net', label: 'Net', num: true, f: money, cls: signCls }, { key: 'profit', label: 'Profit', num: true, f: money }, { key: 'commission', label: 'Comm', num: true, f: money }, { key: 'swap', label: 'Swap', num: true, f: money },
     { key: 'duration', label: 'Hold', num: true, f: fmtDur }, { key: 'mfe', label: 'MFE pts', num: true, f: (v) => fmtNum(v, 0) }, { key: 'mae', label: 'MAE pts', num: true, f: (v) => fmtNum(v, 0) },
     { key: 'maxSpread', label: 'Max spread', num: true, f: (v) => fmtNum(v, 0) }, { key: 'basket', label: 'Basket' }, { key: 'leg', label: 'Leg', num: true, f: (v) => (Number.isFinite(v) ? v : '') }, { key: 'tag', label: 'File tag' },
