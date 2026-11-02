@@ -1,4 +1,4 @@
-# MT4_Terminals AUTO-ID + Quant Drive Sync v3.6-HOME
+﻿# MT4_Terminals AUTO-ID + Quant Drive Sync v3.6-HOME
 # v3.6 changes:
 #   - RUNAWAY LOGS. A log bigger than $MaxLogBytes (10 MB) is copied as its LAST $MaxLogBytes only, so one
 #     EA that floods its log (gigabytes) cannot fill Drive or slow the dashboard build. The status file says how many were shortened.
@@ -69,8 +69,10 @@ $AccountMap = [ordered]@{
     '7011221' = 'Terminal_fusion3'
     '48752374' = 'Terminal_20'
     '48753031' = 'Terminal_15'
-    '1420790397' = 'ftmo-test1'
+    '1420801982' = 'ftmo-test1'
     '48753218' = 'Terminal_22'
+    '48755314' = 'Terminal_24'
+    '48756631' = 'Terminal_25'
      
 }
 
