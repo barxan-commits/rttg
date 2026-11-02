@@ -1605,7 +1605,7 @@ const C = {
     box.addEventListener('click', go);
     td.appendChild(box);
   }, title: 'The master strategy this fader copies (name, then its magic). "+N more" = it copies other masters too (hover to see them). Press Open to see the fader\'s full page.' },
-  masterDiff: { label: 'Both together $', num: true, f: money, cls: signCls, title: 'Fader + master: what you get if the fader and its master run together. The fader alone is the Net column.' },
+  masterDiff: { label: 'Difference $', num: true, f: money, cls: signCls, title: 'Net + Master alone: positive = the fader gains more than the master loses (or loses less than it gains); negative = the fader is worse off.' },
   mcov: { label: 'Coverage', num: true, f: pct, title: 'Share of the master strategy\'s trades (same account, magic and comment, in the selected dates) that this fader copied.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
   basketWin: { label: 'Basket win %', num: true, f: pct },
@@ -1634,7 +1634,7 @@ function masterExtra(arr) {
   const fx = isF ? { firsts: fnet, extras: xn ? xnet : NaN, extraN: xn || '', firstN: arr.filter((t) => { const f = faderOf(t); return f.is && !f.extra; }).length, masterN: found } : { firsts: NaN, extras: NaN, extraN: '', firstN: '', masterN: '' };
   let den = 0; if (mkeys.size) { const mc = masterCounts(); for (const k of mkeys) den += mc.get(k) || 0; }
   const mcov = found && den ? found / den : NaN;
-  return found ? { master, masterDiff: fnet + master, mcov, copying, copyingAll, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, copying: '', copyingAll: '', ...fx };
+  return found ? { master, masterDiff: fnet + xnet + master, mcov, copying, copyingAll, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, copying: '', copyingAll: '', ...fx };
 }
 // how many trades each master strategy (account | magic | base comment) has in the selected dates: the denominator of Coverage
 let MC_CACHE = null, MC_KEY = '', MC_DB = null;
@@ -2096,15 +2096,15 @@ function faDetail(host, A, x, big) {
   const sr = [...x.sym.values()].map((v) => {
     const top = [...v.who].sort((p, q) => q[1] - p[1]);
     return { symbol: v.symbol, trades: v.n + v.xn, win: (v.n + v.xn) ? v.wins / (v.n + v.xn) : NaN, total: v.net + v.xnet, firstN: v.n, net: v.net, xn: v.xn || '', xnet: v.xn ? v.xnet : NaN,
-      masterN: v.found, master: v.mnet, sum: v.net + v.mnet, copying: top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) + ' more' : '') : '',
+      masterN: v.found, master: v.mnet, sum: v.net + v.xnet + v.mnet, copying: top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) + ' more' : '') : '',
       copyingAll: top.slice(0, 25).map(([k, n]) => k + '  (' + n + ' trades)').join('\n') };
   });
   host.appendChild(el('h3', { class: 'section-title' }, 'Per pair (symbol)'));
   if (simple) table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct },
-    { key: 'total', label: 'Fader $', num: true, f: money, cls: signCls, title: 'What the fader made on this pair' }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls, title: C.masterDiff.title }], sr, { tabId: 'fa2symS', defKey: 'total' });
+    { key: 'total', label: 'Fader $', num: true, f: money, cls: signCls, title: 'What the fader made on this pair' }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Difference $', num: true, f: money, cls: signCls, title: C.masterDiff.title }], sr, { tabId: 'fa2symS', defKey: 'total' });
   else table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct }, { key: 'total', label: 'Net', num: true, f: money, cls: signCls, title: C.net.title },
     { key: 'firstN', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls, title: C.firsts.title }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls, title: C.extras.title },
-    { key: 'masterN', label: 'Master trade count', num: true, title: C.masterN.title }, { key: 'master', label: 'Master alone $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls, title: C.masterDiff.title },
+    { key: 'masterN', label: 'Master trade count', num: true, title: C.masterN.title }, { key: 'master', label: 'Master alone $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Difference $', num: true, f: money, cls: signCls, title: C.masterDiff.title },
     Object.assign({ key: 'copying' }, C.copying, { render: (td, v, r) => { td.textContent = v || ''; if (r.copyingAll) td.title = r.copyingAll; } })], sr, { tabId: 'fa2sym' + (big ? 'b' : ''), defKey: 'total' });
   host.appendChild(el('h3', { class: 'section-title' }, 'Masters copied by ' + faLabel(x) + ' (' + x.mkeys.size + ')'));
   const mr = []; const keys = new Set();
@@ -2113,19 +2113,19 @@ function faDetail(host, A, x, big) {
   for (const mk of keys) {
     const p = A.pairs.get(x.key + '>' + mk) || { n: 0, net: 0, mnet: 0, wins: 0 }, xp = A.xpairs.get(x.key + '>' + mk) || { xn: 0, xnet: 0, wins: 0 }, m = A.ma.get(mk);
     const all = p.n + xp.xn;
-    mr.push({ mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: m.n ? p.n / m.n : NaN, total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + p.mnet : NaN });
+    mr.push({ mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: m.n ? p.n / m.n : NaN, total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + xp.xnet + p.mnet : NaN });
   }
   if (simple) {
-    host.appendChild(el('p', { class: 'sub' }, 'Fader $ = what the fader made on its copies of that master · Master $ = what the master made on those same trades · Both together = the two added. Coverage = share of the master\'s trades this fader copied.'));
+    host.appendChild(el('p', { class: 'sub' }, 'Fader $ = what the fader made on its copies of that master · Master $ = what the master made on those same trades · Difference = Fader $ + Master $ (positive: the fader gains more than the master loses). Coverage = share of the master\'s trades this fader copied.'));
     faMasterGroups(host, mr);
     return;
   }
-  host.appendChild(el('p', { class: 'sub' }, 'Trades = first + extra trade count. First trade count = first copies, Extra trade count = second copies (+#), Master trade count = all trades of that master strategy in the selected period. Net = Firsts $ + Extras $. Both together = Firsts $ + Master alone $.'));
+  host.appendChild(el('p', { class: 'sub' }, 'Trades = first + extra trade count. First trade count = first copies, Extra trade count = second copies (+#), Master trade count = all trades of that master strategy in the selected period. Net = Firsts $ + Extras $. Difference = Net + Master alone $.'));
   table(host, [{ key: 'mmagic', label: 'Master magic' }, { key: 'comment', label: 'Master comment' },
     { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct }, { key: 'total', label: 'Net', num: true, f: money, cls: signCls },
     { key: 'n', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
     { key: 'mn', label: 'Master trade count', num: true }, { key: 'cov', label: 'Coverage', num: true, f: pct },
-    { key: 'mnet', label: 'Master alone $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Both together $', num: true, f: money, cls: signCls }], mr, { tabId: 'fa2m' + (big ? 'b' : ''), defKey: 'total', pageSize: 1000 });
+    { key: 'mnet', label: 'Master alone $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Difference $', num: true, f: money, cls: signCls }], mr, { tabId: 'fa2m' + (big ? 'b' : ''), defKey: 'total', pageSize: 1000 });
 }
 // one row per MASTER MAGIC (what the fader fades from that master), click a row to see its comments underneath
 function faMasterGroups(host, mr) {
@@ -2138,7 +2138,7 @@ function faMasterGroups(host, mr) {
   }
   const groups = [...g.values()].sort((a, b) => b.total - a.total);
   const tbl = el('table', { class: 'fa-groups' }); const hr = el('tr');
-  for (const [l, num] of [['Master magic', 0], ['Trades', 1], ['Win %', 1], ['Fader $', 1], ['Master $', 1], ['Both together $', 1], ['Coverage', 1]]) hr.appendChild(el('th', { class: num ? 'num' : '' }, l));
+  for (const [l, num] of [['Master magic', 0], ['Trades', 1], ['Win %', 1], ['Fader $', 1], ['Master $', 1], ['Difference $', 1], ['Coverage', 1]]) hr.appendChild(el('th', { class: num ? 'num' : '' }, l));
   tbl.appendChild(el('thead', null)).appendChild(hr);
   const tb = el('tbody'); tbl.appendChild(tb);
   const cells = (tr, label, o, kid) => {
