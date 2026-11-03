@@ -646,6 +646,24 @@ function ingestTrades(rows, file, report) {
   report.rows = rows.length - 1; report.added = added; report.dups = dup + replaced; report.other = other;
 }
 let TRADE_MAP = new Map();
+// MT4 replaces the comment of a trade closed by take profit / stop loss with just "[tp]" / "[sl]": the strategy name is lost.
+// Group such trades under the main comment of the same magic number (the raw comment stays as written; "Raw comment" mode shows it).
+function fixBrokerComments() {
+  const bare = /^\[(tp|sl|so)\]$/i, counts = new Map();
+  for (const t of DB.trades) {
+    if (t.magic === '0' || !t.base || bare.test(t.base)) continue;
+    let m = counts.get(t.magic); if (!m) counts.set(t.magic, m = new Map());
+    m.set(t.base, (m.get(t.base) || 0) + 1);
+  }
+  let fixed = 0;
+  for (const t of DB.trades) {
+    if (t.magic === '0' || (t.base && !bare.test(t.base))) continue;
+    const m = counts.get(t.magic); if (!m) continue;
+    let best = '', n = 0; for (const [k, c] of m) if (c > n) { best = k; n = c; }
+    if (best) { t.base = best; fixed++; }
+  }
+  DB.fixedComments = fixed;
+}
 
 function noteAccount(t) {
   if (!t.account) return;
@@ -888,6 +906,7 @@ async function loadSources(files) {
   BY_TICKET = null; BY_ACC_TICKET = null; TK_CLOSED = null; TK_OPEN = null; TK_DB = null; MC_CACHE = null; MC_DB = null;   // lookups built on the old data must not keep it alive
   DB.trades = Array.from(TRADE_MAP.values()).sort((a, b) => a.closeTime - b.closeTime || (a.ticket < b.ticket ? -1 : 1));
   TRADE_MAP = new Map();
+  fixBrokerComments();
   finalizeSnaps(); finalizeOpen(); computeDerived();
   for (const [acc, s] of DB.status) {
     let a = DB.accounts.get(acc);
