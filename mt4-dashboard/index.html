@@ -302,6 +302,18 @@ header.top { position: -webkit-sticky; position: sticky; top: 0; z-index: 50; }
   .bstat { font-size: 12px; padding: 2px 8px; }
   .bpop { position: fixed; left: 8px; right: 8px; width: auto; max-height: 60vh; overflow: auto; }
 }
+/* ---- phone held sideways (short screen): the top bar scrolls away with the page instead of covering a third of it ---- */
+@media (max-height: 520px) {
+  header.top { position: static; padding: 6px 12px; }
+  .tablewrap { max-height: 78vh; }
+  #buildPop { position: fixed; top: 8px; }
+}
+/* ---- touch screens: a wide, visible grip on the right edge of every column header (drag it to change the width) ---- */
+@media (pointer: coarse) {
+  th .rz { width: 22px; border-right: 3px solid rgba(59,130,246,.55); }
+  th .rz:active { background: rgba(59,130,246,.35); }
+  th { padding-right: 20px; }
+}
 </style>
 </head>
 <body>

@@ -1,0 +1,51 @@
+0	00:01:42.072	Sample_Pyramid_EA EURUSD,M15 inputs: Pair_1=EURUSD; InpLotStage1=0.01; MagicNumber=1001; InpFadeBeforeFilters=true; InpReverseAfterFilters=false; InpMaxLegs=10; 
+0	00:01:43.515	Expert Sample_Pyramid_EA EURUSD,M15: loaded successfully
+0	00:02:07.183	Sample_Pyramid_EA EURUSD,M15: initialized
+0	00:05:34.833	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	00:15:44.827	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	00:20:11.074	Sample_Pyramid_EA EURUSD,M15: open #2051685215 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	00:30:04.864	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 19s detected (poll=1s) - possible terminal stall, stalls so far=0
+0	02:05:05.054	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	02:15:20.721	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	02:20:13.143	Sample_Pyramid_EA EURUSD,M15: open #2051675792 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	02:30:05.498	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 16s detected (poll=1s) - possible terminal stall, stalls so far=2
+0	04:05:36.059	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	04:15:59.347	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	04:20:00.497	Sample_Pyramid_EA EURUSD,M15: open #2051614440 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	04:30:56.169	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 18s detected (poll=1s) - possible terminal stall, stalls so far=4
+0	06:05:06.882	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	06:15:50.129	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	06:20:29.147	Sample_Pyramid_EA EURUSD,M15: open #2051692828 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	06:30:49.991	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 7s detected (poll=1s) - possible terminal stall, stalls so far=6
+0	08:05:14.297	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	08:15:38.439	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	08:20:29.008	Sample_Pyramid_EA EURUSD,M15: open #2051632140 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	08:30:19.220	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 13s detected (poll=1s) - possible terminal stall, stalls so far=8
+0	10:05:24.812	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	10:15:59.700	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	10:20:22.456	Sample_Pyramid_EA EURUSD,M15: open #2051698547 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	10:30:17.641	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 17s detected (poll=1s) - possible terminal stall, stalls so far=10
+0	12:05:50.488	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	12:15:24.653	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	12:20:27.942	Sample_Pyramid_EA EURUSD,M15: open #2051656087 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	12:30:13.756	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 14s detected (poll=1s) - possible terminal stall, stalls so far=12
+0	14:05:14.812	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	14:15:53.679	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	14:20:15.527	Sample_Pyramid_EA EURUSD,M15: open #2051693984 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	14:30:36.617	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 5s detected (poll=1s) - possible terminal stall, stalls so far=14
+0	16:05:58.300	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	16:15:21.143	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	16:20:56.735	Sample_Pyramid_EA EURUSD,M15: open #2051628166 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	16:30:38.275	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 16s detected (poll=1s) - possible terminal stall, stalls so far=16
+0	18:05:20.956	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	18:15:16.791	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	18:20:45.529	Sample_Pyramid_EA EURUSD,M15: open #2051690613 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	18:30:03.800	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 20s detected (poll=1s) - possible terminal stall, stalls so far=18
+0	20:05:12.747	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	20:15:17.385	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	20:20:06.483	Sample_Pyramid_EA EURUSD,M15: open #2051626410 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	20:30:00.468	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 11s detected (poll=1s) - possible terminal stall, stalls so far=20
+0	22:05:05.250	Sample_Pyramid_EA EURUSD,M15: AUDCAD REJECTED: no raw signal
+0	22:15:18.454	Sample_Pyramid_EA EURUSD,M15: Entry blocked on AUDJPY: spread too wide (161 pts).
+2	22:20:03.305	Sample_Pyramid_EA EURUSD,M15: open #2051626993 buy 0.01 EURAUD at 1.62279 sl: 1.61875 tp: 1.62385 ok
+0	22:30:34.736	MT4Collector_Quant_v2.05 EURUSD,H1: Collector: timer gap of 12s detected (poll=1s) - possible terminal stall, stalls so far=22

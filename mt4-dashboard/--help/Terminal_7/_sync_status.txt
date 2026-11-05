@@ -1,0 +1,5 @@
+AutoSync version: MT4-T-AUTOID-3.5-HOME-QUANT
+Logical terminal: Terminal_7
+Expected account: 10000007
+Run started: 2026-12-21 13:30:00
+STATUS: SOURCE NOT DISCOVERED

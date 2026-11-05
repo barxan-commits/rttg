@@ -1,0 +1,13 @@
+MT4Collector Quant v2.05
+Updated: 2026.12.21 15:43:00
+Machine: VPS
+Terminal: M15_Terminal
+Campaign: CAMPAIGN_C
+Account: 10000003
+Server: Broker-Demo
+Current OrdersTotal: 12
+connected: YES
+terminal_company: SampleBroker
+timer_stalls_detected: 74
+file_tag: QuantV205
+#END

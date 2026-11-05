@@ -1,0 +1,2 @@
+machine_label,terminal_label,campaign,account,ticket,type,lots,symbol,open_time,open_price,initial_sl,initial_tp,last_sl,last_tp,initial_sl_points,flag_no_initial_tp,flag_wide_initial_sl,magic,comment,base_comment,mfe_points,mae_points,max_spread_points,last_seen
+HOME,Terminal_1,CAMPAIGN_A,10000001,5000000000,SELL,0.04,NZDUSD,2026.12.03 16:13:00,0.56052,0.56252,0.55852,0.56252,0.55741,200.0,0,0,1005,RSI_MIRROR,RSI_MIRROR,184,109,94.00,2026.12.03 16:13:00,-10.87,-0.30,-0.06
