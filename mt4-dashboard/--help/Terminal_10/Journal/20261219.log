@@ -1,5 +1,0 @@
-0	04:00:53.530	'10000002': login on Broker-Demo through Demo.Europe.1 (ping: 58.53 ms)
-0	04:01:22.524	'10000002': ping to current access point Demo.Europe.1 is 61.98 ms
-1	10:20:33.994	'10000002': connect failed [No connection]
-0	10:25:52.356	'10000002': ping to current access point Demo.Asia.5 is 480.68 ms
-2	11:00:32.617	'10000002': order buy 0.01 EURUSD opening at market sl: 1.13000 tp: 1.14000 failed [Invalid stops]

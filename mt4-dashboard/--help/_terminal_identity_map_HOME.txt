@@ -1,6 +1,0 @@
-MT4_Terminals AUTO-ID map (HOME profile only)
-Updated=2026-12-21 13:30:00
-
-Terminal_1 | account=10000001 | hash=AAA | data=C:\x
-Terminal_10 | account=10000002 | hash=BBB | data=C:\y
-UNMAPPED | account=10000003 | hash=CCC | data=C:\z

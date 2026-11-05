@@ -1,8 +1,0 @@
-AutoSync version: MT4-T-AUTOID-3.5-HOME-QUANT
-Machine: HOMEPC
-Sync profile: HOME
-Run: 2026-12-21 13:30:00
-
-Terminal_1 account=10000001 hash=AAA copied=14 mismatches=0
-Terminal_10 account=10000002 hash=BBB copied=20 mismatches=0
-Terminal_7 account=10000007 SOURCE_NOT_DISCOVERED
