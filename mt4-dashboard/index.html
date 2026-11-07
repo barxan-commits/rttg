@@ -1726,12 +1726,24 @@ function copiedByMap() {
 function renderCopiedBy(td, L) {
   const box = el('span', { class: 'cm', style: 'cursor:default', title: L.slice(0, 40).map((x) => x.magic + ' ' + x.label + '  (' + x.n + ' trades, ' + money(x.net) + ')').join('\n') + (L.length > 40 ? '\n…' : '') });
   box.appendChild(el('span', { class: 'cm-name' }, 'Copied by ' + L.length + ' fader' + (L.length > 1 ? 's' : '') + ':'));
-  for (const x of L.slice(0, 3)) {
+  const btn = (x) => {
     const b = el('button', { class: 'cm-open', type: 'button', title: x.magic + ' ' + x.label + ': ' + x.n + ' copies, ' + money(x.net) + '. Click to open this fader.' }, x.magic + ' ' + x.label + ' (' + x.n + ')');
     b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(x.account, x.magic); });
-    box.appendChild(b);
+    return b;
+  };
+  for (const x of L.slice(0, 3)) box.appendChild(btn(x));
+  if (L.length > 3) {
+    const rest = L.slice(3).map(btn); for (const b of rest) { b.hidden = true; box.appendChild(b); }
+    const more = el('button', { class: 'cm-more', type: 'button', style: 'border:0;cursor:pointer', title: 'Show every fader that copies this master' }, '+' + (L.length - 3) + ' more');
+    let open = false;
+    more.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation(); open = !open;
+      for (const b of rest) b.hidden = !open;
+      more.textContent = open ? '− show less' : '+' + (L.length - 3) + ' more';
+      box.style.flexWrap = open ? 'wrap' : ''; box.style.whiteSpace = open ? 'normal' : ''; box.style.maxWidth = open ? '640px' : '';
+    });
+    box.appendChild(more);
   }
-  if (L.length > 3) box.appendChild(el('span', { class: 'cm-more' }, '+' + (L.length - 3) + ' more'));
   td.appendChild(box);
 }
 // how many trades each master strategy (account | magic | base comment) has in the selected dates: the denominator of Coverage
