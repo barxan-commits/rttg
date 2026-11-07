@@ -1179,8 +1179,10 @@ function buildFilterOptions() {
   ft.value = state.faderType; $('#fCategory').value = state.category;
   fillSelect($('#fSymbol'), [...withOpen(countBy(T, (t) => t.symbol), (p) => p.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
   const qx = $('#qExclude'); if (qx && document.activeElement !== qx) qx.value = state.exclude.join(', ');
-  const be = $('#btnExcl'); if (be) { const m = String(state.magic || ''); be.disabled = !m || m === ALL_ACTIVE || m === ALL_IDLE || m.charAt(0) === '~'; }
+  updateExclBtn();
 }
+// the Exclude > button works on one exact magic: on while one is chosen (typed or picked from the list), off otherwise
+function updateExclBtn() { const be = $('#btnExcl'); if (be) { const m = String(state.magic || ''); be.disabled = !m || m === ALL_ACTIVE || m === ALL_IDLE || m.charAt(0) === '~'; } }
 function resetFilters(doRender = true) {
   Object.assign(state, { from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '', category: '', faderType: '' });
   $('#fCategory').value = '';
@@ -3142,7 +3144,7 @@ function renderChips() {
   }
 }
 function render() {
-  trackHistory(); renderChips();
+  trackHistory(); renderChips(); updateExclBtn();
   CUR = filtered();
   const s = stats(CUR);
   renderWarnings(CUR); renderKPIs(CUR, s); renderCharts(CUR, s); renderTabsNav(); renderTab();
