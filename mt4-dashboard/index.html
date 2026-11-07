@@ -1663,8 +1663,13 @@ const C = {
     const box = el('span', { class: 'cm', title: (r.copyingAll || '') + '\n\nClick to open this fader\'s page' });
     box.appendChild(el('span', { class: 'cm-name' }, m[2]));
     box.appendChild(el('span', { class: 'cm-magic' }, ' ' + m[1]));
-    if (m[3]) box.appendChild(el('span', { class: 'cm-more' }, '+' + m[3] + ' more'));
-    const sm = el('button', { class: 'cm-open', type: 'button', title: 'Show this master on its own: every table filters to its magic ' + m[1] + (m[3] ? ' (the main one of ' + (+m[3] + 1) + ' masters; the others are on the fader page)' : '') }, 'Show master');
+    const rest = (r.copyingList || []).slice(1);
+    if (m[3] && rest.length) {
+      const mb = el('button', { class: 'cm-more', type: 'button', style: 'border:0;cursor:pointer', title: 'Open a list of the other masters this fader copies' }, '+' + m[3] + ' more ▾');
+      mb.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openPickMenu(mb, rest.length + ' more master' + (rest.length > 1 ? 's' : '') + ' this fader copies', rest.map((x) => ({ label: x.magic + ' ' + x.label, sub: x.n + ' trades', title: 'Show this master on its own', f: x })), (it) => showMaster(it.f.magic)); });
+      box.appendChild(mb);
+    } else if (m[3]) box.appendChild(el('span', { class: 'cm-more' }, '+' + m[3] + ' more'));
+    const sm = el('button', { class: 'cm-open', type: 'button', title: 'Show this master on its own: every table filters to its magic ' + m[1] + (m[3] ? ' (the main one of ' + (+m[3] + 1) + ' masters; pick the others from the +' + m[3] + ' more menu)' : '') }, 'Show master');
     sm.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); showMaster(m[1]); });
     box.appendChild(sm);
     box.appendChild(el('button', { class: 'cm-open', type: 'button' }, 'Open fader ›'));
@@ -1701,13 +1706,14 @@ function masterExtra(arr) {
   const top = [...who].sort((a, b) => b[1] - a[1]);
   const copying = top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) + ' more' : '') : '';
   const copyingAll = top.slice(0, 25).map(([k, n]) => k + '  (' + n + ' trades)').join('\n') + (top.length > 25 ? '\n…' : '');
+  const copyingList = top.map(([k, n]) => { const sp = k.indexOf(' '); return { magic: k.slice(0, sp), label: k.slice(sp + 1), n }; });
   const fx = isF ? { firsts: fnet, extras: xn ? xnet : NaN, extraN: xn || '', firstN: arr.filter((t) => { const f = faderOf(t); return f.is && !f.extra; }).length, masterN: found } : { firsts: NaN, extras: NaN, extraN: '', firstN: '', masterN: '' };
   let den = 0; if (mkeys.size) { const mc = masterCounts(); for (const k of mkeys) den += mc.get(k) || 0; }
   const mcov = found && den ? found / den : NaN;
   // why a fader row has no (or only some) master: the comment has no master ticket, the master is still open, or it is not in the loaded data
   const why = [noRef ? noRef + ' without ticket in comment' : '', stOpen ? stOpen + ' master still open' : '', stGone ? stGone + ' master not in loaded data' : ''].filter(Boolean).join(' · ');
   const masterStatus = !isF ? '' : why || 'all masters found';
-  return found ? { master, masterDiff: fnet + xnet + master, mcov, copying, copyingAll, masterStatus, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, copying: '', copyingAll: '', masterStatus, ...fx };
+  return found ? { master, masterDiff: fnet + xnet + master, mcov, copying, copyingAll, copyingList, masterStatus, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, copying: '', copyingAll: '', copyingList: [], masterStatus, ...fx };
 }
 // which faders copy each master magic: master magic -> [{account, magic, label, n, net}] (first copies in the selected dates, any account)
 let CB_CACHE = null, CB_KEY = '', CB_DB = null;
@@ -1731,20 +1737,24 @@ function copiedByMap() {
 // a small menu under the "+N more" button: one line per fader that is not shown in the cell; click one to open its page
 let FADER_MENU = null;
 function closeFaderMenu() { if (FADER_MENU) { FADER_MENU.remove(); FADER_MENU = null; } }
-function openFaderMenu(anchor, list) {
+function openPickMenu(anchor, head, items, pick) {
   const wasOpen = FADER_MENU && FADER_MENU._anchor === anchor; closeFaderMenu(); if (wasOpen) return;
   const m = el('div', { class: 'fader-menu' }); m._anchor = anchor;
-  m.appendChild(el('div', { class: 'fm-head' }, list.length + ' more fader' + (list.length > 1 ? 's' : '') + ' copying this master'));
-  for (const x of list) {
-    const b = el('button', { type: 'button', class: 'fm-item', title: 'Open this fader' });
-    b.appendChild(el('span', null, x.magic + ' ' + x.label)); b.appendChild(el('small', { class: signCls(x.net) }, x.n + ' trades · ' + money(x.net)));
-    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); closeFaderMenu(); openFaderDetail(x.account, x.magic); });
+  m.appendChild(el('div', { class: 'fm-head' }, head));
+  for (const x of items) {
+    const b = el('button', { type: 'button', class: 'fm-item', title: x.title || '' });
+    b.appendChild(el('span', null, x.label)); b.appendChild(el('small', { class: x.cls || '' }, x.sub));
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); closeFaderMenu(); pick(x); });
     m.appendChild(b);
   }
   document.body.appendChild(m); FADER_MENU = m;
   const r = anchor.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
   m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
   m.style.top = (r.bottom + 6 + h > window.innerHeight - 8 && r.top - h - 6 > 8 ? r.top - h - 6 : r.bottom + 6) + 'px';
+}
+function openFaderMenu(anchor, list) {
+  openPickMenu(anchor, list.length + ' more fader' + (list.length > 1 ? 's' : '') + ' copying this master',
+    list.map((x) => ({ label: x.magic + ' ' + x.label, sub: x.n + ' trades · ' + money(x.net), cls: signCls(x.net), title: 'Open this fader', f: x })), (it) => openFaderDetail(it.f.account, it.f.magic));
 }
 document.addEventListener('click', (e) => { if (FADER_MENU && !e.target.closest('.fader-menu')) closeFaderMenu(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeFaderMenu(); });
@@ -1971,7 +1981,7 @@ function exportCSV(cols, rows, name, enrich) {
 let DOWNLOADS = null;
 function flash(msg) { const w = $('#warn'); w.hidden = false; w.textContent = msg; }
 function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({ key: k }, C[k]))); }
-function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); const me = masterExtra(T); delete me.copying; delete me.copyingAll; delete me.masterStatus; Object.assign(r, me); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
+function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); const me = masterExtra(T); delete me.copying; delete me.copyingAll; delete me.copyingList; delete me.masterStatus; Object.assign(r, me); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
 
 const TABS = [
   ['magic', 'By magic'], ['compare', 'Compare'], ['periods', 'Periods'], ['faders', 'Faders'], ['fa', 'Fader analysis'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
