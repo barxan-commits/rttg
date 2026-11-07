@@ -1155,12 +1155,14 @@ function faderCatOk(x) {
   return state.category === 'fader' ? f.is : state.category === 'first' ? f.is && !f.extra : state.category === 'extra' ? f.is && f.extra : state.category === 'other' ? !f.is : true;
 }
 function buildFilterOptions() {
-  const T = DB.trades.filter((t) => faderCatOk(t) && !EXCSET.has(t.magic)); const ALL = DB.trades;
+  // the Magic / Comment / Symbol lists only offer what the chosen account (and campaign) has traded
+  const inAcc = (t) => dimOk('account', t.account) && (!state.campaign || t.campaign === state.campaign);
+  const T = DB.trades.filter((t) => faderCatOk(t) && !EXCSET.has(t.magic) && inAcc(t)); const ALL = DB.trades;
   const accs = countBy(ALL, (t) => t.account); for (const a of DB.accounts.keys()) if (!accs.has(a)) accs.set(a, 0);
   fillActiveSelect($('#fAccount'), 'account', accs, accOption, (a, b) => naturalCmp(accSortKey(a), accSortKey(b)), 'accounts');
   fillSelect($('#fCampaign'), [...countBy(ALL, (t) => t.campaign)].sort((a, b) => b[1] - a[1]), state.campaign);
   // strategies with open positions but no closed trade yet are listed too
-  const withOpen = (m, fn) => { for (const p of DB.open) { if (EXCSET.has(p.magic)) continue; const k = fn(p); if (!m.has(k)) m.set(k, 0); } return m; };
+  const withOpen = (m, fn) => { for (const p of DB.open) { if (EXCSET.has(p.magic) || !inAcc(p)) continue; const k = fn(p); if (!m.has(k)) m.set(k, 0); } return m; };
   if (DB.active) DB.active.comment = activeValues(commentOf); // depends on "Group comments by"
   const magics = withOpen(countBy(T, (t) => t.magic), (p) => p.magic);
   const magicAccs = new Map(); for (const t of T) { let q = magicAccs.get(t.magic); if (!q) magicAccs.set(t.magic, q = new Set()); q.add(t.account); }
@@ -3488,7 +3490,7 @@ async function loadFromFolder(keep) {
 $('#dirInput').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 $('#fileInput').addEventListener('change', (e) => { loadFiles(e.target.files); e.target.value = ''; });
 for (const [id, key] of [['#fAccount', 'account'], ['#fCampaign', 'campaign'], ['#fMagic', 'magic'], ['#fComment', 'comment'], ['#fSymbol', 'symbol'], ['#fSide', 'side']]) {
-  $(id).addEventListener('change', (e) => { state[key] = e.target.value; state.page = {}; if (TYPED[key]) syncTyped(key, true); render(); });
+  $(id).addEventListener('change', (e) => { state[key] = e.target.value; state.page = {}; if (TYPED[key]) syncTyped(key, true); if (key === 'account' || key === 'campaign') buildFilterOptions(); render(); });
 }
 $('#fCategory').addEventListener('change', (e) => { state.category = e.target.value; state.page = {}; buildFilterOptions(); render(); });
 $('#fFaderType').addEventListener('change', (e) => { state.faderType = e.target.value; if (state.faderType && (!state.category || state.category === 'other')) { state.category = 'fader'; $('#fCategory').value = 'fader'; } state.page = {}; buildFilterOptions(); render(); });
