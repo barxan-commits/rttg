@@ -1639,6 +1639,7 @@ const C = {
     box.addEventListener('click', go);
     td.appendChild(box);
   }, title: 'The master strategy this fader copies (name, then its magic). "+N more" = it copies other masters too (hover to see them). Press Open to see the fader\'s full page.' },
+  masterStatus: { label: 'Master status', num: false, f: (v) => v || '', title: 'Fader rows only: were the master trades found? Reasons a master is missing: the comment has no master ticket (MT4 cuts comments at about 31 characters), the master trade is still open, or it is not in the loaded data (another terminal that is not collected, or closed before the data starts: import its history in _HISTORY_IMPORT).' },
   masterDiff: { label: 'Difference $', num: true, f: money, cls: signCls, title: 'Net + Master alone: positive = the fader gains more than the master loses (or loses less than it gains); negative = the fader is worse off.' },
   mcov: { label: 'Coverage', num: true, f: pct, title: 'Share of the master strategy\'s trades (same account, magic and comment, in the selected dates) that this fader copied.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
@@ -1652,10 +1653,13 @@ let BY_TICKET = null;
 function masterExtra(arr) {
   if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
   const seen = new Set(); let master = 0, found = 0, fnet = 0, xnet = 0, xn = 0, isF = false; const who = new Map(); const mkeys = new Set();
+  let noRef = 0, stOpen = 0, stGone = 0; const chk = new Set();
   for (const t of arr) {
     const f = faderOf(t); if (!f.is) continue; isF = true;
     if (f.extra) { xn++; xnet += t.net; continue; }
     fnet += t.net;
+    if (!f.master) noRef++;
+    else if (!chk.has(f.master)) { chk.add(f.master); tkMaps(); if (!TK_CLOSED.has(f.master)) { if (TK_OPEN.has(f.master)) stOpen++; else stGone++; } }
     if (f.master && !seen.has(f.master)) {
       seen.add(f.master); const m = BY_TICKET.get(f.master);
       if (m) { found++; master += m.net; mkeys.add(masterKeyOf(m)); const k = m.magic + ' ' + baseOf(m.base, m.comment); who.set(k, (who.get(k) || 0) + 1); }
@@ -1668,7 +1672,10 @@ function masterExtra(arr) {
   const fx = isF ? { firsts: fnet, extras: xn ? xnet : NaN, extraN: xn || '', firstN: arr.filter((t) => { const f = faderOf(t); return f.is && !f.extra; }).length, masterN: found } : { firsts: NaN, extras: NaN, extraN: '', firstN: '', masterN: '' };
   let den = 0; if (mkeys.size) { const mc = masterCounts(); for (const k of mkeys) den += mc.get(k) || 0; }
   const mcov = found && den ? found / den : NaN;
-  return found ? { master, masterDiff: fnet + xnet + master, mcov, copying, copyingAll, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, copying: '', copyingAll: '', ...fx };
+  // why a fader row has no (or only some) master: the comment has no master ticket, the master is still open, or it is not in the loaded data
+  const why = [noRef ? noRef + ' without ticket in comment' : '', stOpen ? stOpen + ' master still open' : '', stGone ? stGone + ' master not in loaded data' : ''].filter(Boolean).join(' · ');
+  const masterStatus = !isF ? '' : why || 'all masters found';
+  return found ? { master, masterDiff: fnet + xnet + master, mcov, copying, copyingAll, masterStatus, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, copying: '', copyingAll: '', masterStatus, ...fx };
 }
 // how many trades each master strategy (account | magic | base comment) has in the selected dates: the denominator of Coverage
 let MC_CACHE = null, MC_KEY = '', MC_DB = null;
@@ -1683,7 +1690,7 @@ function masterCounts() {
   }
   return MC_CACHE;
 }
-const MASTER_KEYS = ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'copying'];   // shown after Trades / Win % / Net everywhere
+const MASTER_KEYS = ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'masterStatus', 'copying'];   // shown after Trades / Win % / Net everywhere
 const statCol = (k) => Object.assign({ key: k }, C[k]);
 const MASTER_COLS = [Object.assign({ key: 'firsts' }, C.firsts), Object.assign({ key: 'extras' }, C.extras), Object.assign({ key: 'master' }, C.master), Object.assign({ key: 'masterDiff' }, C.masterDiff), Object.assign({ key: 'mcov' }, C.mcov), Object.assign({ key: 'copying' }, C.copying)];
 function sortRows(rows, tabId, defKey, defDir) {
@@ -1875,7 +1882,7 @@ function exportCSV(cols, rows, name, enrich) {
 let DOWNLOADS = null;
 function flash(msg) { const w = $('#warn'); w.hidden = false; w.textContent = msg; }
 function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({ key: k }, C[k]))); }
-function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); const me = masterExtra(T); delete me.copying; delete me.copyingAll; Object.assign(r, me); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
+function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); const me = masterExtra(T); delete me.copying; delete me.copyingAll; delete me.masterStatus; Object.assign(r, me); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
 
 const TABS = [
   ['magic', 'By magic'], ['compare', 'Compare'], ['periods', 'Periods'], ['faders', 'Faders'], ['fa', 'Fader analysis'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
@@ -1905,7 +1912,7 @@ function renderTab() {
       return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
     });
     const lead = [{ key: 'label', label: 'Magic', num: false }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
-    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
+    const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'masterStatus', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
     const extra = (bar) => {
       bar.appendChild(toggleBtn('Split by account / terminal', split, (v) => { SPLIT.magic = v; renderTab(); }, 'One row per account and magic number, so the same magic on different terminals is not added together'));
     };
@@ -2365,8 +2372,11 @@ function renderTime(host, T) {
 }
 // role of a trade and, for a fader copy, the master trade it copied (looked up by ticket in the closed trades, then in the open positions)
 let TK_CLOSED = null, TK_OPEN = null, TK_DB = null;
-function copiedMaster(x) {
+function tkMaps() {
   if (TK_DB !== DB.trades) { TK_CLOSED = new Map(); for (const t of DB.trades) TK_CLOSED.set(t.ticket, t); TK_OPEN = new Map(); for (const o of DB.open) TK_OPEN.set(o.ticket, o); TK_DB = DB.trades; }
+}
+function copiedMaster(x) {
+  tkMaps();
   const f = faderOf(x);
   const base = { role: f.is ? (f.extra ? 'Fader extra copy' : 'Fader first copy') : 'Master / other', faderType: f.is ? f.type : '', masterTicket: f.master || '', masterAccount: '', masterMagic: '', masterComment: '', masterState: '', masterProfit: NaN };
   if (!f.master) return base;
