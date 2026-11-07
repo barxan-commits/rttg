@@ -1004,6 +1004,8 @@ const FADER_TYPES = ['MP FEES', 'MP HALF', 'MP NOPULL', 'MP2X', 'MP', 'DAY', 'SP
 const FADER_KNOWN = /^(MP FEES|MP HALF|MP NOPULL|MP[\d.]+X|MP|DAY|SPR|ADD[LP]\d*|PLAIN)(?![A-Za-z0-9])\s*/i;
 // the reference to the master ticket at the end: "#2052488935", "+#2052488935" (extra copy) or "#BIG2052488935" (a tag before the ticket)
 const FADER_REF = /^(.*?)\s*(\+)?#([A-Za-z]*)(\d{6,})$/;
+// MT4 tickets are at most 10 digits. A tag that ends in a digit ("#X2" before the ticket) leaves that digit glued to the front of the ticket: keep the last 10
+const tkt = (d) => (d.length > 10 ? d.slice(-10) : d);
 const FADER_CACHE = new Map();
 function faderInfo(comment, magic) {
   const key = comment + '|' + magic;
@@ -1014,8 +1016,8 @@ function faderInfo(comment, magic) {
   const front = rm ? rm[1].trim() : c;
   const km = FADER_KNOWN.exec(front);
   const mg = +magic, inRange = (mg >= 77800 && mg <= 78399) || mg === 7790444 || (mg >= 7550000 && mg <= 7550099);
-  if (km && (rm || inRange)) r = { is: true, type: km[1].toUpperCase(), src: front.slice(km[0].length).trim(), master: rm ? rm[4] : '', extra: !!(rm && rm[2]) };
-  else if (rm && front) r = { is: true, type: 'COPY', src: front, master: rm[4], extra: !!rm[2] };   // an extra copy (ADDL / ADDP) has "+#<master ticket>"
+  if (km && (rm || inRange)) r = { is: true, type: km[1].toUpperCase(), src: front.slice(km[0].length).trim(), master: rm ? tkt(rm[4]) : '', extra: !!(rm && rm[2]) };
+  else if (rm && front) r = { is: true, type: 'COPY', src: front, master: tkt(rm[4]), extra: !!rm[2] };   // an extra copy (ADDL / ADDP) has "+#<master ticket>"
   FADER_CACHE.set(key, r); return r;
 }
 const faderOf = (x) => faderInfo(x.comment || '', x.magic);
