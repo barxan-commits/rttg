@@ -320,7 +320,7 @@ th.dragging { opacity: .45; }
 }
 </style>
 <style>
-.fader-menu { position: fixed; z-index: 120; min-width: 280px; max-width: min(520px, 94vw); max-height: 55vh; overflow: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.45); padding: 6px; }
+.fader-menu { overscroll-behavior: contain; position: fixed; z-index: 120; min-width: 280px; max-width: min(520px, 94vw); max-height: 55vh; overflow: auto; background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.45); padding: 6px; }
 .fm-head { font-size: 12px; color: var(--text-muted); padding: 4px 8px 6px; }
 .fm-item { display: flex; justify-content: space-between; gap: 14px; width: 100%; text-align: left; font: inherit; font-size: 13px; padding: 7px 10px; border: 0; border-radius: 7px; background: none; color: var(--text-primary); cursor: pointer; }
 .fm-item:hover { background: var(--hover); box-shadow: inset 0 0 0 1px var(--accent); }
@@ -1748,9 +1748,12 @@ function openPickMenu(anchor, head, items, pick) {
     m.appendChild(b);
   }
   document.body.appendChild(m); FADER_MENU = m;
+  // put it on the side of the button with more room and cap its height to that room, so all of it is on screen and scrolls inside
   const r = anchor.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+  const below = window.innerHeight - r.bottom - 14, above = r.top - 14, useBelow = h <= below || below >= above, room = Math.max(120, useBelow ? below : above);
+  m.style.maxHeight = Math.min(room, window.innerHeight * 0.7) + 'px';
   m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
-  m.style.top = (r.bottom + 6 + h > window.innerHeight - 8 && r.top - h - 6 > 8 ? r.top - h - 6 : r.bottom + 6) + 'px';
+  m.style.top = useBelow ? r.bottom + 6 + 'px' : Math.max(8, r.top - 6 - Math.min(h, room)) + 'px';
 }
 function openFaderMenu(anchor, list) {
   openPickMenu(anchor, list.length + ' more fader' + (list.length > 1 ? 's' : '') + ' copying this master',
@@ -1758,7 +1761,7 @@ function openFaderMenu(anchor, list) {
 }
 document.addEventListener('click', (e) => { if (FADER_MENU && !e.target.closest('.fader-menu')) closeFaderMenu(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeFaderMenu(); });
-window.addEventListener('scroll', closeFaderMenu, true);
+window.addEventListener('scroll', (e) => { if (FADER_MENU && e.target && e.target.nodeType === 1 && FADER_MENU.contains(e.target)) return; closeFaderMenu(); }, true);   // scrolling the menu itself must not close it
 function renderCopiedBy(td, L) {
   const box = el('span', { class: 'cm', style: 'cursor:default', title: L.slice(0, 40).map((x) => x.magic + ' ' + x.label + '  (' + x.n + ' trades, ' + money(x.net) + ')').join('\n') + (L.length > 40 ? '\n…' : '') });
   box.appendChild(el('span', { class: 'cm-name' }, 'Copied by ' + L.length + ' fader' + (L.length > 1 ? 's' : '') + ':'));
