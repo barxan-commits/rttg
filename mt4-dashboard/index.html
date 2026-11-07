@@ -1922,6 +1922,7 @@ function renderTabsNav() {
 }
 const SPLIT = { magic: false };
 let CUR = [];
+const TERM_CHARTS = false;   // per-terminal charts: built, waiting for approval
 // profit / loss of every terminal (account): a bar for each, then one cumulative profit chart for each
 function renderTerminalCharts(host, T) {
   const list = [...groupBy(T, (t) => t.account)].map(([acc, arr]) => { let net = 0; for (const t of arr) net += t.net; const a = DB.accounts.get(acc) || {}; return { acc, arr, net, name: a.terminal || acc, label: (a.terminal ? a.terminal + ' · ' : '') + acc }; }).sort((x, y) => y.net - x.net);
@@ -1955,12 +1956,7 @@ function renderTab() {
       const bs = baskets(arr); const a0 = arr[0]; const acc = DB.accounts.get(a0.account) || {};
       return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
     });
-    const lead = [{ key: 'label', label: 'Magic', num: false, render: (td, v) => {
-      td.appendChild(document.createTextNode(v + ' '));
-      const x = el('button', { class: 'cm-open', type: 'button', title: 'Leave magic ' + v + ' out of all analysis (tables, charts and totals). Clear it with the x on the "Excluded magics" tag above.' }, '⊘ Exclude');
-      x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); applyExc(state.exclude.concat([String(v)])); state.page = {}; buildFilterOptions(); render(); });
-      td.appendChild(x);
-    } }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
+    const lead = [{ key: 'label', label: 'Magic', num: false }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
     const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'masterStatus', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
     const extra = (bar) => {
       bar.appendChild(toggleBtn('Split by account / terminal', split, (v) => { SPLIT.magic = v; renderTab(); }, 'One row per account and magic number, so the same magic on different terminals is not added together'));
@@ -1984,8 +1980,8 @@ function renderTab() {
     const rows = [...groupBy(T, (t) => t.symbol)].map(([k, arr]) => dimRow(k, k, arr, masterExtra(arr)));
     table(host, colsOf(STD_COLS.slice(0, 3).concat(MASTER_KEYS, STD_COLS.slice(3), ['accounts']), [{ key: 'label', label: 'Symbol' }]), rows, { tabId: id, defKey: 'net', onRow: setF('symbol'), footer: totalsFooter(T, 'label') });
   } else if (id === 'account') {
-    renderTerminalCharts(host, T);
-    host.appendChild(el('h2', { class: 'section-title' }, 'Table'));
+    if (TERM_CHARTS) renderTerminalCharts(host, T);
+    if (TERM_CHARTS) host.appendChild(el('h2', { class: 'section-title' }, 'Table'));
     const rows = [...groupBy(T, (t) => t.account)].map(([k, arr]) => { const a = DB.accounts.get(k) || {}; return dimRow(k, k, arr, { ...masterExtra(arr), machine: a.machine || '', terminal: a.terminal || '', campaign: a.campaign || '' }); });
     table(host, colsOf(STD_COLS.slice(0, 3).concat(MASTER_KEYS, STD_COLS.slice(3), ['symbols']), [{ key: 'label', label: 'Account' }, { key: 'machine', label: 'Machine' }, { key: 'terminal', label: 'Terminal' }, { key: 'campaign', label: 'Campaign' }]), rows, { tabId: id, defKey: 'net', onRow: setF('account'), footer: totalsFooter(T, 'label') });
   } else if (id === 'firsttrade') {
