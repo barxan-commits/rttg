@@ -119,6 +119,7 @@ main { padding: 16px; max-width: 1600px; margin: 0 auto; }
 .drop.over { border-color: var(--accent); background: var(--wash-pos); }
 .progress { margin: 12px 0; color: var(--text-secondary); }
 .filters { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: end; margin-bottom: 12px; }
+.filters #btnExcl { align-self: end; }
 .filters label { display: flex; flex-direction: column; font-size: 12px; color: var(--text-secondary); gap: 3px; }
 .filters select, .filters input {
   font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--border);
@@ -373,6 +374,7 @@ th.dragging { opacity: .45; }
       <label>Account <select id="fAccount"></select></label>
       <label>Campaign <select id="fCampaign"></select></label>
       <label>Magic <select id="fMagic"></select><input id="qMagic" list="dlMagic" placeholder="or type a magic…" autocomplete="off" title="Type a magic number (or part of it). Pick from the suggestions for an exact match."><datalist id="dlMagic"></datalist></label>
+      <button class="btn" id="btnExcl" type="button" title="Move the magic chosen on the left into the Exclude box: it then disappears from all analysis, and the Magic filter is cleared." disabled>Exclude ›</button>
       <label>Exclude magics <input id="qExclude" placeholder="e.g. 1781001, 664" autocomplete="off" title="Magic numbers to leave out of ALL tables, charts and totals. Separate them with commas. They stay out until you clear this box (they are remembered in this browser)."></label>
       <label>Comment <select id="fComment"></select><input id="qComment" list="dlComment" placeholder="or type a comment…" autocomplete="off" title="Type any part of a comment. Pick from the suggestions for an exact match."><datalist id="dlComment"></datalist></label>
       <label>Symbol <select id="fSymbol"></select></label>
@@ -1169,6 +1171,7 @@ function buildFilterOptions() {
   ft.value = state.faderType; $('#fCategory').value = state.category;
   fillSelect($('#fSymbol'), [...withOpen(countBy(T, (t) => t.symbol), (p) => p.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
   const qx = $('#qExclude'); if (qx && document.activeElement !== qx) qx.value = state.exclude.join(', ');
+  const be = $('#btnExcl'); if (be) { const m = String(state.magic || ''); be.disabled = !m || m === ALL_ACTIVE || m === ALL_IDLE || m.charAt(0) === '~'; }
 }
 function resetFilters(doRender = true) {
   Object.assign(state, { from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '', category: '', faderType: '' });
@@ -3482,6 +3485,10 @@ function dateInput() {
 }
 $('#fFrom').addEventListener('change', dateInput); $('#fTo').addEventListener('change', dateInput);
 $('#resetBtn').addEventListener('click', () => { applyExc([]); resetFilters(true); });
+$('#btnExcl').addEventListener('click', () => {
+  const m = String(state.magic || ''); if (!m || m === ALL_ACTIVE || m === ALL_IDLE || m.charAt(0) === '~') return;
+  applyExc(state.exclude.concat([m])); state.magic = ''; syncTyped('magic', true); state.page = {}; buildFilterOptions(); render();
+});
 function exclInput() { applyExc($('#qExclude').value.split(/[\s,;]+/)); state.page = {}; buildFilterOptions(); render(); }
 $('#qExclude').addEventListener('input', debounce(exclInput, 600));
 $('#qExclude').addEventListener('change', exclInput);
