@@ -1652,7 +1652,7 @@ const C = {
   firstN: { label: 'First trade count', num: true, f: (v) => v, title: 'Number of first (normal) copies of the fader.' },
   masterN: { label: 'Master trade count', num: true, f: (v) => v, title: 'Number of master trades the fader copied (each counted once).' },
   copying: { label: 'Copying master', num: false, f: (v) => v || '', render: (td, v, r) => {
-    if (!v) return;
+    if (!v) { if (r.copiedBy && r.copiedBy.length) renderCopiedBy(td, r.copiedBy); return; }
     const m = /^(\S+)\s+(.*?)(?:\s+\+(\d+) more)?$/.exec(v) || [0, '', v, ''];
     const go = (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(r.account, r.magic); };
     const box = el('span', { class: 'cm', title: (r.copyingAll || '') + '\n\nClick to open this fader\'s page' });
@@ -1665,7 +1665,7 @@ const C = {
     box.appendChild(el('button', { class: 'cm-open', type: 'button' }, 'Open fader ›'));
     box.addEventListener('click', go);
     td.appendChild(box);
-  }, title: 'The master strategy this fader copies (name, then its magic). "+N more" = it copies other masters too (hover to see them). Press Open to see the fader\'s full page.' },
+  }, title: 'On a fader row: the master strategy it copies (name, then its magic; "+N more" = other masters too). On a master row: "Copied by N faders" lists the faders that copy this master (hover for all, click one to open it).' },
   masterStatus: { label: 'Master status', num: false, f: (v) => v || '', title: 'Fader rows only: were the master trades found? Reasons a master is missing: the comment has no master ticket (MT4 cuts comments at about 31 characters), the master trade is still open, or it is not in the loaded data (another terminal that is not collected, or closed before the data starts: import its history in _HISTORY_IMPORT).' },
   masterDiff: { label: 'Difference $', num: true, f: money, cls: signCls, title: 'Net + Master alone: positive = the fader gains more than the master loses (or loses less than it gains); negative = the fader is worse off.' },
   mcov: { label: 'Coverage', num: true, f: pct, title: 'Share of the master strategy\'s trades (same account, magic and comment, in the selected dates) that this fader copied.' },
@@ -1703,6 +1703,36 @@ function masterExtra(arr) {
   const why = [noRef ? noRef + ' without ticket in comment' : '', stOpen ? stOpen + ' master still open' : '', stGone ? stGone + ' master not in loaded data' : ''].filter(Boolean).join(' · ');
   const masterStatus = !isF ? '' : why || 'all masters found';
   return found ? { master, masterDiff: fnet + xnet + master, mcov, copying, copyingAll, masterStatus, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, copying: '', copyingAll: '', masterStatus, ...fx };
+}
+// which faders copy each master magic: master magic -> [{account, magic, label, n, net}] (first copies in the selected dates, any account)
+let CB_CACHE = null, CB_KEY = '', CB_DB = null;
+function copiedByMap() {
+  const key = state.from + '|' + state.to + '|' + state.exclude.join(',') + '|' + DB.trades.length;
+  if (CB_CACHE && CB_KEY === key && CB_DB === DB.trades) return CB_CACHE;
+  if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
+  const tmp = new Map();
+  for (const t of DB.trades) {
+    const f = faderOf(t); if (!f.is || f.extra || !f.master) continue;
+    if ((state.from !== null && t.closeTime < state.from) || (state.to !== null && t.closeTime >= state.to) || EXCSET.has(t.magic)) continue;
+    const m = BY_TICKET.get(f.master); if (!m) continue;
+    let mm = tmp.get(m.magic); if (!mm) tmp.set(m.magic, mm = new Map());
+    const lb = f.src || f.type, k = t.magic + '|' + lb; let o = mm.get(k); if (!o) mm.set(k, o = { account: t.account, magic: t.magic, label: lb, n: 0, net: 0 });
+    if (o.account !== t.account) o.account = '';   // the same fader on several accounts is one entry; its page then shows every account
+    o.n++; o.net += t.net;
+  }
+  CB_CACHE = new Map(); for (const [mg, mm] of tmp) CB_CACHE.set(mg, [...mm.values()].sort((a, b) => b.n - a.n)); CB_KEY = key; CB_DB = DB.trades;
+  return CB_CACHE;
+}
+function renderCopiedBy(td, L) {
+  const box = el('span', { class: 'cm', style: 'cursor:default', title: L.slice(0, 40).map((x) => x.magic + ' ' + x.label + '  (' + x.n + ' trades, ' + money(x.net) + ')').join('\n') + (L.length > 40 ? '\n…' : '') });
+  box.appendChild(el('span', { class: 'cm-name' }, 'Copied by ' + L.length + ' fader' + (L.length > 1 ? 's' : '') + ':'));
+  for (const x of L.slice(0, 3)) {
+    const b = el('button', { class: 'cm-open', type: 'button', title: x.magic + ' ' + x.label + ': ' + x.n + ' copies, ' + money(x.net) + '. Click to open this fader.' }, x.magic + ' ' + x.label + ' (' + x.n + ')');
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(x.account, x.magic); });
+    box.appendChild(b);
+  }
+  if (L.length > 3) box.appendChild(el('span', { class: 'cm-more' }, '+' + (L.length - 3) + ' more'));
+  td.appendChild(box);
 }
 // how many trades each master strategy (account | magic | base comment) has in the selected dates: the denominator of Coverage
 let MC_CACHE = null, MC_KEY = '', MC_DB = null;
@@ -1954,11 +1984,11 @@ function renderTab() {
   const setF = (k) => (r) => { state[k] = r.key; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   if (id === 'magic') {
     // the same magic number can run on several accounts (e.g. one fader on two terminals): "Split by account" shows one row per account
-    const split = SPLIT.magic;
+    const split = SPLIT.magic; const CB = copiedByMap();
     const g = groupBy(T, (t) => (split ? t.account + '|' : '') + t.magic);
     const rows = [...g].map(([k, arr]) => {
       const bs = baskets(arr); const a0 = arr[0]; const acc = DB.accounts.get(a0.account) || {};
-      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
+      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), copiedBy: CB.get(a0.magic) || null, terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
     });
     const lead = [{ key: 'label', label: 'Magic', num: false }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
     const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'masterStatus', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
@@ -1997,10 +2027,10 @@ function renderTab() {
       let o = first.get(t.magic); if (!o) first.set(t.magic, o = { first: Infinity, last: -Infinity, n: 0 });
       if (a < o.first) o.first = a; if (t.closeTime > o.last) o.last = t.closeTime; o.n++;
     }
-    const now = dataMaxTime();
+    const now = dataMaxTime(); const CB = copiedByMap();
     const rows = [...groupBy(T, (t) => t.magic)].map(([k, arr]) => {
       const f = first.get(k) || { first: NaN, last: NaN, n: arr.length };
-      return dimRow(k, k, arr, { ...masterExtra(arr), firstTime: f.first, lastTime: f.last, age: Number.isFinite(f.first) ? Math.floor((now - f.first) / DAY) : NaN, allN: f.n });
+      return dimRow(k, k, arr, { ...masterExtra(arr), copiedBy: CB.get(k) || null, firstTime: f.first, lastTime: f.last, age: Number.isFinite(f.first) ? Math.floor((now - f.first) / DAY) : NaN, allN: f.n });
     });
     const cols = [{ key: 'label', label: 'Magic' }, { key: 'firstTime', label: 'First trade (added)', f: fmtTime, title: 'Open time of the very first trade of this magic number in the loaded data (any date, other filters apply)' },
       { key: 'age', label: 'Days since first trade', num: true, f: (v) => (Number.isFinite(v) ? v : '–'), title: 'Days between the first trade and the newest data' },
