@@ -373,6 +373,7 @@ th.dragging { opacity: .45; }
       <label>Account <select id="fAccount"></select></label>
       <label>Campaign <select id="fCampaign"></select></label>
       <label>Magic <select id="fMagic"></select><input id="qMagic" list="dlMagic" placeholder="or type a magic…" autocomplete="off" title="Type a magic number (or part of it). Pick from the suggestions for an exact match."><datalist id="dlMagic"></datalist></label>
+      <label>Exclude magics <input id="qExclude" placeholder="e.g. 1781001, 664" autocomplete="off" title="Magic numbers to leave out of ALL tables, charts and totals. Separate them with commas. They stay out until you clear this box (they are remembered in this browser)."></label>
       <label>Comment <select id="fComment"></select><input id="qComment" list="dlComment" placeholder="or type a comment…" autocomplete="off" title="Type any part of a comment. Pick from the suggestions for an exact match."><datalist id="dlComment"></datalist></label>
       <label>Symbol <select id="fSymbol"></select></label>
       <label>Category <select id="fCategory"><option value="">All</option><option value="other">No faders (masters and everything else)</option><option value="fader">Faders (all copies)</option><option value="first">Faders: first copies</option><option value="extra">Faders: extra copies (+#)</option></select></label>
@@ -437,8 +438,17 @@ const DB = {
 const state = {
   from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '', category: '', faderType: '',
   commentMode: 'base', tab: 'magic', sort: {}, page: {}, search: '', basketSearch: '', equityAccount: '',
-  healthSev: 'warning', cmp: { dim: 'magic', items: [], unit: 'money' }, per: { splits: null, by: 'magic' },
+  exclude: [], healthSev: 'warning', cmp: { dim: 'magic', items: [], unit: 'money' }, per: { splits: null, by: 'magic' },
 };
+
+// magic numbers left out of every table, chart and total; remembered in this browser
+let EXCSET = new Set();
+function applyExc(list) {
+  const l = [...new Set((list || []).map((x) => String(x).trim()).filter(Boolean))];
+  state.exclude = l; EXCSET = new Set(l);
+  try { localStorage.setItem('mt4dash-exclude', JSON.stringify(l)); } catch (e) { /* storage unavailable */ }
+}
+try { const sv = JSON.parse(localStorage.getItem('mt4dash-exclude') || '[]'); if (Array.isArray(sv)) { state.exclude = sv.map(String); EXCSET = new Set(state.exclude); } } catch (e) { /* ignore */ }
 
 /* ---------------- helpers ---------------- */
 const nf2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -1137,12 +1147,12 @@ function faderCatOk(x) {
   return state.category === 'fader' ? f.is : state.category === 'first' ? f.is && !f.extra : state.category === 'extra' ? f.is && f.extra : state.category === 'other' ? !f.is : true;
 }
 function buildFilterOptions() {
-  const T = DB.trades.filter(faderCatOk); const ALL = DB.trades;
+  const T = DB.trades.filter((t) => faderCatOk(t) && !EXCSET.has(t.magic)); const ALL = DB.trades;
   const accs = countBy(ALL, (t) => t.account); for (const a of DB.accounts.keys()) if (!accs.has(a)) accs.set(a, 0);
   fillActiveSelect($('#fAccount'), 'account', accs, accOption, (a, b) => naturalCmp(accSortKey(a), accSortKey(b)), 'accounts');
   fillSelect($('#fCampaign'), [...countBy(ALL, (t) => t.campaign)].sort((a, b) => b[1] - a[1]), state.campaign);
   // strategies with open positions but no closed trade yet are listed too
-  const withOpen = (m, fn) => { for (const p of DB.open) { const k = fn(p); if (!m.has(k)) m.set(k, 0); } return m; };
+  const withOpen = (m, fn) => { for (const p of DB.open) { if (EXCSET.has(p.magic)) continue; const k = fn(p); if (!m.has(k)) m.set(k, 0); } return m; };
   if (DB.active) DB.active.comment = activeValues(commentOf); // depends on "Group comments by"
   const magics = withOpen(countBy(T, (t) => t.magic), (p) => p.magic);
   const magicAccs = new Map(); for (const t of T) { let q = magicAccs.get(t.magic); if (!q) magicAccs.set(t.magic, q = new Set()); q.add(t.account); }
@@ -1158,6 +1168,7 @@ function buildFilterOptions() {
   if (state.faderType && !typeN.has(state.faderType)) state.faderType = '';
   ft.value = state.faderType; $('#fCategory').value = state.category;
   fillSelect($('#fSymbol'), [...withOpen(countBy(T, (t) => t.symbol), (p) => p.symbol)].sort((a, b) => a[0].localeCompare(b[0])), state.symbol);
+  const qx = $('#qExclude'); if (qx && document.activeElement !== qx) qx.value = state.exclude.join(', ');
 }
 function resetFilters(doRender = true) {
   Object.assign(state, { from: null, to: null, preset: 'all', account: '', campaign: '', magic: '', comment: '', symbol: '', side: '', category: '', faderType: '' });
@@ -1170,6 +1181,7 @@ function matchDims(t, skipDate, skipFader) {
   if (!dimOk('account', t.account)) return false;
   if (state.campaign && t.campaign !== state.campaign) return false;
   if (!dimOk('magic', t.magic)) return false;
+  if (EXCSET.size && EXCSET.has(t.magic)) return false;
   if (state.symbol && t.symbol !== state.symbol) return false;
   if (state.side && t.type !== state.side) return false;
   if (!skipFader && !faderOk(t)) return false;
@@ -1288,7 +1300,7 @@ function renderKPIs(T, s) {
   tile('Max drawdown (closed)', money(-s.maxDD), 'Recovery factor ' + fmtNum(s.recovery, 2), s.maxDD > 0 ? 'neg' : '');
   // equity drawdown including floating, per account (prop-firm style): show the worst account in view
   // equity and floating loss exist per ACCOUNT only: with a magic / comment / symbol ... filter they would show other EAs' losses
-  const dimFilter = state.magic || state.comment || state.symbol || state.side || state.category || state.faderType;
+  const dimFilter = state.magic || state.comment || state.symbol || state.side || state.category || state.faderType || EXCSET.size;
   const eqs = dimFilter ? [] : accountsInView().map(equityStats).filter((e) => e.n);
   const worstDD = eqs.reduce((w, e) => (!w || e.maxDD > w.maxDD ? e : w), null);
   const worstFl = eqs.reduce((w, e) => (Number.isFinite(e.worstFl) && (!w || e.worstFl < w.worstFl) ? e : w), null);
@@ -1913,7 +1925,12 @@ function renderTab() {
       const bs = baskets(arr); const a0 = arr[0]; const acc = DB.accounts.get(a0.account) || {};
       return dimRow(k, a0.magic, arr, { ...masterExtra(arr), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
     });
-    const lead = [{ key: 'label', label: 'Magic', num: false }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
+    const lead = [{ key: 'label', label: 'Magic', num: false, render: (td, v) => {
+      td.appendChild(document.createTextNode(v + ' '));
+      const x = el('button', { class: 'cm-open', type: 'button', title: 'Leave magic ' + v + ' out of all analysis (tables, charts and totals). Clear it with the x on the "Excluded magics" tag above.' }, '⊘ Exclude');
+      x.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); applyExc(state.exclude.concat([String(v)])); state.page = {}; buildFilterOptions(); render(); });
+      td.appendChild(x);
+    } }].concat(split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }] : []);
     const cols = colsOf(['comments'].concat(STD_COLS.slice(0, 3), ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'masterStatus', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
     const extra = (bar) => {
       bar.appendChild(toggleBtn('Split by account / terminal', split, (v) => { SPLIT.magic = v; renderTab(); }, 'One row per account and magic number, so the same magic on different terminals is not added together'));
@@ -2436,7 +2453,7 @@ function renderTrades(host, T) {
   } });
 }
 function openFiltered() {
-  return DB.open.filter((p) => dimOk('account', p.account) && (!state.campaign || p.campaign === state.campaign) && dimOk('magic', p.magic)
+  return DB.open.filter((p) => dimOk('account', p.account) && (!state.campaign || p.campaign === state.campaign) && dimOk('magic', p.magic) && !EXCSET.has(p.magic)
     && (!state.symbol || p.symbol === state.symbol) && (!state.side || p.type === state.side) && faderOk(p) && dimOk('comment', commentOf(p)));
 }
 function renderOpen(host) {
@@ -3055,7 +3072,7 @@ function syncFilterInputs() {
   $('#fCommentMode').value = state.commentMode;
 }
 // ---- filter history (← Back) and the chips of the active filters ----
-const FKEYS = ['from', 'to', 'preset', 'account', 'campaign', 'magic', 'comment', 'symbol', 'side', 'category', 'faderType', 'commentMode'];
+const FKEYS = ['from', 'to', 'preset', 'account', 'campaign', 'magic', 'comment', 'symbol', 'side', 'category', 'faderType', 'commentMode', 'exclude'];
 const HIST = []; let LAST_SNAP = null, RESTORING = false;
 const filterSnap = () => JSON.stringify(FKEYS.map((k) => state[k]));
 function trackHistory() {
@@ -3067,6 +3084,7 @@ function trackHistory() {
 function goBack() {
   const prev = HIST.pop(); if (!prev) return;
   const vals = JSON.parse(prev); FKEYS.forEach((k, i) => { state[k] = vals[i]; });
+  applyExc(state.exclude);
   RESTORING = true;
   $('#fFrom').value = Number.isFinite(state.from) ? fmtDate(state.from) : ''; $('#fTo').value = Number.isFinite(state.to) ? fmtDate(state.to - DAY) : '';
   for (const b of document.querySelectorAll('#presets button')) b.classList.toggle('on', b.dataset.p === state.preset);
@@ -3080,6 +3098,7 @@ function renderChips() {
   if (state.faderType) items.push(['Fader type', state.faderType, () => { state.faderType = ''; buildFilterOptions(); }]);
   if (state.account) items.push(['Account', sel('#fAccount') || state.account, () => { state.account = ''; buildFilterOptions(); }]);
   if (state.campaign) items.push(['Campaign', state.campaign, () => { state.campaign = ''; buildFilterOptions(); }]);
+  if (state.exclude.length) items.push(['Excluded magics', state.exclude.join(', '), () => { applyExc([]); buildFilterOptions(); }]);
   if (state.magic) items.push(['Magic', sel('#fMagic') || state.magic, () => { state.magic = ''; buildFilterOptions(); }]);
   if (state.comment) items.push(['Comment', sel('#fComment') || state.comment, () => { state.comment = ''; buildFilterOptions(); }]);
   if (state.symbol) items.push(['Symbol', state.symbol, () => { state.symbol = ''; buildFilterOptions(); }]);
@@ -3462,7 +3481,11 @@ function dateInput() {
   state.page = {}; render();
 }
 $('#fFrom').addEventListener('change', dateInput); $('#fTo').addEventListener('change', dateInput);
-$('#resetBtn').addEventListener('click', () => resetFilters(true));
+$('#resetBtn').addEventListener('click', () => { applyExc([]); resetFilters(true); });
+function exclInput() { applyExc($('#qExclude').value.split(/[\s,;]+/)); state.page = {}; buildFilterOptions(); render(); }
+$('#qExclude').addEventListener('input', debounce(exclInput, 600));
+$('#qExclude').addEventListener('change', exclInput);
+$('#qExclude').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); exclInput(); $('#qExclude').blur(); } });
 $('#summary').addEventListener('click', () => $('#summary').classList.toggle('open'));
 $('#backBtn').addEventListener('click', goBack);
 $('#themeBtn').addEventListener('click', () => {
