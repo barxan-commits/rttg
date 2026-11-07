@@ -308,11 +308,14 @@ header.top { position: -webkit-sticky; position: sticky; top: 0; z-index: 50; }
   .tablewrap { max-height: 78vh; }
   #buildPop { position: fixed; top: 8px; }
 }
+.col-ghost { position: fixed; z-index: 100; pointer-events: none; padding: 4px 10px; background: var(--accent); color: #fff; border-radius: 6px; font-size: 12px; opacity: .92; box-shadow: 0 4px 14px rgba(0,0,0,.35); }
+.col-drop { position: fixed; z-index: 99; width: 3px; background: var(--accent); pointer-events: none; border-radius: 2px; }
+th.dragging { opacity: .45; }
 /* ---- touch screens: a wide, visible grip on the right edge of every column header (drag it to change the width) ---- */
 @media (pointer: coarse) {
   th .rz { width: 22px; border-right: 3px solid rgba(59,130,246,.55); }
   th .rz:active { background: rgba(59,130,246,.35); }
-  th { padding-right: 20px; }
+  th { padding-right: 20px; touch-action: none; }
 }
 </style>
 </head>
@@ -1697,6 +1700,16 @@ function sortRows(rows, tabId, defKey, defDir) {
 // column widths the user dragged, per table and column, kept in this browser
 const COLW = (() => { try { return JSON.parse(localStorage.getItem('mt4dash-colw') || '{}') || {}; } catch (e) { return {}; } })();
 function saveColW() { try { localStorage.setItem('mt4dash-colw', JSON.stringify(COLW)); } catch (e) { /* storage unavailable */ } }
+// the order of the columns the user dragged, per table, kept in this browser
+const COLORD = (() => { try { return JSON.parse(localStorage.getItem('mt4dash-colord') || '{}') || {}; } catch (e) { return {}; } })();
+function saveColOrd() { try { localStorage.setItem('mt4dash-colord', JSON.stringify(COLORD)); } catch (e) { /* storage unavailable */ } }
+function orderCols(cols, tabId) {
+  const saved = COLORD[tabId]; if (!saved || !saved.length) return cols;
+  const by = new Map(cols.map((c) => [c.key, c])), out = [];
+  for (const k of saved) if (by.has(k)) { out.push(by.get(k)); by.delete(k); }
+  for (const c of cols) if (by.has(c.key)) out.push(c);   // columns the saved order does not know yet go last
+  return out;
+}
 function setColW(tbl, idx, px) {
   const v = px ? px + 'px' : '';
   for (const r of tbl.rows) {
@@ -1707,6 +1720,7 @@ function setColW(tbl, idx, px) {
 }
 // cols: [{key, label, num, f, cls}], rows: objects. opts: {tabId, onRow, pageSize, footer}
 function table(host, cols, rows, opts) {
+  cols = orderCols(cols, opts.tabId);
   const st = sortRows(rows, opts.tabId, opts.defKey, opts.defDir || 'desc');
   const toolbar = el('div', { class: 'toolbar' });
   toolbar.appendChild(el('span', { class: 'muted' }, rows.length.toLocaleString('en-US') + ' rows' + (opts.onRow ? ' · ' + (opts.rowHint || 'click a row to filter') : '')));
@@ -1714,14 +1728,20 @@ function table(host, cols, rows, opts) {
   exp.addEventListener('click', () => exportCSV(cols, rows, opts.exportName || opts.tabId));
   toolbar.appendChild(exp);
   if (opts.toolbarExtra) opts.toolbarExtra(toolbar);
+  if (COLORD[opts.tabId]) {
+    const rb = el('button', { class: 'btn small', type: 'button', title: 'Put the columns of this table back in their original order' }, '↺ Column order');
+    rb.addEventListener('click', () => { delete COLORD[opts.tabId]; saveColOrd(); renderTab(); });
+    toolbar.appendChild(rb);
+  }
   host.appendChild(toolbar);
   const wrap = el('div', { class: 'tablewrap' }); const tbl = el('table');
   const thead = el('thead'); const hr = el('tr');
   for (let ci = 0; ci < cols.length; ci++) {
     const c = cols[ci];
-    const th = el('th', { class: c.num ? 'num' : '', title: c.title || '' }, c.label);
+    const th = el('th', { class: c.num ? 'num' : '', title: (c.title ? c.title + '\n' : '') + 'Drag the header sideways to move this column' }, c.label);
     if (st.key === c.key) th.appendChild(el('span', { class: 'arrow' }, st.dir === 'asc' ? ' ▲' : ' ▼'));
     th.addEventListener('click', () => {
+      if (th._noClick) { th._noClick = false; return; }
       const cur = state.sort[opts.tabId] || { key: opts.defKey, dir: opts.defDir || 'desc' };
       state.sort[opts.tabId] = { key: c.key, dir: cur.key === c.key && cur.dir === 'desc' ? 'asc' : 'desc' };
       state.page[opts.tabId] = 0; renderTab();
@@ -1738,6 +1758,47 @@ function table(host, cols, rows, opts) {
       rz.addEventListener('pointermove', mv); rz.addEventListener('pointerup', up);
     });
     th.appendChild(rz);
+    // drag a header sideways to move the column (a mouse drags at once; a finger touches and holds for a moment first)
+    th.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || (e.target.closest && e.target.closest('.rz'))) return;
+      const touch = e.pointerType !== 'mouse'; const x0 = e.clientX, y0 = e.clientY, pid = e.pointerId;
+      let armed = !touch, dragging = false, timer = null, ghost = null, line = null, drop = ci;
+      const ths = () => [...hr.children];
+      const begin = () => {
+        dragging = true; th.classList.add('dragging');
+        ghost = el('div', { class: 'col-ghost' }, c.label); document.body.appendChild(ghost);
+        line = el('div', { class: 'col-drop' }); document.body.appendChild(line);
+      };
+      const target = (x) => { const a = ths(); for (let i = 0; i < a.length; i++) { const b = a[i].getBoundingClientRect(); if (x < b.left + b.width / 2) return i; } return a.length; };
+      const cleanup = () => {
+        clearTimeout(timer); th.classList.remove('dragging');
+        th.removeEventListener('pointermove', mv); th.removeEventListener('pointerup', up); th.removeEventListener('pointercancel', cleanup);
+        if (ghost) ghost.remove(); if (line) line.remove(); ghost = line = null;
+        try { th.releasePointerCapture(pid); } catch (err) { /* not captured */ }
+      };
+      const mv = (ev) => {
+        if (!dragging) {
+          if (touch && !armed) { if (Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) > 10) cleanup(); return; }
+          if (Math.abs(ev.clientX - x0) < 6) return;
+          begin();
+        }
+        ghost.style.left = ev.clientX + 10 + 'px'; ghost.style.top = ev.clientY + 10 + 'px';
+        drop = target(ev.clientX); const a = ths(), last = a[a.length - 1].getBoundingClientRect(), at = drop < a.length ? a[drop].getBoundingClientRect() : last;
+        line.style.left = (drop < a.length ? at.left : last.right) - 1 + 'px'; line.style.top = at.top + 'px'; line.style.height = at.height + 'px';
+        const wr = wrap.getBoundingClientRect(); if (ev.clientX > wr.right - 40) wrap.scrollLeft += 18; else if (ev.clientX < wr.left + 40) wrap.scrollLeft -= 18;
+      };
+      const up = () => {
+        const was = dragging, to = drop; cleanup();
+        if (!was) return;
+        th._noClick = true; setTimeout(() => { th._noClick = false; }, 60);
+        if (to === ci || to === ci + 1) return;
+        const keys = cols.map((k) => k.key); keys.splice(ci, 1); keys.splice(to > ci ? to - 1 : to, 0, c.key);
+        COLORD[opts.tabId] = keys; saveColOrd(); renderTab();
+      };
+      try { th.setPointerCapture(pid); } catch (err) { /* ignore */ }
+      th.addEventListener('pointermove', mv); th.addEventListener('pointerup', up); th.addEventListener('pointercancel', cleanup);
+      if (touch) timer = setTimeout(() => { armed = true; try { navigator.vibrate && navigator.vibrate(15); } catch (err) { /* ignore */ } begin(); }, 380);
+    });
     hr.appendChild(th);
   }
   thead.appendChild(hr); tbl.appendChild(thead);
