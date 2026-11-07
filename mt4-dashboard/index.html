@@ -319,6 +319,12 @@ th.dragging { opacity: .45; }
   th { padding-right: 20px; touch-action: none; }
 }
 </style>
+<style>
+.term-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.term-card { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: var(--surface-1); min-width: 0; }
+.term-head { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; font-weight: 600; cursor: pointer; flex-wrap: wrap; }
+.term-head:hover { color: var(--accent); }
+</style>
 </head>
 <body>
 <header class="top">
@@ -1916,6 +1922,27 @@ function renderTabsNav() {
 }
 const SPLIT = { magic: false };
 let CUR = [];
+// profit / loss of every terminal (account): a bar for each, then one cumulative profit chart for each
+function renderTerminalCharts(host, T) {
+  const list = [...groupBy(T, (t) => t.account)].map(([acc, arr]) => { let net = 0; for (const t of arr) net += t.net; const a = DB.accounts.get(acc) || {}; return { acc, arr, net, name: a.terminal || acc, label: (a.terminal ? a.terminal + ' · ' : '') + acc }; }).sort((x, y) => y.net - x.net);
+  if (!list.length) return;
+  const total = list.reduce((s, x) => s + x.net, 0), win = list.filter((x) => x.net > 0).length;
+  const go = (acc) => { state.account = acc; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+  host.appendChild(el('h2', null, 'Profit / loss per terminal'));
+  host.appendChild(el('p', { class: 'sub' }, list.length + ' terminals · all together ' + money(total) + ' · ' + win + ' in profit, ' + (list.length - win) + ' at a loss. Other filters (period, magic, exclusions…) apply. Click a bar or a chart title to filter by that terminal.'));
+  const bc = el('div', { class: 'chart' }); host.appendChild(bc);
+  barChartH(bc, list.map((x) => ({ label: x.name, v: x.net, sub: x.acc + ' · ' + x.arr.length.toLocaleString('en-US') + ' trades', acc: x.acc })), (it) => go(it.acc));
+  host.appendChild(el('h2', { class: 'section-title' }, 'Cumulative profit of each terminal'));
+  const grid = el('div', { class: 'term-grid' }); host.appendChild(grid);
+  for (const x of list) {
+    const card = el('div', { class: 'term-card' }); const head = el('div', { class: 'term-head', title: 'Click to filter the dashboard to this terminal' });
+    head.appendChild(el('span', null, x.label)); head.appendChild(el('span', { class: signCls(x.net) }, money(x.net) + '  ·  ' + x.arr.length.toLocaleString('en-US') + ' trades'));
+    head.addEventListener('click', () => go(x.acc)); card.appendChild(head);
+    const ch = el('div', { class: 'chart' }); card.appendChild(ch); grid.appendChild(card);
+    const pts = []; let cum = 0; for (const t of x.arr) { cum += t.net; pts.push([t.closeTime, cum]); }
+    lineChart(ch, [{ name: x.label, color: cssVar(x.net >= 0 ? '--series-1' : '--series-8'), pts: downsample(pts, 300) }], { height: 130, zero: true, label: 'cumulative profit of ' + x.label });
+  }
+}
 function renderTab() {
   const host = $('#tabBody'); host.textContent = ''; tip.hide();
   const T = CUR; const id = state.tab;
@@ -1957,6 +1984,8 @@ function renderTab() {
     const rows = [...groupBy(T, (t) => t.symbol)].map(([k, arr]) => dimRow(k, k, arr, masterExtra(arr)));
     table(host, colsOf(STD_COLS.slice(0, 3).concat(MASTER_KEYS, STD_COLS.slice(3), ['accounts']), [{ key: 'label', label: 'Symbol' }]), rows, { tabId: id, defKey: 'net', onRow: setF('symbol'), footer: totalsFooter(T, 'label') });
   } else if (id === 'account') {
+    renderTerminalCharts(host, T);
+    host.appendChild(el('h2', { class: 'section-title' }, 'Table'));
     const rows = [...groupBy(T, (t) => t.account)].map(([k, arr]) => { const a = DB.accounts.get(k) || {}; return dimRow(k, k, arr, { ...masterExtra(arr), machine: a.machine || '', terminal: a.terminal || '', campaign: a.campaign || '' }); });
     table(host, colsOf(STD_COLS.slice(0, 3).concat(MASTER_KEYS, STD_COLS.slice(3), ['symbols']), [{ key: 'label', label: 'Account' }, { key: 'machine', label: 'Machine' }, { key: 'terminal', label: 'Terminal' }, { key: 'campaign', label: 'Campaign' }]), rows, { tabId: id, defKey: 'net', onRow: setF('account'), footer: totalsFooter(T, 'label') });
   } else if (id === 'firsttrade') {
