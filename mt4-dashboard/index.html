@@ -1876,13 +1876,13 @@ function renderTab() {
     const now = dataMaxTime();
     const rows = [...groupBy(T, (t) => t.magic)].map(([k, arr]) => {
       const f = first.get(k) || { first: NaN, last: NaN, n: arr.length };
-      return dimRow(k, k, arr, { firstTime: f.first, lastTime: f.last, age: Number.isFinite(f.first) ? Math.floor((now - f.first) / DAY) : NaN, allN: f.n });
+      return dimRow(k, k, arr, { ...masterExtra(arr), firstTime: f.first, lastTime: f.last, age: Number.isFinite(f.first) ? Math.floor((now - f.first) / DAY) : NaN, allN: f.n });
     });
     const cols = [{ key: 'label', label: 'Magic' }, { key: 'firstTime', label: 'First trade (added)', f: fmtTime, title: 'Open time of the very first trade of this magic number in the loaded data (any date, other filters apply)' },
       { key: 'age', label: 'Days since first trade', num: true, f: (v) => (Number.isFinite(v) ? v : '–'), title: 'Days between the first trade and the newest data' },
       { key: 'lastTime', label: 'Last trade', f: fmtTime, title: 'Close time of its latest trade' }, { key: 'allN', label: 'Trades (all dates)', num: true, f: (v) => v.toLocaleString('en-US') }]
-      .concat(['comments'].map(statCol), ['n', 'winRate', 'net', 'pf', 'exp', 'lots', 'accounts', 'symbols'].map(statCol));
-    host.appendChild(el('p', { class: 'sub' }, 'Newest strategies first. First trade and Last trade cover all dates; Trades, Win %, Net and the columns after them are for the period selected above. Click a row to filter by it.'));
+      .concat(['comments'].map(statCol), STD_COLS.slice(0, 3).map(statCol), MASTER_KEYS.map(statCol), ['pf', 'exp', 'lots', 'accounts', 'symbols'].map(statCol));
+    host.appendChild(el('p', { class: 'sub' }, 'Newest strategies first. First trade and Last trade cover all dates; Trades, Win %, Net, the fader / master columns (Copying master, Coverage ...) and the columns after them are for the period selected above. Click a row to filter by it.'));
     table(host, cols, rows, { tabId: id, defKey: 'firstTime', onRow: setF('magic'), footer: totalsFooter(T, 'label') });
   } else if (id === 'campaign') {
     const rows = [...groupBy(T, (t) => t.campaign)].map(([k, arr]) => dimRow(k, k, arr, masterExtra(arr)));
