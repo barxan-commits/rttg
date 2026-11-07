@@ -1813,7 +1813,12 @@ function table(host, cols, rows, opts) {
       if (c.render) c.render(td, v, r); else td.textContent = c.f ? c.f(v) : (v ?? '');
       tr.appendChild(td);
     }
-    if (opts.onRow) tr.addEventListener('click', () => opts.onRow(r));
+    // marking text in a cell (to copy it) must not count as a click on the row: that filtered the page and scrolled it to the top
+    if (opts.onRow) {
+      let dx = 0, dy = 0;
+      tr.addEventListener('pointerdown', (e) => { dx = e.clientX; dy = e.clientY; });
+      tr.addEventListener('click', (e) => { if (Math.abs(e.clientX - dx) + Math.abs(e.clientY - dy) > 5) return; opts.onRow(r); });
+    }
     tb.appendChild(tr);
   }
   tbl.appendChild(tb);
