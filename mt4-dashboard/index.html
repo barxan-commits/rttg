@@ -2786,9 +2786,9 @@ function renderHealthTodo(host, rows) {
   const ul = el('ul', { class: 'todo' });
   for (const [label, test, text] of kinds) {
     const hit = rows.filter(test); if (!hit.length) continue;
-    const idle = hit[0].level === 'idle';
+    const idle = hit[0].level === 'idle'; const withErr = label === 'Critical' || label === 'Errors';
     const li = el('li', idle ? { class: 'muted' } : null); li.appendChild(pill(hit[0].level, label));
-    li.appendChild(el(idle ? 'span' : 'b', null, ' ' + hit.map((r) => r.terminal).join(', ') + ': '));
+    li.appendChild(el(idle ? 'span' : 'b', null, ' ' + hit.map((r) => r.terminal + (withErr && Number.isFinite(r.lastErr) ? ' (last error ' + fmtTime(r.lastErr) + ')' : '')).join(', ') + ': '));
     li.appendChild(document.createTextNode(text)); ul.appendChild(li);
   }
   if (!ul.children.length) return;
