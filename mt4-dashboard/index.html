@@ -320,18 +320,18 @@ th.dragging { opacity: .45; }
 }
 
 /* ---- roster tab ---- */
-.ros-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; margin: 10px 0 14px; }
-.ros-card { background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--c-blue, #3b82f6); border-radius: 10px; padding: 12px 14px; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.ros-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(430px, 1fr)); gap: 12px; margin: 10px 0 14px; }
+.ros-card { background: var(--surface-1); border: 1px solid var(--border); border-left: 3px solid var(--c-blue, #3b82f6); border-radius: 10px; padding: 16px 18px; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
 .ros-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
-.ros-name { font-weight: 600; font-size: 14.5px; line-height: 1.3; word-break: break-word; }
+.ros-name { font-weight: 600; font-size: 16px; line-height: 1.3; word-break: break-word; }
 .ros-id { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 13px; }
 .ros-id strong { font-variant-numeric: tabular-nums; font-size: 15px; }
-.ros-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
+.ros-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
 .ros-tile { background: var(--surface-2); border-radius: 8px; padding: 5px 8px; min-width: 0; }
 .ros-tile .label { font-size: 11px; color: var(--text-muted); }
-.ros-tile .value { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ros-tile .value { font-size: 14.5px; font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ros-spark svg { display: block; width: 100%; height: 30px; }
-.ros-desc { margin: 0; font-size: 13px; color: var(--text-secondary); }
+.ros-desc { margin: 0; font-size: 14px; color: var(--text-secondary); }
 .ros-pills { display: flex; flex-wrap: wrap; gap: 5px; }
 .ros-rel { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; }
 .ros-actions { display: flex; gap: 8px; }
@@ -3255,6 +3255,9 @@ function rosterCard(e, arr, CB, mode, first) {
   if (arr.length) {
     s = stats(arr); tl('Net', money(s.net), signCls(s.net), 'Profit + commission + swap of its closed trades in the selected period'); tl('Trades', s.n.toLocaleString('en-US')); tl('Win %', pct(s.winRate)); tl('PF', ratio(s.pf), '', 'Profit factor: gross profit / gross loss');
     tl('Expectancy', money(s.exp), signCls(s.exp), 'Average result per trade'); tl('Last trade', s.last ? fmtDate(s.last) : '–');
+    tl('Avg win', money(s.avgWin), signCls(s.avgWin), 'Average result of the winning trades'); tl('Avg loss', money(s.avgLoss), signCls(s.avgLoss), 'Average result of the losing trades');
+    tl('Loss : win', Number.isFinite(s.payoff) ? '1 : ' + (s.payoff >= 10 ? Math.round(s.payoff) : Math.round(s.payoff * 100) / 100) : '–', '', 'Average loss compared with the average win (payoff ratio): 1 : 2 means the average win is twice the average loss. Above 1 = wins are bigger than losses.');
+    const bsk = baskets(arr); tl('Worst basket', bsk.length ? money(minOf(bsk.map((b) => b.net))) : '–', bsk.length ? 'neg' : '', bsk.length ? 'Biggest loss of one basket (trades of this magic opened together in the same direction) in the selected period: ' + bsk.length + ' baskets' : 'No basket ids for this magic (collector v2.04+ writes them)'); tl('Worst trade', money(s.maxLoss), signCls(s.maxLoss), 'Biggest single losing trade');
     tl('Max drawdown', s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD), 'Biggest fall from a peak of the cumulative result of this magic\'s CLOSED trades in the selected period (floating loss while trades were open is not included)');
     const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opn = op.reduce((a, o) => a + (Number.isFinite(o.pnl) ? o.pnl : 0), 0);
     tl('Open now', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, floating P/L as of the last snapshot' : 'No open positions of this magic');
