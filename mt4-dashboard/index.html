@@ -970,7 +970,7 @@ async function loadSources(files) {
     done++;
     if (done % 5 === 0) { showProgress('Reading files… ' + done + ' / ' + files.length); await new Promise((r) => setTimeout(r, 0)); }
   }
-  BY_TICKET = null; BY_ACC_TICKET = null; TK_CLOSED = null; TK_OPEN = null; TK_DB = null; MC_CACHE = null; MC_DB = null;   // lookups built on the old data must not keep it alive
+  BY_TICKET = null; BY_ACC_TICKET = null; TK_CLOSED = null; TK_OPEN = null; TK_DB = null; MC_CACHE = null; MC_DB = null; FS_CACHE = null; MO_CACHE = null;   // lookups built on the old data must not keep it alive
   DB.trades = Array.from(TRADE_MAP.values()).sort((a, b) => a.closeTime - b.closeTime || (a.ticket < b.ticket ? -1 : 1));
   TRADE_MAP = new Map();
   fixBrokerComments();
@@ -1710,7 +1710,7 @@ const C = {
   strategy: { label: 'Strategy', num: false, f: (v) => v || '', title: 'Name of this magic number from the research roster (Roster tab).' },
   about: { label: 'What it does', num: false, render: (td, v) => { td.textContent = v || ''; td.title = v || ''; td.style.maxWidth = '300px'; td.style.overflow = 'hidden'; td.style.textOverflow = 'ellipsis'; }, f: (v) => v || '', title: 'Plain-language description from the research roster (hover for the full text).' },
   masterDiff: { label: 'Difference $', num: true, f: money, cls: signCls, title: 'Net + Master alone: positive = the fader gains more than the master loses (or loses less than it gains); negative = the fader is worse off.' },
-  mcov: { label: 'Coverage', num: true, f: pct, title: 'Share of the master strategy\'s trades (same account, magic and comment, in the selected dates) that this fader copied.' },
+  mcov: { label: 'Coverage', num: true, f: pct, title: 'Share of the master strategy\'s trades (same account, magic and comment) that this fader copied, counted from the moment its first copied master trade opened (before that the fader did not exist). Copies still open count as copied, and master trades still open count in the total.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
   basketWin: { label: 'Basket win %', num: true, f: pct },
   worstBasket: { label: 'Worst basket', num: true, f: money },
@@ -1722,11 +1722,11 @@ let BY_TICKET = null;
 function masterExtra(arr) {
   if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
   const seen = new Set(); let master = 0, found = 0, fnet = 0, xnet = 0, xn = 0, isF = false; const who = new Map(); const mkeys = new Set();
-  let noRef = 0, stOpen = 0, stGone = 0; const chk = new Set();
+  let noRef = 0, stOpen = 0, stGone = 0; const chk = new Set(); const fkeys = new Set();
   for (const t of arr) {
     const f = faderOf(t); if (!f.is) continue; isF = true;
     if (f.extra) { xn++; xnet += t.net; continue; }
-    fnet += t.net;
+    fnet += t.net; fkeys.add(t.account + '|' + t.magic);
     if (!f.master) noRef++;
     else if (!chk.has(f.master)) { chk.add(f.master); tkMaps(); if (!TK_CLOSED.has(f.master)) { if (TK_OPEN.has(f.master)) stOpen++; else stGone++; } }
     if (f.master && !seen.has(f.master)) {
@@ -1740,8 +1740,21 @@ function masterExtra(arr) {
   const copyingAll = top.slice(0, 25).map(([k, n]) => k + '  (' + n + ' trades)').join('\n') + (top.length > 25 ? '\n…' : '');
   const copyingList = top.map(([k, n]) => { const sp = k.indexOf(' '); return { magic: k.slice(0, sp), label: k.slice(sp + 1), n }; });
   const fx = isF ? { firsts: fnet, extras: xn ? xnet : NaN, extraN: xn || '', firstN: arr.filter((t) => { const f = faderOf(t); return f.is && !f.extra; }).length, masterN: found } : { firsts: NaN, extras: NaN, extraN: '', firstN: '', masterN: '' };
-  let den = 0; if (mkeys.size) { const mc = masterCounts(); for (const k of mkeys) den += mc.get(k) || 0; }
-  const mcov = found && den ? found / den : NaN;
+  // Coverage = master trades this fader copied / master trades it could have copied. Copied = closed copies + copies still open;
+  // could have copied = the master's trades (closed in the dates, plus still open) from the moment its first copied master trade opened (older master trades cannot be copied: the fader did not exist yet)
+  let since = Infinity, openCopied = 0;
+  if (fkeys.size) {
+    const FS = faderSince(); for (const k of fkeys) { const v = FS.get(k); if (v < since) since = v; }
+    const counted = new Set();
+    for (const o of openFiltered()) {
+      if (!fkeys.has(o.account + '|' + o.magic)) continue;
+      const f = faderOf(o); if (!f.is || f.extra || !f.master || seen.has(f.master) || counted.has(f.master)) continue;
+      const mo = BY_TICKET.get(f.master) || TK_OPEN.get(f.master); if (!mo) continue;
+      counted.add(f.master); openCopied++; mkeys.add(masterKeyOf(mo));
+    }
+  }
+  let den = 0; if (mkeys.size) { const mt = masterTimes(), mo2 = masterOpenTimes(); for (const k of mkeys) { for (const o of mt.get(k) || []) if (o >= since) den++; for (const o of mo2.get(k) || []) if (o >= since) den++; } }
+  const mcov = found && den ? Math.min(1, (found + openCopied) / den) : NaN;
   // why a fader row has no (or only some) master: the comment has no master ticket, the master is still open, or it is not in the loaded data
   const why = [noRef ? noRef + ' without ticket in comment' : '', stOpen ? stOpen + ' master still open' : '', stGone ? stGone + ' master not in loaded data' : ''].filter(Boolean).join(' · ');
   const masterStatus = !isF ? '' : why || 'all masters found';
@@ -1812,17 +1825,39 @@ function renderCopiedBy(td, L) {
   td.appendChild(box);
 }
 // how many trades each master strategy (account | magic | base comment) has in the selected dates: the denominator of Coverage
-let MC_CACHE = null, MC_KEY = '', MC_DB = null;
-function masterCounts() {
+let MC_CACHE = null, MC_KEY = '', MC_DB = null, FS_CACHE = null, FS_KEY = '', MO_CACHE = null, MO_KEY = '';
+// open times of the CLOSED master trades of each master strategy (account, magic, comment) in the selected dates
+function masterTimes() {
   const key = state.from + '|' + state.to;
   if (MC_CACHE && MC_KEY === key && MC_DB === DB.trades) return MC_CACHE;
   MC_CACHE = new Map(); MC_KEY = key; MC_DB = DB.trades;
   for (const t of DB.trades) {
     if (faderOf(t).is) continue;
     if ((state.from !== null && t.closeTime < state.from) || (state.to !== null && t.closeTime >= state.to)) continue;
-    const k = masterKeyOf(t); MC_CACHE.set(k, (MC_CACHE.get(k) || 0) + 1);
+    const k = masterKeyOf(t); let a = MC_CACHE.get(k); if (!a) MC_CACHE.set(k, a = []); a.push(Number.isFinite(t.openTime) ? t.openTime : t.closeTime);
   }
   return MC_CACHE;
+}
+// open times of the master trades that are still open
+function masterOpenTimes() {
+  const key = DB.open.length + '|' + DB.trades.length;
+  if (MO_CACHE && MO_KEY === key) return MO_CACHE;
+  MO_CACHE = new Map(); MO_KEY = key;
+  for (const o of DB.open) { if (faderOf(o).is) continue; const k = masterKeyOf(o); let a = MO_CACHE.get(k); if (!a) MO_CACHE.set(k, a = []); a.push(o.openTime); }
+  return MO_CACHE;
+}
+// per fader (account|magic): when the first master trade it copied was opened, in all loaded data (closed and open copies). Coverage counts master trades from then on.
+function faderSince() {
+  const key = DB.trades.length + '|' + DB.open.length;
+  if (FS_CACHE && FS_KEY === key) return FS_CACHE;
+  FS_CACHE = new Map(); FS_KEY = key; tkMaps();
+  const see = (x) => {
+    const f = faderOf(x); if (!f.is || f.extra || !f.master) return;
+    const m = TK_CLOSED.get(f.master) || TK_OPEN.get(f.master); if (!m) return;
+    const o = Number.isFinite(m.openTime) ? m.openTime : m.closeTime; const k = x.account + '|' + x.magic; const c = FS_CACHE.get(k); if (c === undefined || o < c) FS_CACHE.set(k, o);
+  };
+  for (const t of DB.trades) see(t); for (const o of DB.open) see(o);
+  return FS_CACHE;
 }
 const MASTER_KEYS = ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'mratio', 'masterStatus', 'copying'];   // shown after Trades / Win % / Net everywhere
 const statCol = (k) => Object.assign({ key: k }, C[k]);
@@ -2184,16 +2219,24 @@ function ticketLookup(account, ticket) {
   return BY_ACC_TICKET.get(account + '|' + ticket) || BY_TICKET.get(ticket);
 }
 const masterKeyOf = (m) => m.account + '|' + m.magic + '|' + baseOf(m.base, m.comment);
+// master trades a fader could have copied: those (closed in the dates, plus still open) from when its first copied master trade opened
+function faCovDen(x, m) {
+  const s = faderSince().get(x.account + '|' + x.magic); let d = 0;
+  for (const o of m.times) if (!(o < s)) d++;
+  for (const o of masterOpenTimes().get(m.key) || []) if (!(o < s)) d++;
+  return d;
+}
+function faCov(A, p) { const x = A.fa.get(p.fk), m = A.ma.get(p.mk); if (!x || !m) return NaN; const d = faCovDen(x, m); return d ? Math.min(1, (p.n + (p.open || 0)) / d) : NaN; }
 function faderAnalysis() {
   const fa = new Map(), ma = new Map(), pairs = new Map(), xpairs = new Map();
   const inWin = (t) => !((state.from !== null && t.closeTime < state.from) || (state.to !== null && t.closeTime >= state.to));
   const newMaster = (mk, t) => ({ key: mk, account: t.account, terminal: (DB.accounts.get(t.account) || {}).terminal || t.terminal || '', magic: t.magic, label: baseOf(t.base, t.comment),
-    n: 0, net: 0, copied: new Set(), cnet: 0, faders: new Set(), copies: 0, fnet: 0, xn: 0, xnet: 0, pairSum: 0 });
+    n: 0, net: 0, copied: new Set(), cnet: 0, faders: new Set(), copies: 0, fnet: 0, xn: 0, xnet: 0, pairSum: 0, times: [] });
   // how many trades each master has in the date window (the denominator of the coverage)
   for (const t of DB.trades) {
     if (faderOf(t).is || !inWin(t)) continue;
     const mk = masterKeyOf(t); let m = ma.get(mk); if (!m) { m = newMaster(mk, t); ma.set(mk, m); }
-    m.n++; m.net += t.net;
+    m.n++; m.net += t.net; m.times.push(Number.isFinite(t.openTime) ? t.openTime : t.closeTime);
   }
   for (const t of DB.trades) {
     const f = faderOf(t);
@@ -2222,8 +2265,19 @@ function faderAnalysis() {
     mm.faders.add(fk); mm.copies++; mm.fnet += t.net; mm.pairSum += t.net + m.net;
     if (!mm.copied.has(m.ticket)) { mm.copied.add(m.ticket); mm.cnet += m.net; }
   }
-  for (const x of fa.values()) { let d = 0; for (const mk of x.mkeys) d += (ma.get(mk) || { n: 0 }).n; x.cov = d ? x.n / d : NaN; }
-  return { fa, ma, pairs, xpairs };
+  // copies that are still open count as copied (the closed-trade files do not have them yet)
+  tkMaps();
+  for (const o of openFiltered()) {
+    const f = faderOf(o); if (!f.is || f.extra || !f.master || (state.faderType && f.type !== state.faderType)) continue;
+    const mo = ticketLookup(o.account, f.master) || TK_OPEN.get(f.master); if (!mo) continue;
+    const pr = pairs.get(o.account + '|' + o.magic + '|' + f.type + '|' + f.src + '>' + masterKeyOf(mo)); if (pr) pr.open = (pr.open || 0) + 1;
+  }
+  const A = { fa, ma, pairs, xpairs };
+  // coverage per fader: copied master trades / master trades it could have copied (from when its first copied master trade opened)
+  const num = new Map(), den = new Map();
+  for (const pr of pairs.values()) { const x = fa.get(pr.fk), m = ma.get(pr.mk); if (!x || !m) continue; num.set(pr.fk, (num.get(pr.fk) || 0) + pr.n + (pr.open || 0)); den.set(pr.fk, (den.get(pr.fk) || 0) + faCovDen(x, m)); }
+  for (const x of fa.values()) { const d = den.get(x.key); x.cov = d ? Math.min(1, num.get(x.key) / d) : NaN; }
+  return A;
 }
 const faLabel = (x) => x.magic + ' ' + x.type + (x.src ? ' ' + x.src : '');
 function renderFaderAnalysis(host) {
@@ -2274,7 +2328,7 @@ function faPairs(host, A) {
     // the words only say what the fader made; the colour (green: fader gains more than the master loses, red: fader loses while the master gains) is as before
     const result = p.net > 0 ? 'Works: fader gains more than master loss' : p.net < 0 ? 'Fails: fader loses' : 'Fader flat';
     const rcls = p.net > 0 ? 'pos' : p.net < 0 ? 'neg' : '';
-    rows.push({ fk: p.fk, master, mmagic: m.magic, fader, where, account: x.account, magic: x.magic, n: p.n, xn: xp.xn || '', mn: m.n, cov: m.n ? p.n / m.n : NaN, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.mnet, sum, result, rcls });
+    rows.push({ fk: p.fk, master, mmagic: m.magic, fader, where, account: x.account, magic: x.magic, n: p.n, xn: xp.xn || '', mn: m.n, cov: faCov(A, p), net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.mnet, sum, result, rcls });
   }
   if (!rows.length) { host.appendChild(el('p', { class: 'muted' }, 'No pairs with at least ' + FA.min + ' first copies' + (q ? ' matching "' + FA.q + '"' : '') + '. Lower "Min copies" or widen the date range.')); return; }
   table(host, [
@@ -2332,7 +2386,7 @@ function faMatrix(host, A, faders) {
   toolbar.appendChild(el('span', { class: 'muted' }, masters.length + ' masters × ' + faders.length + ' faders · cell = fader $ over (copies / master trades) · Σ = fader + master'));
   const exp = el('button', { class: 'btn small', type: 'button' }, 'Export CSV');
   exp.addEventListener('click', () => {
-    const rows = [...A.pairs.values()].filter((p) => vis.has(p.fk)).map((p) => { const x = A.fa.get(p.fk), m = A.ma.get(p.mk); return { fader: faLabel(x), faderAccount: x.account, master: m.magic + ' ' + m.label, masterAccount: m.account, copies: p.n, masterTrades: m.n, coverage: m.n ? p.n / m.n : NaN, faderNet: p.net, masterNet: p.mnet, sum: p.net + p.mnet }; });
+    const rows = [...A.pairs.values()].filter((p) => vis.has(p.fk)).map((p) => { const x = A.fa.get(p.fk), m = A.ma.get(p.mk); return { fader: faLabel(x), faderAccount: x.account, master: m.magic + ' ' + m.label, masterAccount: m.account, copies: p.n, masterTrades: m.n, coverage: faCov(A, p), faderNet: p.net, masterNet: p.mnet, sum: p.net + p.mnet }; });
     exportCSV([{ key: 'fader', label: 'Fader' }, { key: 'faderAccount', label: 'Fader account' }, { key: 'master', label: 'Master' }, { key: 'masterAccount', label: 'Master account' }, { key: 'copies', label: 'Copies' }, { key: 'masterTrades', label: 'Master trade count' }, { key: 'coverage', label: 'Coverage' }, { key: 'faderNet', label: 'Fader $' }, { key: 'masterNet', label: 'Master $' }, { key: 'sum', label: 'Fader + master' }], rows, 'fader_matrix');
   });
   toolbar.appendChild(exp); host.appendChild(toolbar);
@@ -2396,7 +2450,7 @@ function faDetail(host, A, x, big) {
   for (const mk of keys) {
     const p = A.pairs.get(x.key + '>' + mk) || { n: 0, net: 0, mnet: 0, wins: 0 }, xp = A.xpairs.get(x.key + '>' + mk) || { xn: 0, xnet: 0, wins: 0 }, m = A.ma.get(mk);
     const all = p.n + xp.xn;
-    mr.push({ mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: m.n ? p.n / m.n : NaN, total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + xp.xnet + p.mnet : NaN });
+    mr.push({ mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: faCov(A, p), total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + xp.xnet + p.mnet : NaN });
   }
   if (simple) {
     host.appendChild(el('p', { class: 'sub' }, 'Fader $ = what the fader made on its copies of that master · Master $ = what the master made on those same trades · Difference = Fader $ + Master $ (positive: the fader gains more than the master loses). Coverage = share of the master\'s trades this fader copied.'));
