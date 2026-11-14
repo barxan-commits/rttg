@@ -340,6 +340,7 @@ th.dragging { opacity: .45; }
 .ros-kv dt { color: var(--text-muted); } .ros-kv dd { margin: 0; word-break: break-word; }
 .ros-sum { font-weight: 600; margin: 4px 0 0; font-size: 13px; }
 .ros-sel { outline: 2px solid var(--accent); }
+.ros-topr { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
 .ros-cmp { border-left-color: var(--accent); }
 .ros-better { font-weight: 700; color: var(--pos-text); }
 .cmp-table td.ros-vals { white-space: normal; max-width: 420px; text-align: left; word-break: break-word; }
@@ -3267,8 +3268,8 @@ function rosterComparePanel(host, byAM) {
   const keys = ROS.cmp.filter((k) => rosFind(k)); const panel = el('div', { class: 'card ros-cmp', id: 'rosCmp' }); host.appendChild(panel);
   const head = el('div', { class: 'card-head' }); const h = el('div'); h.appendChild(el('h2', null, 'Compare'));
   h.appendChild(el('div', { class: 'sub' }, keys.length < 2 ? (keys.length ? 'Selected: ' + rosterTitle(rosFind(keys[0])) + ' (' + rosFind(keys[0]).m + '). Press Compare on one more card.' : 'Press Compare on two cards to see them side by side.') : 'Green = the better value of the two. Orange settings differ. The period and other filters above the tabs apply to the results.'));
-  head.appendChild(h); const clr = el('button', { type: 'button', class: 'btn small' }, 'Clear'); clr.addEventListener('click', () => { ROS.cmp = []; renderTab(); }); head.appendChild(clr); panel.appendChild(head);
-  if (keys.length < 2) { if (!keys.length) panel.hidden = true; return; }
+  head.appendChild(h); const clr = el('button', { type: 'button', class: 'btn small' }, 'Clear'); clr.addEventListener('click', () => { ROS.cmp = []; renderTab(); }); head.appendChild(clr); if (keys.length) panel.appendChild(head);
+  if (keys.length < 2) { if (!keys.length) { panel.classList.remove('card'); panel.classList.add('ros-hint'); panel.textContent = ''; panel.appendChild(el('p', { class: 'hint' }, 'To compare two faders or masters, press the Compare button in the top right corner of each card. The comparison opens here.')); } return; }
   const FM = rosterFirst(); const ents = keys.map(rosFind); const arrs = keys.map((k) => byAM.get(k) || []);
   const rows = ents.map((e, i) => rosMetricRows(e, arrs[i], FM.get(rosKey(e))));
   const colors = [cssVar('--series-1'), cssVar('--series-2')];
@@ -3301,7 +3302,8 @@ function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
   ti.appendChild(el('div', { class: 'ros-name' }, rosterTitle(e))); ti.appendChild(el('div', { class: 'muted' }, (ROSTER.pretty[e.t] || e.t) + ' · account ' + e.a));
-  top.appendChild(ti); if (e.nw) top.appendChild(el('span', { class: 'badge stale' }, 'NEW TEST')); card.appendChild(top);
+  top.appendChild(ti); const tr2 = el('div', { class: 'ros-topr' }); if (e.nw) tr2.appendChild(el('span', { class: 'badge stale' }, 'NEW TEST'));
+  const isSel = ROS.cmp.includes(rosKey(e)); if (isSel) card.classList.add('ros-sel'); tr2.appendChild(toggleBtn('Compare', isSel, (v) => rosToggleCompare(e, v), 'Pick two cards to compare them side by side: results, a combined profit chart and which settings differ')); top.appendChild(tr2); card.appendChild(top);
   const idl = el('div', { class: 'ros-id' }); idl.appendChild(el('span', { class: 'muted' }, e.r === 'FADER' ? 'Fader' : 'Magic')); idl.appendChild(el('strong', null, e.m));
   idl.appendChild(el('span', { class: 'badge' + (e.st && e.st[1] === 'amber' ? ' stale' : '') }, e.st ? e.st[0] : e.r)); card.appendChild(idl);
   // live results of this magic on this account (the filters above the tabs apply)
@@ -3327,7 +3329,7 @@ function rosterCard(e, arr, CB, mode, first) {
   const rel = (label, list, go) => { if (!list) return; const r = el('div', { class: 'ros-rel' }); r.appendChild(el('span', { class: 'muted' }, label)); for (const m of String(list).split(',').map((x) => x.trim()).filter(Boolean)) { const b = el('button', { type: 'button', class: 'cm-open', title: 'Show this magic in the dashboard' }, m); b.addEventListener('click', () => go(m)); r.appendChild(b); } card.appendChild(r); };
   rel('Source master', e.src, (m) => rosShow('', m)); rel('Followed by', e.fby, (m) => rosShow('', m));
   const bar = el('div', { class: 'ros-actions' }); const sb = el('button', { type: 'button', class: 'btn small' }, 'Show in dashboard'); sb.addEventListener('click', () => rosShow(e.a, e.m)); bar.appendChild(sb);
-  const isSel = ROS.cmp.includes(rosKey(e)); if (isSel) card.classList.add('ros-sel'); bar.appendChild(toggleBtn('Compare', isSel, (v) => rosToggleCompare(e, v), 'Pick two cards to compare them side by side: results, a combined profit chart and which settings differ')); card.appendChild(bar);
+  card.appendChild(bar);
   const det = el('details', { class: 'ros-det' }); det.appendChild(el('summary', null, 'Details & settings'));
   const dl = el('dl', { class: 'ros-kv' }); const add = (k, v) => { dl.appendChild(el('dt', null, k)); dl.appendChild(el('dd', null, v)); };
   add('EA version', e.b || 'not established'); for (const [k, v] of e.k || []) add(k, v); det.appendChild(dl); card.appendChild(det);
