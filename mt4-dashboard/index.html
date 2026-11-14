@@ -339,6 +339,11 @@ th.dragging { opacity: .45; }
 .ros-kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 12px; font-size: 12.5px; margin: 8px 0 0; }
 .ros-kv dt { color: var(--text-muted); } .ros-kv dd { margin: 0; word-break: break-word; }
 .ros-sum { font-weight: 600; margin: 4px 0 0; font-size: 13px; }
+.ros-sel { outline: 2px solid var(--accent); }
+.ros-cmp { border-left-color: var(--accent); }
+.ros-better { font-weight: 700; color: var(--pos-text); }
+.cmp-table td.ros-vals { white-space: normal; max-width: 420px; text-align: left; word-break: break-word; }
+.cmp-table td.ros-diff { background: var(--warn-bg); color: var(--warn-ink); }
 @media (max-width: 520px) { .ros-grid { grid-template-columns: 1fr; } }
 </style>
 <style>
@@ -3202,7 +3207,7 @@ function renderPeriods(host, T) {
 /* ---------------- roster: what every magic number is, with its live results ----------------
    The descriptions and settings come from the research roster (embedded below, dated); the numbers are live from the loaded data. */
 const ROSTER = (() => { try { return JSON.parse(document.getElementById('rosterData').textContent); } catch (e) { return null; } })();
-const ROS = { mode: 'masters', q: '', term: '', sort: 'net', only: '', hasTrades: false, limit: 48, mf: '' };
+const ROS = { mode: 'masters', q: '', term: '', sort: 'net', only: '', hasTrades: false, limit: 48, mf: '', cmp: [] };
 let ROS_IDX = null;
 function rosterIndex() {
   if (ROS_IDX || !ROSTER) return ROS_IDX;
@@ -3242,6 +3247,56 @@ function rosShow(account, magic) {   // filter the whole dashboard to one magic 
   state.account = has ? account : ''; state.magic = String(magic); state.tab = 'magic'; state.page = {};
   syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
 }
+// ---- compare two roster entries side by side ----
+const rosKey = (e) => e.a + '|' + e.m;
+function rosFind(k) { for (const l of ['faders', 'masters', 'copiers', 'history']) for (const e of ROSTER[l]) if (rosKey(e) === k) return e; return null; }
+function rosMetricRows(e, arr, first) {
+  const out = []; const add = (label, text, raw, better, cls, tip) => out.push({ label, text, raw, better, cls: cls || '', tip: tip || '' });
+  if (!arr.length) { add('Trades', '0', 0); add('Added (first trade)', Number.isFinite(first) ? fmtDate(first) : '–', NaN); return out; }
+  const s = stats(arr); const bsk = baskets(arr);
+  add('Net', money(s.net), s.net, 'high', signCls(s.net)); add('Trades', s.n.toLocaleString('en-US'), s.n); add('Win %', pct(s.winRate), s.winRate, 'high'); add('PF', ratio(s.pf), s.pf, 'high');
+  add('Expectancy', money(s.exp), s.exp, 'high', signCls(s.exp)); add('Avg win', money(s.avgWin), s.avgWin, 'high', signCls(s.avgWin)); add('Avg loss', money(s.avgLoss), s.avgLoss, 'high', signCls(s.avgLoss));
+  add('Loss : win', Number.isFinite(s.payoff) ? '1 : ' + (s.payoff >= 10 ? Math.round(s.payoff) : Math.round(s.payoff * 100) / 100) : '–', s.payoff, 'high', '', 'Average win compared with the average loss (loss = 1)');
+  add('Max drawdown', s.maxDD > 0 ? money(-s.maxDD) : money(0), -s.maxDD, 'high', signCls(-s.maxDD)); add('Worst basket', bsk.length ? money(minOf(bsk.map((b) => b.net))) : '–', bsk.length ? minOf(bsk.map((b) => b.net)) : NaN, 'high');
+  add('Best basket', bsk.length ? money(maxOf(bsk.map((b) => b.net))) : '–', bsk.length ? maxOf(bsk.map((b) => b.net)) : NaN, 'high'); add('Worst trade', money(s.maxLoss), s.maxLoss, 'high', signCls(s.maxLoss)); add('Best trade', money(s.maxWin), s.maxWin, 'high', signCls(s.maxWin));
+  if (e.r === 'FADER') { const me = masterExtra(arr); add('Master $', money(me.master), me.master, null, signCls(me.master)); add('Difference $', money(me.masterDiff), me.masterDiff, 'high', signCls(me.masterDiff)); add('Ratio copy', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', me.mratio, null); add('Coverage', pct(me.mcov), me.mcov, 'high'); }
+  add('Last trade', s.last ? fmtDate(s.last) : '–', s.last); add('Added (first trade)', Number.isFinite(first) ? fmtDate(first) : '–', first);
+  return out;
+}
+function rosterComparePanel(host, byAM) {
+  const keys = ROS.cmp.filter((k) => rosFind(k)); const panel = el('div', { class: 'card ros-cmp', id: 'rosCmp' }); host.appendChild(panel);
+  const head = el('div', { class: 'card-head' }); const h = el('div'); h.appendChild(el('h2', null, 'Compare'));
+  h.appendChild(el('div', { class: 'sub' }, keys.length < 2 ? (keys.length ? 'Selected: ' + rosterTitle(rosFind(keys[0])) + ' (' + rosFind(keys[0]).m + '). Press Compare on one more card.' : 'Press Compare on two cards to see them side by side.') : 'Green = the better value of the two. Orange settings differ. The period and other filters above the tabs apply to the results.'));
+  head.appendChild(h); const clr = el('button', { type: 'button', class: 'btn small' }, 'Clear'); clr.addEventListener('click', () => { ROS.cmp = []; renderTab(); }); head.appendChild(clr); panel.appendChild(head);
+  if (keys.length < 2) { if (!keys.length) panel.hidden = true; return; }
+  const FM = rosterFirst(); const ents = keys.map(rosFind); const arrs = keys.map((k) => byAM.get(k) || []);
+  const rows = ents.map((e, i) => rosMetricRows(e, arrs[i], FM.get(rosKey(e))));
+  const colors = [cssVar('--series-1'), cssVar('--series-2')];
+  const legend = el('div', { class: 'legend' }); ents.forEach((e, i) => { const sp = el('span'); const k = el('i'); k.style.background = colors[i]; sp.append(k, document.createTextNode(rosterTitle(e) + ' · ' + e.m)); legend.appendChild(sp); }); panel.appendChild(legend);
+  const ch = el('div', { class: 'chart' }); panel.appendChild(ch);
+  const series = ents.map((e, i) => { const pts = []; let c = 0; for (const t of arrs[i]) { c += t.net; pts.push([t.closeTime, c]); } return { name: rosterTitle(e) + ' · ' + e.m, color: colors[i], pts: downsample(pts, 600) }; });
+  if (series.some((x) => x.pts.length)) lineChart(ch, series.filter((x) => x.pts.length), { height: 240, zero: true, label: 'cumulative net profit of the two compared entries' }); else ch.appendChild(el('p', { class: 'muted' }, 'Neither has closed trades in this selection.'));
+  const tbl = el('table', { class: 'cmp-table' }); const hr = el('tr'); hr.appendChild(el('th', null, ''));
+  ents.forEach((e, i) => { const th = el('th', { class: 'num' }); const k = el('span', { class: 'cmp-key' }); k.style.background = colors[i]; th.append(k, document.createTextNode(rosterTitle(e) + ' · ' + e.m)); th.appendChild(el('div', { class: 'muted', style: 'font-weight:400' }, (ROSTER.pretty[e.t] || e.t) + ' · ' + e.a)); hr.appendChild(th); });
+  const thead = el('thead'); thead.appendChild(hr); tbl.appendChild(thead); const tb = el('tbody'); tbl.appendChild(tb);
+  const sect = (t) => { const tr = el('tr'); const td = el('td', { colspan: '3', style: 'font-weight:600;padding-top:10px' }, t); tr.appendChild(td); tb.appendChild(tr); };
+  sect('Results');
+  const labels = []; for (const r of rows) for (const m of r) if (!labels.includes(m.label)) labels.push(m.label);
+  for (const lab of labels) {
+    const ms = rows.map((r) => r.find((m) => m.label === lab)); const tr = el('tr'); tr.appendChild(el('td', { title: (ms.find((m) => m && m.tip) || {}).tip || '' }, lab));
+    const a = ms[0], b = ms[1]; let win = -1; const ok = a && b && a.better && Number.isFinite(a.raw) && Number.isFinite(b.raw) && a.raw !== b.raw; if (ok) win = (a.raw > b.raw) === (a.better === 'high') ? 0 : 1;
+    ms.forEach((m, i) => tr.appendChild(el('td', { class: 'num ' + (m ? m.cls : '') + (win === i ? ' ros-better' : '') }, m ? m.text : '–'))); tb.appendChild(tr);
+  }
+  sect('Settings');
+  const kvs = ents.map((e) => { const o = new Map(); o.set('EA version', e.b || 'not established'); o.set('What it does', e.d); o.set('Status', e.st ? e.st[0] : ''); if (e.p && e.p.length) o.set('Key settings', e.p.map((x) => x[0]).join(' · ')); if (e.src) o.set('Source master', e.src); if (e.fby) o.set('Followed by', e.fby); for (const [k, v] of e.k || []) o.set(k, v); return o; });
+  const klabels = []; for (const o of kvs) for (const k of o.keys()) if (!klabels.includes(k)) klabels.push(k);
+  for (const k of klabels) { const vals = kvs.map((o) => o.get(k) || '–'); const diff = vals[0] !== vals[1]; const tr = el('tr'); tr.appendChild(el('td', null, k)); vals.forEach((v) => tr.appendChild(el('td', { class: 'ros-vals' + (diff ? ' ros-diff' : '') }, v))); tb.appendChild(tr); }
+  const wrap = el('div', { class: 'tablewrap', style: 'margin-top:10px;max-height:none' }); wrap.appendChild(tbl); panel.appendChild(wrap);
+}
+function rosToggleCompare(e, on) {
+  const k = rosKey(e); ROS.cmp = ROS.cmp.filter((x) => x !== k); if (on) { ROS.cmp.push(k); if (ROS.cmp.length > 2) ROS.cmp.shift(); }
+  renderTab(); const p = document.getElementById('rosCmp'); if (p && !p.hidden) p.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
@@ -3271,7 +3326,8 @@ function rosterCard(e, arr, CB, mode, first) {
   if (e.p && e.p.length) { const pl = el('div', { class: 'ros-pills' }); for (const [t, c] of e.p) pl.appendChild(el('span', { class: 'badge' + (c === 'amber' ? ' stale' : '') }, t)); card.appendChild(pl); }
   const rel = (label, list, go) => { if (!list) return; const r = el('div', { class: 'ros-rel' }); r.appendChild(el('span', { class: 'muted' }, label)); for (const m of String(list).split(',').map((x) => x.trim()).filter(Boolean)) { const b = el('button', { type: 'button', class: 'cm-open', title: 'Show this magic in the dashboard' }, m); b.addEventListener('click', () => go(m)); r.appendChild(b); } card.appendChild(r); };
   rel('Source master', e.src, (m) => rosShow('', m)); rel('Followed by', e.fby, (m) => rosShow('', m));
-  const bar = el('div', { class: 'ros-actions' }); const sb = el('button', { type: 'button', class: 'btn small' }, 'Show in dashboard'); sb.addEventListener('click', () => rosShow(e.a, e.m)); bar.appendChild(sb); card.appendChild(bar);
+  const bar = el('div', { class: 'ros-actions' }); const sb = el('button', { type: 'button', class: 'btn small' }, 'Show in dashboard'); sb.addEventListener('click', () => rosShow(e.a, e.m)); bar.appendChild(sb);
+  const isSel = ROS.cmp.includes(rosKey(e)); if (isSel) card.classList.add('ros-sel'); bar.appendChild(toggleBtn('Compare', isSel, (v) => rosToggleCompare(e, v), 'Pick two cards to compare them side by side: results, a combined profit chart and which settings differ')); card.appendChild(bar);
   const det = el('details', { class: 'ros-det' }); det.appendChild(el('summary', null, 'Details & settings'));
   const dl = el('dl', { class: 'ros-kv' }); const add = (k, v) => { dl.appendChild(el('dt', null, k)); dl.appendChild(el('dd', null, v)); };
   add('EA version', e.b || 'not established'); for (const [k, v] of e.k || []) add(k, v); det.appendChild(dl); card.appendChild(det);
@@ -3324,6 +3380,7 @@ function renderRoster(host, T) {
   const bar = el('div', { class: 'fa-bar' });
   for (const [v, l] of modes) { const b = el('button', { type: 'button', class: 'btn small' + (ROS.mode === v ? ' on' : '') }, l + ' (' + (v === 'missing' ? missing.length : ROSTER[v].length) + ')'); b.addEventListener('click', () => { ROS.mode = v; ROS.term = ''; ROS.limit = 48; renderTab(); }); bar.appendChild(b); }
   host.appendChild(bar);
+  rosterComparePanel(host, byAM);
   if (ROS.mode === 'missing') { renderRosterMissing(host, missing); return; }
   const ctl = el('div', { class: 'controls' });
   const q = el('input', { type: 'search', placeholder: 'Search magic, name, terminal, words…', value: ROS.q, style: 'min-width:240px' }); q.addEventListener('change', () => { ROS.q = q.value.trim(); ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Search')).appendChild(q);
