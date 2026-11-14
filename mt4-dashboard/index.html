@@ -3229,12 +3229,20 @@ function rosSpark(arr) {
   path.setAttribute('points', ds.map((v, i) => (i / (ds.length - 1) * 120).toFixed(1) + ',' + y(v).toFixed(1)).join(' ')); svg.appendChild(path);
   return svg;
 }
+// when each magic number (on each account) was first seen in the loaded data: its "added" date
+let ROS_FIRST = null, ROS_FIRST_N = -1;
+function rosterFirst() {
+  if (ROS_FIRST && ROS_FIRST_N === DB.trades.length) return ROS_FIRST;
+  const m = new Map();
+  for (const t of DB.trades) { const a = Number.isFinite(t.openTime) ? Math.min(t.openTime, t.closeTime) : t.closeTime; const k = t.account + '|' + t.magic; const o = m.get(k); if (o === undefined || a < o) m.set(k, a); }
+  ROS_FIRST = m; ROS_FIRST_N = DB.trades.length; return m;
+}
 function rosShow(account, magic) {   // filter the whole dashboard to one magic (and its account) and open By magic
   const has = DB.trades.some((t) => t.account === account && t.magic === magic);
   state.account = has ? account : ''; state.magic = String(magic); state.tab = 'magic'; state.page = {};
   syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' });
 }
-function rosterCard(e, arr, CB, mode) {
+function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
   ti.appendChild(el('div', { class: 'ros-name' }, rosterTitle(e))); ti.appendChild(el('div', { class: 'muted' }, (ROSTER.pretty[e.t] || e.t) + ' · account ' + e.a));
@@ -3253,6 +3261,7 @@ function rosterCard(e, arr, CB, mode) {
     if (mode === 'faders') { me = masterExtra(arr); tl('Master $', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Difference $', money(me.masterDiff), signCls(me.masterDiff), 'Fader + master alone'); tl('Ratio copy', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); tl('Coverage', pct(me.mcov)); }
     if (mode === 'masters' && CB) { const fn = CB.reduce((a, x) => a + x.net, 0); tl('Copied by', CB.length + ' fader' + (CB.length === 1 ? '' : 's'), '', 'Faders that copied this master in the period'); tl('Faders made', money(fn), signCls(fn), 'Total result of those faders'); }
   } else tl('Results', 'no closed trades in this selection', 'muted');
+  tl('Added (first trade)', Number.isFinite(first) ? fmtDate(first) : '–', '', 'Date of the very first trade of this magic on this account in the loaded data (any period). The roster file itself has no add date.');
   card.appendChild(tiles); if (arr.length) { const sp = el('div', { class: 'ros-spark', title: 'Cumulative net profit of this magic' }); sp.appendChild(rosSpark(arr)); card.appendChild(sp); }
   card.appendChild(el('p', { class: 'ros-desc' }, e.d));
   if (e.p && e.p.length) { const pl = el('div', { class: 'ros-pills' }); for (const [t, c] of e.p) pl.appendChild(el('span', { class: 'badge' + (c === 'amber' ? ' stale' : '') }, t)); card.appendChild(pl); }
@@ -3317,23 +3326,24 @@ function renderRoster(host, T) {
   const terms = [...new Set(ROSTER[ROS.mode].map((x) => x.t))].sort((a, b) => { const ia = ROS_PRIO.indexOf(a), ib = ROS_PRIO.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
   const ts = el('select'); ts.appendChild(el('option', { value: '' }, 'All terminals')); for (const t of terms) { const o = el('option', { value: t }, ROSTER.pretty[t] || t); if (t === ROS.term) o.selected = true; ts.appendChild(o); }
   ts.addEventListener('change', () => { ROS.term = ts.value; ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Terminal')).appendChild(ts);
-  const so = el('select'); for (const [v, l] of [['net', 'Best result first'], ['loss', 'Worst result first'], ['n', 'Most trades'], ['last', 'Latest trade'], ['magic', 'Magic number'], ['term', 'Terminal']]) { const o = el('option', { value: v }, l); if (v === ROS.sort) o.selected = true; so.appendChild(o); }
+  const so = el('select'); for (const [v, l] of [['added', 'Newest added first'], ['oldest', 'Oldest added first'], ['net', 'Best result first'], ['loss', 'Worst result first'], ['n', 'Most trades'], ['last', 'Latest trade'], ['magic', 'Magic number'], ['term', 'Terminal']]) { const o = el('option', { value: v }, l); if (v === ROS.sort) o.selected = true; so.appendChild(o); }
   so.addEventListener('change', () => { ROS.sort = so.value; renderTab(); }); ctl.appendChild(el('label', null, 'Sort by')).appendChild(so);
   const fo = el('select'); for (const [v, l] of [['', 'All'], ['trades', 'With trades in the period'], ['win', 'In profit'], ['lose', 'At a loss'], ['idle', 'No trades in the period']]) { const o = el('option', { value: v }, l); if (v === ROS.only) o.selected = true; fo.appendChild(o); }
   fo.addEventListener('change', () => { ROS.only = fo.value; ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Show')).appendChild(fo);
   host.appendChild(ctl);
   const CB = ROS.mode === 'masters' ? copiedByMap() : null;
-  const qq = ROS.q.toLowerCase();
+  const qq = ROS.q.toLowerCase(); const FM = rosterFirst();
   let rows = ROSTER[ROS.mode].filter((e) => (!ROS.term || e.t === ROS.term) && (!qq || (e.m + ' ' + e.n + ' ' + e.l + ' ' + e.d + ' ' + e.t + ' ' + (ROSTER.pretty[e.t] || '') + ' ' + e.a).toLowerCase().includes(qq)))
-    .map((e) => { const arr = byAM.get(e.a + '|' + e.m) || (ROS.mode === 'history' ? byM.get(e.m) : null) || []; let net = 0, last = 0; for (const t of arr) { net += t.net; if (t.closeTime > last) last = t.closeTime; } return { e, arr, net, n: arr.length, last }; });
+    .map((e) => { const arr = byAM.get(e.a + '|' + e.m) || (ROS.mode === 'history' ? byM.get(e.m) : null) || []; let net = 0, last = 0; for (const t of arr) { net += t.net; if (t.closeTime > last) last = t.closeTime; } return { e, arr, net, n: arr.length, last, first: FM.get(e.a + '|' + e.m) }; });
   if (ROS.only === 'trades') rows = rows.filter((r) => r.n); else if (ROS.only === 'win') rows = rows.filter((r) => r.n && r.net > 0); else if (ROS.only === 'lose') rows = rows.filter((r) => r.n && r.net < 0); else if (ROS.only === 'idle') rows = rows.filter((r) => !r.n);
-  const cmp = { net: (a, b) => (b.n ? 1 : 0) - (a.n ? 1 : 0) || b.net - a.net, loss: (a, b) => (b.n ? 1 : 0) - (a.n ? 1 : 0) || a.net - b.net, n: (a, b) => b.n - a.n, last: (a, b) => b.last - a.last, magic: (a, b) => String(a.e.m).localeCompare(String(b.e.m), 'en', { numeric: true }), term: (a, b) => { const ia = ROS_PRIO.indexOf(a.e.t), ib = ROS_PRIO.indexOf(b.e.t); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.e.t.localeCompare(b.e.t); } }[ROS.sort];
+  const dsort = (dir) => (a, b) => (Number.isFinite(b.first) ? 1 : 0) - (Number.isFinite(a.first) ? 1 : 0) || dir * ((a.first || 0) - (b.first || 0));
+  const cmp = { added: dsort(-1), oldest: dsort(1), net: (a, b) => (b.n ? 1 : 0) - (a.n ? 1 : 0) || b.net - a.net, loss: (a, b) => (b.n ? 1 : 0) - (a.n ? 1 : 0) || a.net - b.net, n: (a, b) => b.n - a.n, last: (a, b) => b.last - a.last, magic: (a, b) => String(a.e.m).localeCompare(String(b.e.m), 'en', { numeric: true }), term: (a, b) => { const ia = ROS_PRIO.indexOf(a.e.t), ib = ROS_PRIO.indexOf(b.e.t); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.e.t.localeCompare(b.e.t); } }[ROS.sort];
   rows.sort(cmp);
   const withT = rows.filter((r) => r.n), tot = withT.reduce((a, r) => a + r.net, 0), win = withT.filter((r) => r.net > 0).length;
   host.appendChild(el('p', { class: 'sub' }, help[ROS.mode] + ' Roster updated ' + ROSTER.updated + '. The filters above the tabs (period, account, symbol…) apply to the results.'));
   host.appendChild(el('p', { class: 'ros-sum' }, rows.length + ' listed · ' + withT.length + ' with trades in the period · ' + win + ' in profit, ' + (withT.length - win) + ' at a loss · together ' + money(tot)));
   const grid = el('div', { class: 'ros-grid' }); host.appendChild(grid);
-  for (const r of rows.slice(0, ROS.limit)) grid.appendChild(rosterCard(r.e, r.arr, CB ? CB.get(r.e.m) : null, ROS.mode));
+  for (const r of rows.slice(0, ROS.limit)) grid.appendChild(rosterCard(r.e, r.arr, CB ? CB.get(r.e.m) : null, ROS.mode, r.first));
   if (!rows.length) host.appendChild(el('p', { class: 'muted' }, 'Nothing matches. Clear the search or the Show filter.'));
   if (rows.length > ROS.limit) { const more = el('button', { type: 'button', class: 'btn' }, 'Show ' + Math.min(48, rows.length - ROS.limit) + ' more (' + (rows.length - ROS.limit) + ' left)'); more.addEventListener('click', () => { ROS.limit += 48; renderTab(); }); host.appendChild(more); }
 }
