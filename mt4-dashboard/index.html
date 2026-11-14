@@ -3202,7 +3202,7 @@ function renderPeriods(host, T) {
 /* ---------------- roster: what every magic number is, with its live results ----------------
    The descriptions and settings come from the research roster (embedded below, dated); the numbers are live from the loaded data. */
 const ROSTER = (() => { try { return JSON.parse(document.getElementById('rosterData').textContent); } catch (e) { return null; } })();
-const ROS = { mode: 'masters', q: '', term: '', sort: 'net', only: '', hasTrades: false, limit: 48 };
+const ROS = { mode: 'masters', q: '', term: '', sort: 'net', only: '', hasTrades: false, limit: 48, mf: '' };
 let ROS_IDX = null;
 function rosterIndex() {
   if (ROS_IDX || !ROSTER) return ROS_IDX;
@@ -3264,13 +3264,44 @@ function rosterCard(e, arr, CB, mode) {
   add('EA version', e.b || 'not established'); for (const [k, v] of e.k || []) add(k, v); det.appendChild(dl); card.appendChild(det);
   return card;
 }
+// magic numbers that traded in the loaded data (filters apply) but have no entry in the roster for that account
+function rosterMissing(byAM) {
+  const have = new Set(), anyM = new Set(), hist = new Set();
+  for (const k of ['masters', 'faders', 'copiers']) for (const e of ROSTER[k]) { have.add(e.a + '|' + e.m); anyM.add(e.m); }
+  for (const e of ROSTER.history) hist.add(e.m);
+  const out = [];
+  for (const [key, arr] of byAM) {
+    if (have.has(key)) continue;
+    const a0 = arr[0]; if (a0.magic === '0') continue;
+    const acc = DB.accounts.get(a0.account) || {}; let f = 0; for (const t of arr) if (faderOf(t).is) f++;
+    const note = anyM.has(a0.magic) ? 'In the roster on another account' : hist.has(a0.magic) ? 'Only in History' : 'Not in the roster';
+    out.push(dimRow(key, a0.magic, arr, { terminal: acc.terminal || '', account: a0.account, magic: a0.magic, type: f * 2 > arr.length ? 'Fader' : 'Master / other', note }));
+  }
+  return out;
+}
+function renderRosterMissing(host, rows) {
+  const end = dataMaxTime(); const recent = (r) => Number.isFinite(r.last) && r.last >= end - 7 * DAY;
+  let list = rows; if (ROS.mf === 'fader') list = rows.filter((r) => r.type === 'Fader'); else if (ROS.mf === 'master') list = rows.filter((r) => r.type !== 'Fader'); else if (ROS.mf === 'recent') list = rows.filter(recent);
+  const ctl = el('div', { class: 'controls' }); const fo = el('select');
+  for (const [v, l] of [['', 'All'], ['recent', 'Traded in the last 7 days'], ['fader', 'Faders only'], ['master', 'Masters / other only']]) { const o = el('option', { value: v }, l); if (v === ROS.mf) o.selected = true; fo.appendChild(o); }
+  fo.addEventListener('change', () => { ROS.mf = fo.value; renderTab(); }); ctl.appendChild(el('label', null, 'Show')).appendChild(fo); host.appendChild(ctl);
+  const nf = rows.filter((r) => r.type === 'Fader').length, act = rows.filter(recent).length, tot = list.reduce((a, r) => a + r.net, 0);
+  host.appendChild(el('p', { class: 'sub' }, 'Magic numbers that closed trades in the selected period but have no roster entry for that account: ' + rows.length + ' (' + nf + ' look like faders, because their comment ends with a master ticket, and ' + (rows.length - nf) + ' like masters or manual trades). ' + act + ' traded in the last 7 days of your data. Click a row to filter the dashboard to it. Send me these magic numbers and I will add them to the roster.'));
+  host.appendChild(el('p', { class: 'ros-sum' }, list.length + ' listed · together ' + money(tot)));
+  if (!list.length) { host.appendChild(el('p', { class: 'muted' }, 'Everything that traded in this selection is in the roster.')); return; }
+  const cols = [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'label', label: 'Magic' }, { key: 'type', label: 'Looks like' }, Object.assign({ key: 'comments' }, C.comments),
+    Object.assign({ key: 'n' }, C.n), Object.assign({ key: 'winRate' }, C.winRate), Object.assign({ key: 'net' }, C.net), Object.assign({ key: 'last' }, C.last), { key: 'note', label: 'Roster' }];
+  table(host, cols, list, { tabId: 'rosterMissing', defKey: 'last', onRow: (r) => rosShow(r.account, r.magic) });
+}
 function renderRoster(host, T) {
   if (!ROSTER) { host.appendChild(el('p', { class: 'muted' }, 'The roster data is not available in this copy of the dashboard.')); return; }
-  const modes = [['masters', 'Masters'], ['faders', 'Faders'], ['copiers', 'Copy routes'], ['history', 'History']];
+  const byAM = groupBy(T, (t) => t.account + '|' + t.magic), byM = groupBy(T, (t) => t.magic); const missing = rosterMissing(byAM);
+  const modes = [['masters', 'Masters'], ['faders', 'Faders'], ['copiers', 'Copy routes'], ['history', 'History'], ['missing', 'Not in roster']];
   const help = { masters: 'The source strategies and what each version tests. Net, win % and the copied-by figures are live from your data.', faders: 'Reverse copies of a master: which trades they copy, their limits, and live fader $, master $ and the ratio copy.', copiers: 'Same-direction copy routes between accounts, not reverse strategies.', history: 'Older source links and candidates, kept apart from current settings.' };
   const bar = el('div', { class: 'fa-bar' });
-  for (const [v, l] of modes) { const b = el('button', { type: 'button', class: 'btn small' + (ROS.mode === v ? ' on' : '') }, l + ' (' + ROSTER[v].length + ')'); b.addEventListener('click', () => { ROS.mode = v; ROS.term = ''; ROS.limit = 48; renderTab(); }); bar.appendChild(b); }
+  for (const [v, l] of modes) { const b = el('button', { type: 'button', class: 'btn small' + (ROS.mode === v ? ' on' : '') }, l + ' (' + (v === 'missing' ? missing.length : ROSTER[v].length) + ')'); b.addEventListener('click', () => { ROS.mode = v; ROS.term = ''; ROS.limit = 48; renderTab(); }); bar.appendChild(b); }
   host.appendChild(bar);
+  if (ROS.mode === 'missing') { renderRosterMissing(host, missing); return; }
   const ctl = el('div', { class: 'controls' });
   const q = el('input', { type: 'search', placeholder: 'Search magic, name, terminal, words…', value: ROS.q, style: 'min-width:240px' }); q.addEventListener('change', () => { ROS.q = q.value.trim(); ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Search')).appendChild(q);
   const terms = [...new Set(ROSTER[ROS.mode].map((x) => x.t))].sort((a, b) => { const ia = ROS_PRIO.indexOf(a), ib = ROS_PRIO.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
@@ -3281,7 +3312,7 @@ function renderRoster(host, T) {
   const fo = el('select'); for (const [v, l] of [['', 'All'], ['trades', 'With trades in the period'], ['win', 'In profit'], ['lose', 'At a loss'], ['idle', 'No trades in the period']]) { const o = el('option', { value: v }, l); if (v === ROS.only) o.selected = true; fo.appendChild(o); }
   fo.addEventListener('change', () => { ROS.only = fo.value; ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Show')).appendChild(fo);
   host.appendChild(ctl);
-  const byAM = groupBy(T, (t) => t.account + '|' + t.magic), byM = groupBy(T, (t) => t.magic); const CB = ROS.mode === 'masters' ? copiedByMap() : null;
+  const CB = ROS.mode === 'masters' ? copiedByMap() : null;
   const qq = ROS.q.toLowerCase();
   let rows = ROSTER[ROS.mode].filter((e) => (!ROS.term || e.t === ROS.term) && (!qq || (e.m + ' ' + e.n + ' ' + e.l + ' ' + e.d + ' ' + e.t + ' ' + (ROSTER.pretty[e.t] || '') + ' ' + e.a).toLowerCase().includes(qq)))
     .map((e) => { const arr = byAM.get(e.a + '|' + e.m) || (ROS.mode === 'history' ? byM.get(e.m) : null) || []; let net = 0, last = 0; for (const t of arr) { net += t.net; if (t.closeTime > last) last = t.closeTime; } return { e, arr, net, n: arr.length, last }; });
