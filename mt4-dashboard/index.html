@@ -3247,6 +3247,11 @@ function rosterCard(e, arr, CB, mode) {
   if (arr.length) {
     s = stats(arr); tl('Net', money(s.net), signCls(s.net), 'Profit + commission + swap of its closed trades in the selected period'); tl('Trades', s.n.toLocaleString('en-US')); tl('Win %', pct(s.winRate)); tl('PF', ratio(s.pf), '', 'Profit factor: gross profit / gross loss');
     tl('Expectancy', money(s.exp), signCls(s.exp), 'Average result per trade'); tl('Last trade', s.last ? fmtDate(s.last) : '–');
+    const es = equityStats(e.a);
+    tl('Max drawdown', s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD), 'Biggest fall from a peak of the cumulative result of this magic\'s CLOSED trades in the selected period (floating loss while trades were open is not included)');
+    tl('Max floating loss', Number.isFinite(es.worstFl) ? money(es.worstFl) : '–', signCls(es.worstFl), 'Lowest floating P/L of the WHOLE ACCOUNT ' + e.a + ' in the selected period (from account snapshots). The collector does not record floating loss per magic number, so every magic on this account shows the same figure.');
+    const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opn = op.reduce((a, o) => a + (Number.isFinite(o.pnl) ? o.pnl : 0), 0);
+    tl('Open now', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, floating P/L as of the last snapshot' : 'No open positions of this magic');
     if (mode === 'faders') { me = masterExtra(arr); tl('Master $', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Difference $', money(me.masterDiff), signCls(me.masterDiff), 'Fader + master alone'); tl('Ratio copy', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); tl('Coverage', pct(me.mcov)); }
     if (mode === 'masters' && CB) { const fn = CB.reduce((a, x) => a + x.net, 0); tl('Copied by', CB.length + ' fader' + (CB.length === 1 ? '' : 's'), '', 'Faders that copied this master in the period'); tl('Faders made', money(fn), signCls(fn), 'Total result of those faders'); }
   } else tl('Results', 'no closed trades in this selection', 'muted');
