@@ -3385,7 +3385,7 @@ function renderRoster(host, T) {
   rosterComparePanel(host, byAM);
   if (ROS.mode === 'missing') { renderRosterMissing(host, missing); return; }
   const ctl = el('div', { class: 'controls' });
-  const q = el('input', { type: 'search', placeholder: 'Search magic, name, terminal, words…', value: ROS.q, style: 'min-width:240px' }); q.addEventListener('change', () => { ROS.q = q.value.trim(); ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Search')).appendChild(q);
+  const q = el('input', { type: 'search', placeholder: 'Magic numbers (several: 7667, 7682 …) or words…', value: ROS.q, style: 'min-width:240px' }); q.addEventListener('change', () => { ROS.q = q.value.trim(); ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Search')).appendChild(q);
   const terms = [...new Set(ROSTER[ROS.mode].map((x) => x.t))].sort((a, b) => { const ia = ROS_PRIO.indexOf(a), ib = ROS_PRIO.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
   const ts = el('select'); ts.appendChild(el('option', { value: '' }, 'All terminals')); for (const t of terms) { const o = el('option', { value: t }, ROSTER.pretty[t] || t); if (t === ROS.term) o.selected = true; ts.appendChild(o); }
   ts.addEventListener('change', () => { ROS.term = ts.value; ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Terminal')).appendChild(ts);
@@ -3396,7 +3396,8 @@ function renderRoster(host, T) {
   host.appendChild(ctl);
   const CB = ROS.mode === 'masters' ? copiedByMap() : null;
   const qq = ROS.q.toLowerCase(); const FM = rosterFirst();
-  let rows = ROSTER[ROS.mode].filter((e) => (!ROS.term || e.t === ROS.term) && (!qq || (e.m + ' ' + e.n + ' ' + e.l + ' ' + e.d + ' ' + e.t + ' ' + (ROSTER.pretty[e.t] || '') + ' ' + e.a).toLowerCase().includes(qq)))
+  const toks = ROS.q.split(/[\s,;]+/).filter(Boolean); const multi = toks.length > 1 && toks.every((t) => /^\d+$/.test(t)); const wanted = multi ? new Set(toks) : null;
+  let rows = ROSTER[ROS.mode].filter((e) => (!ROS.term || e.t === ROS.term) && (multi ? wanted.has(e.m) : (!qq || (e.m + ' ' + e.n + ' ' + e.l + ' ' + e.d + ' ' + e.t + ' ' + (ROSTER.pretty[e.t] || '') + ' ' + e.a).toLowerCase().includes(qq))))
     .map((e) => { const arr = byAM.get(e.a + '|' + e.m) || (ROS.mode === 'history' ? byM.get(e.m) : null) || []; let net = 0, last = 0; for (const t of arr) { net += t.net; if (t.closeTime > last) last = t.closeTime; } return { e, arr, net, n: arr.length, last, first: FM.get(e.a + '|' + e.m), payoff: arr.length ? stats(arr).payoff : NaN }; });
   if (ROS.only === 'trades') rows = rows.filter((r) => r.n); else if (ROS.only === 'win') rows = rows.filter((r) => r.n && r.net > 0); else if (ROS.only === 'lose') rows = rows.filter((r) => r.n && r.net < 0); else if (ROS.only === 'idle') rows = rows.filter((r) => !r.n);
   const dsort = (dir) => (a, b) => (Number.isFinite(b.first) ? 1 : 0) - (Number.isFinite(a.first) ? 1 : 0) || dir * ((a.first || 0) - (b.first || 0));
@@ -3405,6 +3406,7 @@ function renderRoster(host, T) {
   rows.sort(cmp);
   const withT = rows.filter((r) => r.n), tot = withT.reduce((a, r) => a + r.net, 0), win = withT.filter((r) => r.net > 0).length;
   host.appendChild(el('p', { class: 'sub' }, help[ROS.mode] + ' Roster updated ' + ROSTER.updated + '. The filters above the tabs (period, account, symbol…) apply to the results.'));
+  if (multi) { const got = new Set(rows.map((r) => r.e.m)); const miss = [...wanted].filter((m) => !got.has(m)); host.appendChild(el('p', { class: 'ros-sum' }, wanted.size + ' magic numbers entered · ' + (wanted.size - miss.length) + ' found in this list' + (miss.length ? ' · not found here: ' + miss.join(', ') + ' (try another switch above or Not in roster)' : ''))); }
   host.appendChild(el('p', { class: 'ros-sum' }, rows.length + ' listed · ' + withT.length + ' with trades in the period · ' + win + ' in profit, ' + (withT.length - win) + ' at a loss · together ' + money(tot)));
   const grid = el('div', { class: 'ros-grid' }); host.appendChild(grid);
   for (const r of rows.slice(0, ROS.limit)) grid.appendChild(rosterCard(r.e, r.arr, CB ? CB.get(r.e.m) : null, ROS.mode, r.first));
