@@ -2109,7 +2109,7 @@ function renderTab() {
     };
     if (split) rows.sort((a, b) => b.net - a.net);   // inside one magic: best account first (the table sort below is stable)
     let prevMagic = null, shade = 0;
-    table(host, cols, rows, { tabId: id, defKey: split ? 'label' : 'net', defDir: split ? 'asc' : 'desc', toolbarExtra: extra, footer: totalsFooter(T, 'label'),
+    table(host, cols, rows, { tabId: split ? 'magicSplit' : id, defKey: split ? 'label' : 'net', defDir: split ? 'asc' : 'desc', toolbarExtra: extra, footer: totalsFooter(T, 'label'),
       rowClass: split ? (r) => { if (r.magic !== prevMagic) { shade ^= 1; prevMagic = r.magic; } return 'grp' + shade; } : null,
       onRow: split ? (r) => { state.account = r.account; state.magic = r.magic; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } : setF('magic') });
   } else if (id === 'comment') {
