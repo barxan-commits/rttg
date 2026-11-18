@@ -345,6 +345,12 @@ th.dragging { opacity: .45; }
 .ros-better { font-weight: 700; color: var(--pos-text); }
 .cmp-table td.ros-vals { white-space: normal; max-width: 420px; text-align: left; word-break: break-word; }
 .cmp-table td.ros-diff { background: var(--warn-bg); color: var(--warn-ink); }
+.ros-flt { margin: 4px 0 10px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; background: var(--surface-1); }
+.ros-flt summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.ros-fgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); gap: 6px 18px; margin: 10px 0; }
+.ros-frow { display: grid; grid-template-columns: 1fr 84px 84px; gap: 6px; align-items: center; }
+.ros-frow input[type=number] { font: inherit; font-size: 13px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); width: 100%; }
+.ros-fck { font-size: 13px; display: flex; gap: 4px; align-items: center; cursor: pointer; }
 @media (max-width: 520px) { .ros-grid { grid-template-columns: 1fr; } }
 </style>
 <style>
@@ -3262,7 +3268,11 @@ function renderPeriods(host, T) {
 /* ---------------- roster: what every magic number is, with its live results ----------------
    The descriptions and settings come from the research roster (embedded below, dated); the numbers are live from the loaded data. */
 const ROSTER = (() => { try { return JSON.parse(document.getElementById('rosterData').textContent); } catch (e) { return null; } })();
-const ROS = { mode: 'masters', q: '', term: '', sort: 'net', only: '', hasTrades: false, limit: 48, mf: '', cmp: [], dd: '' };
+// filters the user ticks in the Roster: measure -> { on, min, max }; remembered in this browser
+const ROS_MEAS = [['net', 'Net ($)'], ['dd', 'Max drawdown ($, as a positive amount)'], ['eff', 'Net ÷ max drawdown'], ['n', 'Trades'], ['win', 'Win %'], ['pf', 'Profit factor'], ['payoff', 'Avg win ÷ avg loss'], ['exp', 'Expectancy ($ per trade)'], ['cov', 'Coverage % (faders)'], ['diff', 'Difference $ (faders)']];
+function loadRosFlt() { try { const v = JSON.parse(localStorage.getItem('mt4dash-rosflt') || '{}'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; } }
+function saveRosFlt() { try { localStorage.setItem('mt4dash-rosflt', JSON.stringify(ROS.flt)); } catch (e) { /* storage unavailable */ } }
+const ROS = { mode: 'masters', q: '', term: '', sort: 'net', only: '', hasTrades: false, limit: 48, mf: '', cmp: [], flt: loadRosFlt(), fltOpen: false };
 let ROS_IDX = null;
 function rosterIndex() {
   if (ROS_IDX || !ROSTER) return ROS_IDX;
@@ -3447,15 +3457,35 @@ function renderRoster(host, T) {
   so.addEventListener('change', () => { ROS.sort = so.value; renderTab(); }); ctl.appendChild(el('label', null, 'Sort by')).appendChild(so);
   const fo = el('select'); for (const [v, l] of [['', 'All'], ['trades', 'With trades in the period'], ['win', 'In profit'], ['lose', 'At a loss'], ['idle', 'No trades in the period']]) { const o = el('option', { value: v }, l); if (v === ROS.only) o.selected = true; fo.appendChild(o); }
   fo.addEventListener('change', () => { ROS.only = fo.value; ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Show')).appendChild(fo);
-  const di = el('input', { type: 'number', min: '0', step: '100', placeholder: 'e.g. 500', value: ROS.dd, style: 'width:120px', title: 'Show only entries whose maximum drawdown (closed trades, selected period) is no bigger than this amount. Combine with the sort Net ÷ max drawdown to find the best result for a low drawdown.' });
-  di.addEventListener('change', () => { ROS.dd = di.value; ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Max drawdown up to ($)')).appendChild(di);
   host.appendChild(ctl);
+  // tick the measures to filter by and type a minimum and / or a maximum for each
+  const fdet = el('details', { class: 'ros-flt' }); const nOn = ROS_MEAS.filter(([k]) => ROS.flt[k] && ROS.flt[k].on).length;
+  fdet.open = ROS.fltOpen || nOn > 0; fdet.addEventListener('toggle', () => { ROS.fltOpen = fdet.open; });
+  fdet.appendChild(el('summary', null, 'Filters by result' + (nOn ? ' (' + nOn + ' on)' : '') + ': tick what you want, then type a minimum and / or a maximum'));
+  const fg = el('div', { class: 'ros-fgrid' });
+  for (const [k, label] of ROS_MEAS) {
+    const f = ROS.flt[k] || (ROS.flt[k] = { on: false, min: '', max: '' }); const row = el('div', { class: 'ros-frow' });
+    const lab = el('label', { class: 'ros-fck' }); const cb = el('input', { type: 'checkbox' }); cb.checked = !!f.on; lab.append(cb, document.createTextNode(' ' + label)); row.appendChild(lab);
+    const mn = el('input', { type: 'number', step: 'any', placeholder: 'min', value: f.min }), mx = el('input', { type: 'number', step: 'any', placeholder: 'max', value: f.max });
+    const upd = () => { f.min = mn.value; f.max = mx.value; if ((f.min !== '' || f.max !== '') && !cb.checked) { cb.checked = true; } f.on = cb.checked; ROS.limit = 48; saveRosFlt(); renderTab(); };
+    cb.addEventListener('change', () => { f.on = cb.checked; ROS.limit = 48; saveRosFlt(); renderTab(); }); mn.addEventListener('change', upd); mx.addEventListener('change', upd);
+    row.append(mn, mx); fg.appendChild(row);
+  }
+  fdet.appendChild(fg);
+  const fc = el('button', { type: 'button', class: 'btn small' }, 'Clear filters'); fc.addEventListener('click', () => { ROS.flt = {}; saveRosFlt(); renderTab(); }); fdet.appendChild(fc);
+  host.appendChild(fdet);
   const CB = ROS.mode === 'masters' ? copiedByMap() : null;
   const qq = ROS.q.toLowerCase(); const FM = rosterFirst();
   const toks = ROS.q.split(/[\s,;]+/).filter(Boolean); const multi = toks.length > 1 && toks.every((t) => /^\d+$/.test(t)); const wanted = multi ? new Set(toks) : null;
   let rows = ROSTER[ROS.mode].filter((e) => (!ROS.term || e.t === ROS.term) && (multi ? wanted.has(e.m) : (!qq || (e.m + ' ' + e.n + ' ' + e.l + ' ' + e.d + ' ' + e.t + ' ' + (ROSTER.pretty[e.t] || '') + ' ' + e.a).toLowerCase().includes(qq))))
-    .map((e) => { const arr = byAM.get(e.a + '|' + e.m) || (ROS.mode === 'history' ? byM.get(e.m) : null) || []; let net = 0, last = 0; for (const t of arr) { net += t.net; if (t.closeTime > last) last = t.closeTime; } const sx = arr.length ? stats(arr) : null; return { e, arr, net, n: arr.length, last, first: FM.get(e.a + '|' + e.m), payoff: sx ? sx.payoff : NaN, dd: sx ? sx.maxDD : NaN, eff: sx && sx.maxDD > 0 ? sx.net / sx.maxDD : NaN }; });
-  const ddMax = parseFloat(ROS.dd); if (Number.isFinite(ddMax) && ddMax > 0) rows = rows.filter((r) => r.n && r.dd <= ddMax);
+    .map((e) => { const arr = byAM.get(e.a + '|' + e.m) || (ROS.mode === 'history' ? byM.get(e.m) : null) || []; let net = 0, last = 0; for (const t of arr) { net += t.net; if (t.closeTime > last) last = t.closeTime; } const needMe = !!((ROS.flt.cov || {}).on || (ROS.flt.diff || {}).on); const sx = arr.length ? stats(arr) : null; return { e, arr, net, n: arr.length, last, first: FM.get(e.a + '|' + e.m), payoff: sx ? sx.payoff : NaN, dd: sx ? sx.maxDD : NaN, eff: sx && sx.maxDD > 0 ? sx.net / sx.maxDD : NaN, sx, me: needMe && sx && e.r === 'FADER' ? masterExtra(arr) : null }; });
+  const active = ROS_MEAS.filter(([k]) => ROS.flt[k] && ROS.flt[k].on && (ROS.flt[k].min !== '' || ROS.flt[k].max !== ''));
+  if (active.length) rows = rows.filter((r) => {
+    if (!r.n) return false; const sx = r.sx;
+    const v = { net: r.net, dd: r.dd, eff: r.eff, n: r.n, win: sx.winRate * 100, pf: sx.pf, payoff: r.payoff, exp: sx.exp, cov: r.me ? r.me.mcov * 100 : NaN, diff: r.me ? r.me.masterDiff : NaN };
+    for (const [k] of active) { const x = v[k], f = ROS.flt[k]; if (Number.isNaN(x) || x === undefined) return false; if (f.min !== '' && x < parseFloat(f.min)) return false; if (f.max !== '' && x > parseFloat(f.max)) return false; }
+    return true;
+  });
   if (ROS.only === 'trades') rows = rows.filter((r) => r.n); else if (ROS.only === 'win') rows = rows.filter((r) => r.n && r.net > 0); else if (ROS.only === 'lose') rows = rows.filter((r) => r.n && r.net < 0); else if (ROS.only === 'idle') rows = rows.filter((r) => !r.n);
   const dsort = (dir) => (a, b) => (Number.isFinite(b.first) ? 1 : 0) - (Number.isFinite(a.first) ? 1 : 0) || dir * ((a.first || 0) - (b.first || 0));
   const psort = (dir) => (a, b) => (Number.isFinite(b.payoff) ? 1 : 0) - (Number.isFinite(a.payoff) ? 1 : 0) || dir * ((a.payoff || 0) - (b.payoff || 0));
