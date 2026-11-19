@@ -1575,10 +1575,15 @@ function columnChart(host, items, opts) {
 function barChartH(host, items, onClick) {
   host.textContent = '';
   if (!items.length) { host.appendChild(el('div', { class: 'muted' }, 'No data for this selection.')); return; }
-  const W = Math.max(host.clientWidth, 300); const rowH = 26; const m = { l: 150, r: 90, t: 6, b: 22 };
+  // items may carry a note (the comment of the magic): it is written on the right side, after the value
+  const hasNotes = items.some((it) => it.note); const narrow = host.clientWidth < 560;
+  const noteW = hasNotes ? (narrow ? 118 : 250) : 0; const noteChars = Math.floor(noteW / (narrow ? 5.6 : 6.2));
+  const m = { l: hasNotes && narrow ? 72 : 150, r: (hasNotes && narrow ? 58 : 90) + noteW, t: 6, b: 22 };
+  const W = Math.max(host.clientWidth, 300, hasNotes ? m.l + m.r + (narrow ? 100 : 220) : 0); const rowH = 26;
+  if (hasNotes && W > host.clientWidth) host.style.overflowX = 'auto'; else host.style.overflowX = '';
   const H = m.t + m.b + rowH * items.length;
   let x0 = 0, x1 = 0; for (const it of items) { if (it.v < x0) x0 = it.v; if (it.v > x1) x1 = it.v; }
-  const xt = niceTicks(x0, x1, 5); x0 = Math.min(x0, xt[0]); x1 = Math.max(x1, xt[xt.length - 1]);
+  const xt = niceTicks(x0, x1, hasNotes && narrow ? 3 : 5); x0 = Math.min(x0, xt[0]); x1 = Math.max(x1, xt[xt.length - 1]);
   const xf = axisFormatter(xt);
   const X = (x) => m.l + (x - x0) / ((x1 - x0) || 1) * (W - m.l - m.r);
   const svg = svgEl('svg', { width: W, height: H, role: 'img', 'aria-label': 'net profit by magic number' });
@@ -1599,8 +1604,9 @@ function barChartH(host, items, onClick) {
     // keep value label inside the plot: if a negative bar reaches the left edge, put the label right of zero
     if (it.v < 0 && xv - 60 < m.l) { vl.setAttribute('x', xz + 6); vl.setAttribute('text-anchor', 'start'); }
     svg.appendChild(vl);
+    if (it.note) { const nt = svgEl('text', { x: W - noteW + 6, y: cy + 4, 'text-anchor': 'start', class: 'lbl' }); nt.setAttribute('style', 'fill:var(--text-secondary)'); nt.textContent = it.note.length > noteChars ? it.note.slice(0, noteChars - 1) + '…' : it.note; svg.appendChild(nt); }
     const hit = svgEl('rect', { x: 0, y: m.t + rowH * i, width: W, height: rowH, fill: 'transparent', style: onClick ? 'cursor:pointer' : '' });
-    hit.addEventListener('pointermove', (e) => { bar.setAttribute('opacity', '0.75'); tip.show(e, it.label, [{ color: it.v >= 0 ? pos : neg, value: money(it.v), label: it.sub || '' }]); });
+    hit.addEventListener('pointermove', (e) => { bar.setAttribute('opacity', '0.75'); tip.show(e, it.label + (it.note ? ' · ' + it.note : ''), [{ color: it.v >= 0 ? pos : neg, value: money(it.v), label: it.sub || '' }]); });
     hit.addEventListener('pointerleave', () => { bar.removeAttribute('opacity'); tip.hide(); });
     if (onClick) hit.addEventListener('click', () => onClick(it));
     svg.appendChild(hit);
@@ -1631,11 +1637,15 @@ function renderCharts(T, s) {
   const items = [...days].sort((a, b) => a[0] - b[0]).map(([d, o]) => ({ xl: fmtDate(d).slice(5), v: o.v, title: fmtDate(d) + ' (' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(d).getUTCDay()] + ')', sub: o.n + ' trades' }));
   columnChart($('#dailyChart'), items, { height: 372, label: 'daily net profit' });
   const g = groupBy(T, (t) => t.magic);
-  let mi = [...g].map(([k, arr]) => { let v = 0; for (const t of arr) v += t.net; return { label: k, v, sub: arr.length + ' trades', n: arr.length }; });
+  let mi = [...g].map(([k, arr]) => { let v = 0; for (const t of arr) v += t.net; return { label: k, v, sub: arr.length + ' trades', n: arr.length, arr }; });
   mi.sort((a, b) => b.v - a.v);
   const total = mi.length;
   if (mi.length > 24) { mi = mi.slice(0, 12).concat(mi.slice(-12)); }
   $('#magicChartSub').textContent = total > 24 ? 'Top 12 and bottom 12 of ' + total + ' magic numbers. Click a bar to filter.' : total + ' magic numbers. Click a bar to filter.';
+  for (const it of mi) {   // the comment of each magic (its most used one, and how many others)
+    const c = new Map(); for (const t of it.arr) { const k = commentOf(t); c.set(k, (c.get(k) || 0) + 1); }
+    const top = [...c].sort((a, b) => b[1] - a[1]); it.note = top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) : '') : ''; it.arr = null;
+  }
   barChartH($('#magicChart'), mi, (it) => { state.magic = it.label; syncFilterInputs(); render(); });
 }
 
