@@ -351,6 +351,10 @@ th.dragging { opacity: .45; }
 .ros-frow { display: grid; grid-template-columns: 1fr 84px 84px; gap: 6px; align-items: center; }
 .ros-frow input[type=number] { font: inherit; font-size: 13px; padding: 3px 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface-1); color: var(--text-primary); width: 100%; }
 .ros-fck { font-size: 13px; display: flex; gap: 4px; align-items: center; cursor: pointer; }
+.ros-follow h4 { margin: 8px 0 4px; font-size: 13px; }
+table.ros-sub { font-size: 12px; }
+table.ros-sub th, table.ros-sub td { padding: 4px 7px; }
+table.ros-sub tr.tot td { font-weight: 600; background: var(--surface-2); }
 @media (max-width: 520px) { .ros-grid { grid-template-columns: 1fr; } }
 </style>
 <style>
@@ -3372,6 +3376,50 @@ function rosToggleCompare(e, on) {
   const k = rosKey(e); ROS.cmp = ROS.cmp.filter((x) => x !== k); if (on) { ROS.cmp.push(k); if (ROS.cmp.length > 2) ROS.cmp.shift(); }
   renderTab(); const p = document.getElementById('rosCmp'); if (p && !p.hidden) p.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+// inside "Details & settings": one row per fader that follows this master (or per master this fader copies), with its profit / loss stats
+let ROS_CTX = { byAM: new Map() };
+function rosFollowRows(e) {
+  const byAM = ROS_CTX.byAM; const out = [];
+  if (e.r === 'FADER') {
+    const arr = byAM.get(e.a + '|' + e.m) || []; const g = new Map();
+    for (const t of arr) {
+      const f = faderOf(t); if (f.extra || !f.master) continue; const m = ticketLookup(t.account, f.master); const k = m ? masterKeyOf(m) : '(master not in the loaded data)';
+      let o = g.get(k); if (!o) g.set(k, o = { label: m ? m.magic + ' ' + baseOf(m.base, m.comment) : k, magic: m ? m.magic : '', account: m ? m.account : '', arr: [], mnet: 0, seen: new Set() });
+      o.arr.push(t); if (m && !o.seen.has(m.ticket)) { o.seen.add(m.ticket); o.mnet += m.net; }
+    }
+    out.push(...g.values());
+  } else {
+    for (const f of ROSTER.faders) {
+      if (!f.src || !f.src.split(',').map((x) => x.trim()).includes(e.m)) continue;
+      const mine = []; const seen = new Set(); let mnet = 0;
+      for (const t of byAM.get(f.a + '|' + f.m) || []) { const ff = faderOf(t); if (ff.extra || !ff.master) continue; const m = ticketLookup(t.account, ff.master); if (!m || m.magic !== e.m || m.account !== e.a) continue; mine.push(t); if (!seen.has(m.ticket)) { seen.add(m.ticket); mnet += m.net; } }
+      out.push({ label: (f.l || f.n) + ' · ' + f.m, magic: f.m, account: f.a, arr: mine, mnet });
+    }
+  }
+  return out.map((o) => { const s = o.arr.length ? stats(o.arr) : null; return Object.assign(o, { s, net: s ? s.net : 0, diff: s ? s.net + o.mnet : NaN }); }).sort((a, b) => (b.arr.length ? 1 : 0) - (a.arr.length ? 1 : 0) || b.net - a.net);
+}
+function rosFollowTable(e) {
+  if (e.r !== 'FADER' && e.r !== 'MASTER') return null;
+  const rows = rosFollowRows(e); const box = el('div', { class: 'ros-follow' });
+  box.appendChild(el('h4', null, e.r === 'FADER' ? 'Masters this fader copies (results of the copies, selected period)' : 'Faders that follow this master (results of their copies of it, selected period)'));
+  if (!rows.length) { box.appendChild(el('p', { class: 'muted' }, e.r === 'FADER' ? 'No copies in the loaded data for this selection.' : 'No fader of the roster follows this master.')); return box; }
+  const tbl = el('table', { class: 'ros-sub' }); const hr = el('tr');
+  for (const [l, num] of [[e.r === 'FADER' ? 'Master' : 'Fader', 0], ['Trades', 1], ['Net', 1], ['Win %', 1], ['PF', 1], ['Max DD', 1], ['Master $', 1], ['Difference $', 1], ['', 0]]) hr.appendChild(el('th', { class: num ? 'num' : '' }, l));
+  tbl.appendChild(el('thead')).appendChild(hr); const tb = el('tbody'); tbl.appendChild(tb);
+  const T0 = { n: 0, net: 0, mnet: 0, diff: 0 };
+  for (const o of rows) {
+    const tr = el('tr'); const s = o.s;
+    tr.appendChild(el('td', null, o.label));
+    const cell = (txt, cls) => tr.appendChild(el('td', { class: 'num ' + (cls || '') }, txt));
+    if (s) { cell(String(s.n)); cell(money(s.net), signCls(s.net)); cell(pct(s.winRate)); cell(ratio(s.pf)); cell(s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD)); cell(money(o.mnet), signCls(o.mnet)); cell(money(o.diff), signCls(o.diff)); T0.n += s.n; T0.net += s.net; T0.mnet += o.mnet; T0.diff += o.diff; }
+    else { cell('0'); for (let i = 0; i < 6; i++) cell('–'); }
+    const td = el('td'); if (o.magic) { const b = el('button', { type: 'button', class: 'cm-open', title: 'Show this magic in the dashboard' }, 'Show'); b.addEventListener('click', () => rosShow(o.account, o.magic)); td.appendChild(b); } tr.appendChild(td); tb.appendChild(tr);
+  }
+  if (rows.length > 1) { const tr = el('tr', { class: 'tot' }); tr.appendChild(el('td', null, 'Total')); tr.appendChild(el('td', { class: 'num' }, String(T0.n))); tr.appendChild(el('td', { class: 'num ' + signCls(T0.net) }, money(T0.net))); for (let i = 0; i < 3; i++) tr.appendChild(el('td')); tr.appendChild(el('td', { class: 'num ' + signCls(T0.mnet) }, money(T0.mnet))); tr.appendChild(el('td', { class: 'num ' + signCls(T0.diff) }, money(T0.diff))); tr.appendChild(el('td')); tb.appendChild(tr); }
+  const wrap = el('div', { class: 'tablewrap', style: 'max-height:340px' }); wrap.appendChild(tbl); box.appendChild(wrap);
+  box.appendChild(el('p', { class: 'hint' }, 'Net = what the fader made on those copies. Master $ = what the master trades they copied made. Difference = Net + Master $.'));
+  return box;
+}
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
@@ -3407,6 +3455,7 @@ function rosterCard(e, arr, CB, mode, first) {
   const det = el('details', { class: 'ros-det' }); det.appendChild(el('summary', null, 'Details & settings'));
   const dl = el('dl', { class: 'ros-kv' }); const add = (k, v) => { dl.appendChild(el('dt', null, k)); dl.appendChild(el('dd', null, v)); };
   add('EA version', e.b || 'not established'); for (const [k, v] of e.k || []) add(k, v); det.appendChild(dl); card.appendChild(det);
+  det.addEventListener('toggle', () => { if (det.open && !det._built) { det._built = true; const ft = rosFollowTable(e); if (ft) det.insertBefore(ft, dl); } });
   return card;
 }
 // magic numbers that traded in the loaded data (filters apply) but have no entry in the roster for that account
@@ -3450,7 +3499,7 @@ function renderRosterMissing(host, rows) {
 }
 function renderRoster(host, T) {
   if (!ROSTER) { host.appendChild(el('p', { class: 'muted' }, 'The roster data is not available in this copy of the dashboard.')); return; }
-  const byAM = groupBy(T, (t) => t.account + '|' + t.magic), byM = groupBy(T, (t) => t.magic); const missing = rosterMissing(byAM);
+  const byAM = groupBy(T, (t) => t.account + '|' + t.magic), byM = groupBy(T, (t) => t.magic); ROS_CTX = { byAM }; const missing = rosterMissing(byAM);
   const modes = [['masters', 'Masters'], ['faders', 'Faders'], ['copiers', 'Copy routes'], ['history', 'History'], ['missing', 'Not in roster']];
   const help = { masters: 'The source strategies and what each version tests. Net, win % and the copied-by figures are live from your data.', faders: 'Reverse copies of a master: which trades they copy, their limits, and live fader $, master $ and the ratio copy.', copiers: 'Same-direction copy routes between accounts, not reverse strategies.', history: 'Older source links and candidates, kept apart from current settings.' };
   const bar = el('div', { class: 'fa-bar' });
