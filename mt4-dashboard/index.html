@@ -3749,6 +3749,7 @@ function rosDetailSections(e, arr, moreTiles) {
   if (moreTiles.length) sec('More results', (b) => { const g = el('div', { class: 'ros-tiles' }); for (const t of moreTiles) g.appendChild(t); b.appendChild(g); });
   return wrap;
 }
+const ROS_BACK = new Set(['Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown', 'Open now', 'Followers configured', 'First copies $', 'Extras $']);
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
@@ -3761,7 +3762,7 @@ function rosterCard(e, arr, CB, mode, first) {
   card.appendChild(idl); if (evRes) card.appendChild(evRes.row);
   // main card: only net, floating P/L, avg win / avg loss, PF, closed drawdown, trading days, unique parents and verified copy coverage; everything else is under Details
   const tiles = el('div', { class: 'ros-tiles' }); const more = [];
-  const tl = (label, val, cls, tip, main) => { const d = el('div', { class: 'ros-tile', title: tip || '' }); d.appendChild(el('div', { class: 'label' }, label)); d.appendChild(el('div', { class: 'value ' + (cls || '') }, val)); (main ? tiles : { appendChild: (x) => more.push(x) }).appendChild(d); };
+  const tl = (label, val, cls, tip, main) => { const d = el('div', { class: 'ros-tile', title: tip || '' }); d.appendChild(el('div', { class: 'label' }, label)); d.appendChild(el('div', { class: 'value ' + (cls || '') }, val)); ((main || ROS_BACK.has(label)) ? tiles : { appendChild: (x) => more.push(x) }).appendChild(d); };
   let s = null, me = null;
   const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opn = op.reduce((a, o) => a + (Number.isFinite(o.pnl) ? o.pnl : 0), 0); const om = DB.openMeta.get(e.a);
   if (arr.length) {
@@ -3777,11 +3778,14 @@ function rosterCard(e, arr, CB, mode, first) {
       tl('Verified copy coverage', pct(me.mcov), '', C.mcov.title, true);
     } else if (mode === 'masters') {
       const conf = e.fby ? e.fby.split(',').filter(Boolean).length : 0; const fn = CB ? CB.reduce((a, x) => a + x.net, 0) : 0, fx = CB ? CB.reduce((a, x) => a + x.xnet, 0) : 0, cn = CB ? CB.reduce((a, x) => a + x.n, 0) : 0, cx = CB ? CB.reduce((a, x) => a + x.xn, 0) : 0;
-      tl('Followers that copied', (CB ? CB.length : 0) + ' of ' + conf, '', 'Faders with at least one copy linked to THIS master (same account + magic, by source account + source ticket) in the selected period, of the ' + conf + ' the roster lists as followers.', true);
+      tl('Followers configured', String(conf), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.');
+      tl('Followers that copied', String(CB ? CB.length : 0), '', 'Faders with at least one copy linked to THIS master (same account + magic, by source account + source ticket) in the selected period, of the ' + conf + ' the roster lists as followers.', true);
       tl('All linked copies $', CB ? money(fn + fx) : '–', CB ? signCls(fn + fx) : '', 'First copies + extras linked to this master. Not everything those faders did, only their copies of this master.', true);
       tl('First copies $', CB ? money(fn) : '–', CB ? signCls(fn) : '', 'Result of the FIRST copies linked to this master only' + (CB ? ' (' + cn + ' trades)' : '') + '. Extras are separate.');
       tl('Extras $', CB ? money(fx) : '–', CB ? signCls(fx) : '', 'Result of the extra copies (+# in the comment) linked to this master' + (CB ? ' (' + cx + ' trades)' : '') + '.');
     }
+    tl('Max drawdown', s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD), 'Biggest fall from a peak of the cumulative result of this magic\'s CLOSED trades in the selected period (floating loss while trades were open is not included)');
+    tl('Open now', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, floating P/L as of the last snapshot' : 'No open positions of this magic');
     tl('Trades', s.n.toLocaleString('en-US')); tl('Win %', pct(s.winRate)); tl('Expectancy', money(s.exp), signCls(s.exp), 'Average result per trade'); tl('Last trade', s.last ? fmtDate(s.last) : '–');
     tl('Avg win', money(s.avgWin), signCls(s.avgWin), 'Average result of the winning trades'); tl('Avg loss', money(s.avgLoss), signCls(s.avgLoss), 'Average result of the losing trades');
     tl('Loss : win', Number.isFinite(s.payoff) ? '1 : ' + (s.payoff >= 10 ? Math.round(s.payoff) : Math.round(s.payoff * 100) / 100) : '–', '', 'Average loss compared with the average win (payoff ratio).');
