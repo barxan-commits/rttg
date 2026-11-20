@@ -355,6 +355,10 @@ th.dragging { opacity: .45; }
 table.ros-sub { font-size: 12px; }
 table.ros-sub th, table.ros-sub td { padding: 4px 7px; }
 table.ros-sub tr.tot td { font-weight: 600; background: var(--surface-2); }
+.ros-secs { margin: 8px 0; display: grid; gap: 6px; }
+.ros-sec { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.ros-sec > summary { cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.ros-sec h4 { margin: 10px 0 4px; font-size: 12.5px; }
 .ros-ev { display: flex; flex-wrap: wrap; gap: 5px; }
 .ros-chip { font-size: 11.5px; padding: 1px 8px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary); }
 .ros-chip.ok { color: var(--pos-text); border-color: var(--pos-text); } .ros-chip.warn { background: var(--warn-bg); color: var(--warn-ink); } .ros-chip.bad { color: var(--neg-text); border-color: var(--neg-text); font-weight: 600; }
@@ -3497,6 +3501,23 @@ function rosterComparePanel(host, byAM) {
     const a = ms[0], b = ms[1]; let win = -1; const ok = a && b && a.better && Number.isFinite(a.raw) && Number.isFinite(b.raw) && a.raw !== b.raw; if (ok) win = (a.raw > b.raw) === (a.better === 'high') ? 0 : 1;
     ms.forEach((m, i) => tr.appendChild(el('td', { class: 'num ' + (m ? m.cls : '') + (win === i ? ' ros-better' : '') }, m ? m.text : '–'))); tb.appendChild(tr);
   }
+  if (ents.every((e) => e.r === 'FADER')) {   // same-parent comparison: only source trades that BOTH faders copied are compared
+    const P = ents.map((e, i) => rosParents(e, arrs[i])); const common = [...P[0].keys()].filter((k) => P[1].has(k));
+    sect('Same parents (source trades both copied)');
+    const row = (lab, a, b, money1, tip) => { const tr = el('tr'); tr.appendChild(el('td', { title: tip || '' }, lab)); for (const v of [a, b]) tr.appendChild(el('td', { class: 'num ' + (money1 ? signCls(v) : '') }, money1 ? money(v) : String(v))); tb.appendChild(tr); };
+    if (!common.length) row('Shared source trades', 0, 0, false, 'No source trade was copied by both');
+    else {
+      const sum = (i) => common.reduce((a, k) => a + P[i].get(k).net, 0), cnt = (i) => common.reduce((a, k) => a + P[i].get(k).n, 0);
+      const wins = (i) => common.filter((k) => P[i].get(k).net > 0).length;
+      row('Shared source trades', common.length, common.length, false, 'Source (master) trades copied as a first copy by both faders');
+      row('Net on shared parents', sum(0), sum(1), true, 'First-copy result on exactly the same source trades, so the comparison is fair');
+      row('Winning parents', wins(0) + ' / ' + common.length, wins(1) + ' / ' + common.length, false);
+      row('Net per parent', sum(0) / common.length, sum(1) / common.length, true);
+    }
+    const only = (i) => [...P[i].keys()].filter((k) => !P[1 - i].has(k)); const on = (i) => only(i).reduce((a, k) => a + P[i].get(k).net, 0);
+    row('Unmatched trades (only this fader)', only(0).length, only(1).length, false, 'Source trades copied by only one of the two. Kept apart so they cannot flatter the comparison.');
+    row('Net of unmatched trades', on(0), on(1), true);
+  }
   sect('Settings');
   const kvs = ents.map((e) => { const o = new Map(); o.set('EA version', e.b || 'not established'); o.set('What it does', e.d); o.set('Status', e.st ? e.st[0] : ''); if (e.p && e.p.length) o.set('Key settings', e.p.map((x) => x[0]).join(' · ')); if (e.src) o.set('Source master', e.src); if (e.fby) o.set('Followed by', e.fby); for (const [k, v] of e.k || []) o.set(k, v); return o; });
   const klabels = []; for (const o of kvs) for (const k of o.keys()) if (!klabels.includes(k)) klabels.push(k);
@@ -3559,41 +3580,221 @@ function rosFollowTable(e) {
   box.appendChild(el('p', { class: 'hint' }, 'First copies $ = what the fader made on its first copies of this master; Extras $ = its extra (+#) copies; Total $ = both. Win %, PF and Max DD are for the first copies. Master $ = what the master trades they copied made. Difference = Total $ + Master $.'));
   return box;
 }
+// ================= Roster: deeper analysis under "Details & settings" =================
+const rosSecDays = (arr) => { const d = new Set(); for (const t of arr) d.add(Math.floor(t.closeTime / DAY)); return d.size; };
+const rosKVof = (e, key) => { for (const [k, v] of e.k || []) if (k === key) return v; return ''; };
+// maximum simultaneous orders and lots (trade intervals; still open positions have no end)
+function rosSimul(arrs, openPos) {
+  const END = 1e18, ev = []; const add = (o, c, lots) => { if (!Number.isFinite(o)) return; ev.push([o, 1, lots || 0]); ev.push([Number.isFinite(c) ? c : END, -1, lots || 0]); };
+  for (const arr of arrs) for (const t of arr) add(t.openTime, t.closeTime, t.lots);
+  for (const o of openPos || []) add(o.openTime, NaN, o.lots);
+  ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  let n = 0, l = 0, mn = 0, ml = 0; for (const x of ev) { n += x[1]; l += x[1] * x[2]; if (n > mn) mn = n; if (l > ml) ml = l; }
+  return { maxN: mn, maxLots: Math.round(ml * 100) / 100 };
+}
+function rosMini(heads, rows, cls) {
+  const tbl = el('table', { class: 'ros-sub' }); const hr = el('tr'); for (const h of heads) hr.appendChild(el('th', { class: h.num ? 'num' : '', title: h.tip || '' }, h.l)); tbl.appendChild(el('thead')).appendChild(hr);
+  const tb = el('tbody'); tbl.appendChild(tb); for (const r of rows) { const tr = el('tr', r.cls ? { class: r.cls } : null); r.cells.forEach((c, i) => { const num = heads[i] && heads[i].num; const o = (c && typeof c === 'object') ? c : { t: c }; tr.appendChild(el('td', { class: (num ? 'num ' : '') + (o.c || '') }, o.t === undefined || o.t === null ? '' : String(o.t))); }); tb.appendChild(tr); }
+  const wrap = el('div', { class: 'tablewrap', style: 'max-height:320px' }); wrap.appendChild(tbl); return wrap;
+}
+const rosM = (v) => ({ t: Number.isFinite(v) ? money(v) : '–', c: Number.isFinite(v) ? signCls(v) : '' });
+// the first copies of a fader keyed by their source trade (account + ticket)
+function rosParents(e, arr) {
+  const m = new Map();
+  for (const t of arr) { const f = faderOf(t); if (f.extra || !f.master) continue; const s = srcOf(t, true); if (!s) continue; const k = srcKey(s); let o = m.get(k); if (!o) m.set(k, o = { key: k, src: s, net: 0, n: 0, trades: [] }); o.net += t.net; o.n++; o.trades.push(t); }
+  return m;
+}
+// master trades (closed in the dates + still open) per master strategy
+let ROS_MT = null, ROS_MT_KEY = '';
+function masterTradesByKey() {
+  const key = state.from + '|' + state.to + '|' + DB.trades.length + '|' + DB.open.length; if (ROS_MT && ROS_MT_KEY === key) return ROS_MT;
+  const m = new Map(); const push = (x) => { const k = masterKeyOf(x); let a = m.get(k); if (!a) m.set(k, a = []); a.push(x); };
+  for (const t of DB.trades) { if (faderOf(t).is) continue; if ((state.from !== null && t.closeTime < state.from) || (state.to !== null && t.closeTime >= state.to)) continue; push(t); }
+  for (const o of DB.open) { if (!faderOf(o).is) push(o); }
+  ROS_MT = m; ROS_MT_KEY = key; return m;
+}
+const rosOpenT = (x) => (Number.isFinite(x.openTime) ? x.openTime : x.closeTime);
+// ---------- missing copies ----------
+function rosNearSnap(acc, t, tol) {
+  const sn = DB.snaps.get(acc); if (!sn || !sn.length) return null; let lo = 0, hi = sn.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (sn[mid].t < t) lo = mid + 1; else hi = mid; }
+  let best = Infinity; for (const i of [lo - 1, lo, lo + 1]) if (sn[i]) best = Math.min(best, Math.abs(sn[i].t - t));
+  return best <= tol;
+}
+function rosMissing(e, arr) {
+  const copiedSrc = new Set(), keys = new Set();
+  for (const [, o] of rosParents(e, arr)) { copiedSrc.add(o.key); keys.add(masterKeyOf(o.src)); }
+  for (const o of openFiltered()) { if (o.account !== e.a || o.magic !== e.m) continue; const f = faderOf(o); if (!f.is || f.extra || !f.master) continue; const m = srcOf(o); if (m) { copiedSrc.add(srcKey(m)); keys.add(masterKeyOf(m)); } }
+  const out = { copied: copiedSrc.size, cands: 0, since: NaN, cats: new Map(), unexplained: [], masters: keys.size, filter: '', minAge: 0 };
+  if (!keys.size) return out;
+  const since = faderSince().get(e.a + '|' + e.m); out.since = since;
+  const sel = /Comment contains (.+)/.exec(rosKVof(e, 'Trade selection')); out.filter = sel ? sel[1].trim() : '';
+  const ag = /(\d+)\s*[–-]\s*(\d+)/.exec(rosKVof(e, 'Entry age')); out.minAge = ag ? +ag[1] : 0;
+  const terms = new Set(rosTermsOf(e.a)); const errs = DB.health.filter((h) => terms.has(h.terminal) && /^(Error \d+|Order failed)/.test(h.category) && Number.isFinite(h.first));
+  const MT = masterTradesByKey(); const cat = (k) => out.cats.set(k, (out.cats.get(k) || 0) + 1);
+  for (const k of keys) for (const m of MT.get(k) || []) {
+    if (rosOpenT(m) < since) continue; out.cands++; if (copiedSrc.has(srcKey(m))) continue;
+    if (out.filter && !String(m.comment || '').includes(out.filter)) { cat('BASE / comment filter excluded'); continue; }
+    if (out.minAge > 0 && Number.isFinite(m.closeTime) && Number.isFinite(m.duration) && m.duration < out.minAge) { cat('Closed before the minimum master age (entry filter)'); continue; }
+    const near = rosNearSnap(e.a, rosOpenT(m), 15 * 60000); if (near === false) { cat('Terminal offline (no account snapshot around it)'); continue; }
+    const t0 = rosOpenT(m); if (errs.some((h) => t0 >= h.first - 30 * 60000 && t0 <= (Number.isFinite(h.last) ? h.last : h.first) + 30 * 60000)) { cat('Order error logged around that time (possible rejection)'); continue; }
+    cat('Unexplained missing'); out.unexplained.push(m);
+  }
+  return out;
+}
+function rosSecMissing(e, arr, box) {
+  const r = rosMissing(e, arr);
+  if (!r.masters) { box.appendChild(el('p', { class: 'muted' }, 'No copies linked to a source trade in this selection, so there is nothing to compare.')); return; }
+  const miss = r.cands - r.copied;
+  box.appendChild(el('p', { class: 'sub' }, 'Source trades since its first copy (' + fmtTime(r.since) + ' server time): ' + r.cands + ' · copied: ' + r.copied + ' (' + pct(r.cands ? r.copied / r.cands : NaN) + ') · missing: ' + Math.max(0, miss) + '. Source trades older than its first copy are not counted.'));
+  const order = ['BASE / comment filter excluded', 'Closed before the minimum master age (entry filter)', 'Terminal offline (no account snapshot around it)', 'Order error logged around that time (possible rejection)', 'Unexplained missing'];
+  const rows = order.map((k) => ({ cells: [k, r.cats.get(k) || 0, pct(miss > 0 ? (r.cats.get(k) || 0) / miss : NaN)], cls: k === 'Unexplained missing' ? 'tot' : '' }));
+  box.appendChild(rosMini([{ l: 'Why it was not copied' }, { l: 'Source trades', num: 1 }, { l: 'Share', num: 1 }], rows));
+  const notes = []; if (r.filter) notes.push('Comment filter from the roster: "' + r.filter + '"'); else notes.push('No comment filter in the roster (all BASE and ADD trades)'); if (r.minAge) notes.push('Minimum master age ' + r.minAge + ' s'); box.appendChild(el('p', { class: 'hint' }, notes.join(' · ') + '. Late-entry limits and daily guards are not in the data, so such misses stay "Unexplained". Order errors come from the logs of the days loaded (a hint, not proof).'));
+  if (r.unexplained.length) { box.appendChild(el('h4', null, 'Unexplained missing (first ' + Math.min(15, r.unexplained.length) + ')')); box.appendChild(rosMini([{ l: 'Source ticket' }, { l: 'Source magic' }, { l: 'Opened (server time)' }, { l: 'Result', num: 1 }], r.unexplained.slice(0, 15).map((m) => ({ cells: [m.account + ' #' + m.ticket, m.magic, fmtTime(rosOpenT(m)), rosM(m.net)] })))); }
+}
+// ---------- floating risk ----------
+function rosSecFloating(e, arr, box) {
+  const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opn = op.reduce((a, o) => a + (Number.isFinite(o.pnl) ? o.pnl : 0), 0), opl = op.reduce((a, o) => a + (o.lots || 0), 0);
+  const om = DB.openMeta.get(e.a); const sn = DB.snaps.get(e.a); const last = sn && sn.length ? sn[sn.length - 1] : null; const es = equityStats(e.a); const per = snapsInPeriod(e.a);
+  let mo = 0, ml = 0; for (const p of per) { if (p.orders > mo) mo = p.orders; if (p.lots > ml) ml = p.lots; }
+  const sim = rosSimul([arr], op); const allArr = DB.trades.filter((t) => t.account === e.a && t.magic === e.m);
+  box.appendChild(rosMini([{ l: '' }, { l: 'This magic' }, { l: 'Whole account ' + e.a }], [
+    { cells: ['Current exposure (open positions)', op.length ? op.length + ' positions · ' + (Math.round(opl * 100) / 100) + ' lots' : 'none open', last ? (last.orders || 0) + ' orders · ' + (Math.round((last.lots || 0) * 100) / 100) + ' lots (snapshot ' + fmtTime(last.t) + ')' : '–'] },
+    { cells: ['Floating P/L now', op.length ? rosM(opn) : '–', last ? rosM(last.floating) : '–'] },
+    { cells: ['Observed equity drawdown (incl. floating, period)', 'not recorded per magic', es.maxDD > 0 ? { t: money(-es.maxDD) + ' (' + pct(es.maxDDPct) + ') low ' + fmtTime(es.ddTime), c: 'neg' } : '–'] },
+    { cells: ['Worst floating P/L (period)', 'not recorded per magic', rosM(es.worstFl)] },
+    { cells: ['Max simultaneous orders · lots', sim.maxN + ' orders · ' + sim.maxLots + ' lots (from trade times; ' + (arr.length + op.length) + ' trades)', per.length ? mo + ' orders · ' + (Math.round(ml * 100) / 100) + ' lots (from snapshots)' : '–'] },
+  ]));
+  const s = arr.length ? stats(arr) : null;
+  box.appendChild(el('p', { class: 'hint' }, 'Closed drawdown (kept separate): ' + (s ? (s.maxDD > 0 ? money(-s.maxDD) : money(0)) : '–') + ' for this magic in the period. Floating P/L and equity are as of ' + (om ? fmtTime(om.lastSeen) : '–') + ' (open positions) / ' + (last ? fmtTime(last.t) : '–') + ' (account snapshot), server time. The collector records floating P/L for the whole account only, never per magic number. Max simultaneous figures: this magic from its trade open / close times (' + allArr.length + ' trades loaded), the account from the 5-minute snapshots.'));
+}
+// ---------- settings and restart timeline ----------
+function rosSecTimeline(e, arr, box) {
+  const terms = new Set(rosTermsOf(e.a)); const evs = [];
+  for (const h of DB.health) if (h.kind === 'experts' && terms.has(h.terminal) && h.magic === e.m && /^EA (loaded|started|removed|stopped)/.test(h.category) && Number.isFinite(h.last)) evs.push({ t: h.last, c: h.category, sample: h.sample || '' });
+  evs.sort((a, b) => a.t - b.t);
+  if (!DB.health.length) { box.appendChild(el('p', { class: 'muted' }, 'No log data loaded.')); return; }
+  if (!evs.length) { box.appendChild(el('p', { class: 'muted' }, 'No attach / start / stop line of this magic in the available logs (' + ((SOURCE.manifest && SOURCE.manifest.logDays) || 'few') + ' days). Its history cannot be split into runs from the logs, so do not assume one run.')); return; }
+  let prevInputs = null; const rows = []; const starts = [];
+  for (const x of evs) {
+    let label = x.c, cls = '';
+    if (x.c === 'EA loaded') { label = 'Attached (loaded)'; starts.push(x.t); }
+    else if (x.c === 'EA started (inputs)') { const norm = x.sample.replace(/\s+/g, ' ').trim(); label = prevInputs === null ? 'Started with inputs' : norm !== prevInputs ? 'Inputs changed' : 'Restarted, same inputs'; if (prevInputs !== null && norm !== prevInputs) cls = 'tot'; prevInputs = norm; starts.push(x.t); }
+    else if (x.c === 'EA removed') { label = 'Removed'; cls = 'tot'; }
+    else if (x.c === 'EA stopped: init failed') { label = 'Initialization failed'; cls = 'tot'; }
+    else if (x.c.startsWith('EA stopped')) { label = 'Stopped: ' + x.c.replace('EA stopped: ', ''); cls = 'tot'; }
+    rows.push({ cells: [fmtTime(x.t), label, x.sample.length > 170 ? x.sample.slice(0, 170) + '…' : x.sample], cls });
+  }
+  box.appendChild(rosMini([{ l: 'Time (log clock)' }, { l: 'Event' }, { l: 'Inputs / message' }], rows));
+  // closed results per run (a run = from one start to the next), so incompatible histories are not pooled
+  const all = DB.trades.filter((t) => t.account === e.a && t.magic === e.m); const bounds = [...new Set(starts)].sort((a, b) => a - b);
+  if (bounds.length) {
+    const segs = []; let prev = -Infinity; const cuts = bounds.concat([Infinity]);
+    for (let i = 0; i < cuts.length; i++) { const from = i === 0 ? -Infinity : cuts[i - 1], to = cuts[i]; const seg = all.filter((t) => t.closeTime >= from && t.closeTime < to); if (seg.length || i > 0) segs.push({ from, to, seg }); prev = to; }
+    const rr = segs.map((g, i) => { const s = g.seg.length ? stats(g.seg) : null; return { cells: [(g.from === -Infinity ? 'Before the first logged start' : 'Run from ' + fmtTime(g.from)) + (g.to === Infinity ? ' (latest)' : ''), s ? s.n : 0, s ? rosM(s.net) : '–', s ? pct(s.winRate) : '–', s ? (s.maxDD > 0 ? { t: money(-s.maxDD), c: 'neg' } : money(0)) : '–'] }; });
+    box.appendChild(el('h4', null, 'Closed results per run (all loaded trades, not only the selected period)'));
+    box.appendChild(rosMini([{ l: 'Run' }, { l: 'Trades', num: 1 }, { l: 'Net', num: 1 }, { l: 'Win %', num: 1 }, { l: 'Closed DD', num: 1 }], rr));
+    box.appendChild(el('p', { class: 'hint' }, 'Log times are the terminal PC clock and trade times are MT4 server time, so the split can be off by the clock difference. Only the log days loaded are known: earlier restarts are not visible. Treat results of different runs (especially after changed inputs) as separate histories.'));
+  }
+}
+// ---------- first copies / extras / combined ----------
+function rosSecExtras(e, arr, box) {
+  const first = arr.filter((t) => !faderOf(t).extra), ext = arr.filter((t) => faderOf(t).extra); const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opF = op.filter((o) => !faderOf(o).extra), opE = op.filter((o) => faderOf(o).extra);
+  const row = (name, a, o) => { const s = a.length ? stats(a) : null; const sim = rosSimul([a], o); return { cells: [name, a.length, s ? rosM(s.net) : '–', s ? pct(s.winRate) : '–', s ? ratio(s.pf) : '–', s ? (s.maxDD > 0 ? { t: money(-s.maxDD), c: 'neg' } : money(0)) : '–', sim.maxN + ' / ' + sim.maxLots] }; };
+  box.appendChild(rosMini([{ l: '' }, { l: 'Trades', num: 1 }, { l: 'Net', num: 1 }, { l: 'Win %', num: 1 }, { l: 'PF', num: 1 }, { l: 'Closed DD', num: 1 }, { l: 'Max orders / lots', num: 1 }], [row('First copies', first, opF), row('Extras (+#)', ext, opE), row('Combined', arr, op)]));
+  const sF = first.length ? stats(first) : null, sC = arr.length ? stats(arr) : null; const nF = rosSimul([first], opF), nC = rosSimul([arr], op);
+  if (ext.length && sF && sC) box.appendChild(el('p', { class: 'hint' }, 'Extras ' + (sC.net - sF.net >= 0 ? 'added ' : 'cost ') + money(Math.abs(sC.net - sF.net)) + ' of net; closed drawdown ' + (sC.maxDD > sF.maxDD ? 'got worse' : sC.maxDD < sF.maxDD ? 'improved' : 'did not change') + ' (' + money(-sF.maxDD) + ' → ' + money(-sC.maxDD) + '); peak exposure ' + nF.maxN + ' → ' + nC.maxN + ' orders, ' + nF.maxLots + ' → ' + nC.maxLots + ' lots.'));
+  else box.appendChild(el('p', { class: 'hint' }, ext.length ? '' : 'No extra copies in this selection.'));
+}
+// ---------- profit concentration ----------
+function rosSecConcentration(e, arr, box) {
+  const days = new Map(); for (const t of arr) { const d = Math.floor(t.closeTime / DAY) * DAY; days.set(d, (days.get(d) || 0) + t.net); }
+  let bestD = NaN, bestDV = -Infinity; for (const [d, v] of days) if (v > bestDV) { bestDV = v; bestD = d; }
+  const net = arr.reduce((a, t) => a + t.net, 0); const bs = baskets(arr); let bestB = null; for (const b of bs) if (!bestB || b.net > bestB.net) bestB = b;
+  const exDay = net - (Number.isFinite(bestD) ? bestDV : 0), exBsk = net - (bestB ? bestB.net : 0);
+  // without both: drop the trades of the best day and of the best basket (once each)
+  const bsKeys = new Set(bestB ? arr.filter((t) => t.basket && (t.account + '|' + t.basket) === (bestB.account + '|' + bestB.id)).map((t) => t.ticket) : []);
+  const exBoth = arr.filter((t) => Math.floor(t.closeTime / DAY) * DAY !== bestD && !bsKeys.has(t.ticket)).reduce((a, t) => a + t.net, 0);
+  const par = e.r === 'FADER' ? rosParents(e, arr).size : NaN;
+  box.appendChild(rosMini([{ l: '' }, { l: '', num: 1 }], [
+    { cells: ['Net (all)', rosM(net)] }, { cells: ['Net without the best day' + (Number.isFinite(bestD) ? ' (' + fmtDate(bestD) + ', ' + money(bestDV) + ')' : ''), rosM(exDay)] },
+    { cells: ['Net without the best basket' + (bestB ? ' (' + money(bestB.net) + ')' : ' (no baskets)'), bestB ? rosM(exBsk) : '–'] }, { cells: ['Net without both', bestB ? rosM(exBoth) : rosM(exDay)] },
+    { cells: ['Best day as share of net', Number.isFinite(bestD) && net > 0 ? pct(bestDV / net) : '–'] }, { cells: ['Trading days', days.size] }, { cells: ['Unique parents (source trades copied)', e.r === 'FADER' ? par : 'masters have none'] },
+  ]));
+}
+// ---------- MAE / MFE quality and exit capture ----------
+function rosSecMaeMfe(e, arr, box) {
+  const ok = arr.filter((t) => Number.isFinite(t.mfe) && Number.isFinite(t.mae)); const real = (t) => { if (!(t.point > 0) || !Number.isFinite(t.openPrice) || !Number.isFinite(t.closePrice)) return NaN; return (/^buy/i.test(t.type) ? t.closePrice - t.openPrice : t.openPrice - t.closePrice) / t.point; };
+  const avg = (a, f) => { let s = 0, n = 0; for (const x of a) { const v = f(x); if (Number.isFinite(v)) { s += v; n++; } } return n ? s / n : NaN; };
+  const win = ok.filter((t) => t.net > 0), los = ok.filter((t) => t.net < 0); const f0 = (v) => (Number.isFinite(v) ? fmtNum(v, 0) + ' pts' : '–');
+  const wMfe = avg(win, (t) => t.mfe), wReal = avg(win, real), wMae = avg(win, (t) => t.mae), lMfe = avg(los, (t) => t.mfe), lMae = avg(los, (t) => t.mae);
+  box.appendChild(rosMini([{ l: '' }, { l: 'Winners', num: 1 }, { l: 'Losers', num: 1 }], [
+    { cells: ['Trades with MAE / MFE tracked', ok.length + ' of ' + arr.length + ' (' + pct(arr.length ? ok.length / arr.length : NaN) + ')', ''] },
+    { cells: ['Suffered first (avg MAE)', f0(wMae), f0(lMae)] }, { cells: ['Best point reached (avg MFE)', f0(wMfe), f0(lMfe)] }, { cells: ['Realized at exit (avg)', f0(wReal), f0(avg(los, real))] },
+    { cells: ['Exit capture (realized ÷ MFE)', Number.isFinite(wReal / wMfe) ? pct(wReal / wMfe) : '–', ''] }, { cells: ['Favorable movement given back', f0(wMfe - wReal), ''] },
+  ]));
+  const zero = ok.filter((t) => t.mfe === 0 && t.mae === 0).length;
+  box.appendChild(el('p', { class: 'hint' }, 'MAE = how far a trade went against you, MFE = how far in your favor, in points. ' + (arr.length - ok.length ? (arr.length - ok.length) + ' trades have no MAE / MFE (older collector). ' : '') + (zero ? zero + ' trades show 0 / 0, which may mean tracking did not cover the whole trade. ' : '') + 'Tracking quality is a collector property: if a trade is short or the collector was off, these numbers understate the movement.'));
+}
+// the sections, built when the card details are opened
+function rosDetailSections(e, arr, moreTiles) {
+  const wrap = el('div', { class: 'ros-secs' });
+  const sec = (title, fn, open) => { const d = el('details', { class: 'ros-sec' }); d.appendChild(el('summary', null, title)); const body = el('div'); d.appendChild(body); d.addEventListener('toggle', () => { if (d.open && !d._b) { d._b = true; try { fn(body); } catch (err) { body.appendChild(el('p', { class: 'muted' }, 'Could not build this section: ' + err.message)); } } }); if (open) d.open = true; wrap.appendChild(d); };
+  if (e.r === 'FADER') sec('Missing copies: why master trades were not copied', (b) => rosSecMissing(e, arr, b));
+  sec('Floating risk and exposure (closed drawdown kept separate)', (b) => rosSecFloating(e, arr, b));
+  sec('Settings and restart timeline', (b) => rosSecTimeline(e, arr, b));
+  if (e.r === 'FADER') sec('First copies / extras / combined', (b) => rosSecExtras(e, arr, b));
+  if (arr.length) { sec('Profit concentration', (b) => rosSecConcentration(e, arr, b)); sec('MAE / MFE quality and exit capture', (b) => rosSecMaeMfe(e, arr, b)); }
+  if (moreTiles.length) sec('More results', (b) => { const g = el('div', { class: 'ros-tiles' }); for (const t of moreTiles) g.appendChild(t); b.appendChild(g); });
+  return wrap;
+}
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
   ti.appendChild(el('div', { class: 'ros-name' }, rosterTitle(e))); ti.appendChild(el('div', { class: 'muted' }, (ROSTER.pretty[e.t] || e.t) + ' · account ' + e.a));
   top.appendChild(ti); const tr2 = el('div', { class: 'ros-topr' }); if (e.nw) tr2.appendChild(el('span', { class: 'badge stale' }, 'NEW TEST'));
-  const isSel = ROS.cmp.includes(rosKey(e)); if (isSel) card.classList.add('ros-sel'); tr2.appendChild(toggleBtn('Compare', isSel, (v) => rosToggleCompare(e, v), 'Pick two cards to compare them side by side: results, a combined profit chart and which settings differ')); top.appendChild(tr2); card.appendChild(top);
+  const isSel = ROS.cmp.includes(rosKey(e)); if (isSel) card.classList.add('ros-sel'); tr2.appendChild(toggleBtn('Compare', isSel, (v) => rosToggleCompare(e, v), 'Pick two cards to compare them side by side: results, same-parent comparison, a combined profit chart and which settings differ')); top.appendChild(tr2); card.appendChild(top);
   const idl = el('div', { class: 'ros-id' }); idl.appendChild(el('span', { class: 'muted' }, e.r === 'FADER' ? 'Fader' : 'Magic')); idl.appendChild(el('strong', null, e.m));
   let evRes = null; if (mode !== 'history') evRes = rosStatusRow(e);
   if (evRes) idl.appendChild(el('span', { class: 'badge ros-lv-' + evRes.st.level, title: 'Evidence from the Experts logs. The roster itself says: ' + (e.st ? e.st[0] : '') }, evRes.st.label)); else idl.appendChild(el('span', { class: 'badge' }, e.st ? e.st[0] : e.r));
   card.appendChild(idl); if (evRes) card.appendChild(evRes.row);
-  // live results of this magic on this account (the filters above the tabs apply)
-  const tiles = el('div', { class: 'ros-tiles' }); const tl = (label, val, cls, tip) => { const d = el('div', { class: 'ros-tile', title: tip || '' }); d.appendChild(el('div', { class: 'label' }, label)); d.appendChild(el('div', { class: 'value ' + (cls || '') }, val)); tiles.appendChild(d); };
+  // main card: only net, floating P/L, avg win / avg loss, PF, closed drawdown, trading days, unique parents and verified copy coverage; everything else is under Details
+  const tiles = el('div', { class: 'ros-tiles' }); const more = [];
+  const tl = (label, val, cls, tip, main) => { const d = el('div', { class: 'ros-tile', title: tip || '' }); d.appendChild(el('div', { class: 'label' }, label)); d.appendChild(el('div', { class: 'value ' + (cls || '') }, val)); (main ? tiles : { appendChild: (x) => more.push(x) }).appendChild(d); };
   let s = null, me = null;
+  const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opn = op.reduce((a, o) => a + (Number.isFinite(o.pnl) ? o.pnl : 0), 0); const om = DB.openMeta.get(e.a);
   if (arr.length) {
-    s = stats(arr); tl('Net', money(s.net), signCls(s.net), 'Profit + commission + swap of its closed trades in the selected period'); tl('Trades', s.n.toLocaleString('en-US')); tl('Win %', pct(s.winRate)); tl('PF', ratio(s.pf), '', 'Profit factor: gross profit / gross loss');
-    tl('Expectancy', money(s.exp), signCls(s.exp), 'Average result per trade'); tl('Last trade', s.last ? fmtDate(s.last) : '–');
-    tl('Avg win', money(s.avgWin), signCls(s.avgWin), 'Average result of the winning trades'); tl('Avg loss', money(s.avgLoss), signCls(s.avgLoss), 'Average result of the losing trades');
-    tl('Loss : win', Number.isFinite(s.payoff) ? '1 : ' + (s.payoff >= 10 ? Math.round(s.payoff) : Math.round(s.payoff * 100) / 100) : '–', '', 'Average loss compared with the average win (payoff ratio): 1 : 2 means the average win is twice the average loss. Above 1 = wins are bigger than losses.');
-    const bsk = baskets(arr); tl('Worst basket', bsk.length ? money(minOf(bsk.map((b) => b.net))) : '–', bsk.length ? 'neg' : '', bsk.length ? 'Biggest loss of one basket (trades of this magic opened together in the same direction) in the selected period: ' + bsk.length + ' baskets' : 'No basket ids for this magic (collector v2.04+ writes them)'); tl('Worst trade', money(s.maxLoss), signCls(s.maxLoss), 'Biggest single losing trade');
-    tl('Best basket', bsk.length ? money(maxOf(bsk.map((b) => b.net))) : '–', bsk.length ? 'pos' : '', bsk.length ? 'Biggest win of one basket in the selected period' : 'No basket ids for this magic (collector v2.04+ writes them)'); tl('Best trade', money(s.maxWin), signCls(s.maxWin), 'Biggest single winning trade');
-    tl('Net ÷ drawdown', s.maxDD > 0 ? fmtNum(s.net / s.maxDD, 2) : '–', s.maxDD > 0 ? signCls(s.net) : '', 'Net result divided by the maximum drawdown: how many drawdowns of profit it made. Higher = better result for the risk taken.'); tl('Max drawdown', s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD), 'Biggest fall from a peak of the cumulative result of this magic\'s CLOSED trades in the selected period (floating loss while trades were open is not included)');
-    const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opn = op.reduce((a, o) => a + (Number.isFinite(o.pnl) ? o.pnl : 0), 0);
-    tl('Open now', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, floating P/L as of the last snapshot' : 'No open positions of this magic');
-    if (mode === 'faders') { me = masterExtra(arr); tl('Master $', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Difference $', money(me.masterDiff), signCls(me.masterDiff), 'Fader + master alone'); tl('Ratio copy', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); tl('Coverage', pct(me.mcov)); }
-    if (mode === 'masters') {   // configured followers (roster) are not the same as followers that really copied trades of THIS master (account + magic)
+    s = stats(arr); if (mode === 'faders') me = masterExtra(arr);
+    tl('Net', money(s.net), signCls(s.net), 'Profit + commission + swap of its closed trades in the selected period', true);
+    tl('Floating P/L', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, as of ' + (om ? fmtTime(om.lastSeen) : '?') + ' (server time). Closed results and floating results are separate.' : 'No open positions of this magic', true);
+    tl('Avg win ÷ avg loss', Number.isFinite(s.payoff) ? fmtNum(s.payoff, 2) : '–', '', 'Average winning trade divided by the average losing trade. Above 1 = wins are bigger than losses.', true);
+    tl('PF', ratio(s.pf), '', 'Profit factor: gross profit / gross loss', true);
+    tl('Closed drawdown', s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD), 'Biggest fall from a peak of the cumulative result of its CLOSED trades in the selected period. Floating loss while trades were open is not included (see Details: Floating risk).', true);
+    tl('Trading days', String(rosSecDays(arr)), '', 'Distinct days with at least one closed trade in the selected period', true);
+    if (mode === 'faders') {
+      tl('Unique parents', String(rosParents(e, arr).size), '', 'Distinct source (master) trades this fader copied, by source account + source ticket. More parents = more independent evidence.', true);
+      tl('Verified copy coverage', pct(me.mcov), '', C.mcov.title, true);
+    } else if (mode === 'masters') {
       const conf = e.fby ? e.fby.split(',').filter(Boolean).length : 0; const fn = CB ? CB.reduce((a, x) => a + x.net, 0) : 0, fx = CB ? CB.reduce((a, x) => a + x.xnet, 0) : 0, cn = CB ? CB.reduce((a, x) => a + x.n, 0) : 0, cx = CB ? CB.reduce((a, x) => a + x.xn, 0) : 0;
-      tl('Followers configured', String(conf), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.');
-      tl('Followers that copied', String(CB ? CB.length : 0), '', 'Faders with at least one copy (first copy or extra) linked to THIS master (same account + magic, by source account + source ticket) in the selected period.');
+      tl('Followers that copied', (CB ? CB.length : 0) + ' of ' + conf, '', 'Faders with at least one copy linked to THIS master (same account + magic, by source account + source ticket) in the selected period, of the ' + conf + ' the roster lists as followers.', true);
+      tl('All linked copies $', CB ? money(fn + fx) : '–', CB ? signCls(fn + fx) : '', 'First copies + extras linked to this master. Not everything those faders did, only their copies of this master.', true);
       tl('First copies $', CB ? money(fn) : '–', CB ? signCls(fn) : '', 'Result of the FIRST copies linked to this master only' + (CB ? ' (' + cn + ' trades)' : '') + '. Extras are separate.');
       tl('Extras $', CB ? money(fx) : '–', CB ? signCls(fx) : '', 'Result of the extra copies (+# in the comment) linked to this master' + (CB ? ' (' + cx + ' trades)' : '') + '.');
-      tl('All linked copies $', CB ? money(fn + fx) : '–', CB ? signCls(fn + fx) : '', 'First copies + extras linked to this master. Not everything those faders did, only their copies of this master.');
     }
-  } else { tl('Results', 'no closed trades in this selection', 'muted'); if (mode === 'masters') tl('Followers configured', String(e.fby ? e.fby.split(',').filter(Boolean).length : 0), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.'); }
+    tl('Trades', s.n.toLocaleString('en-US')); tl('Win %', pct(s.winRate)); tl('Expectancy', money(s.exp), signCls(s.exp), 'Average result per trade'); tl('Last trade', s.last ? fmtDate(s.last) : '–');
+    tl('Avg win', money(s.avgWin), signCls(s.avgWin), 'Average result of the winning trades'); tl('Avg loss', money(s.avgLoss), signCls(s.avgLoss), 'Average result of the losing trades');
+    tl('Loss : win', Number.isFinite(s.payoff) ? '1 : ' + (s.payoff >= 10 ? Math.round(s.payoff) : Math.round(s.payoff * 100) / 100) : '–', '', 'Average loss compared with the average win (payoff ratio).');
+    const bsk = baskets(arr); tl('Worst basket', bsk.length ? money(minOf(bsk.map((b) => b.net))) : '–', bsk.length ? 'neg' : '', bsk.length ? 'Biggest loss of one basket in the selected period: ' + bsk.length + ' baskets' : 'No basket ids for this magic (collector v2.04+ writes them)');
+    tl('Best basket', bsk.length ? money(maxOf(bsk.map((b) => b.net))) : '–', bsk.length ? 'pos' : '', bsk.length ? 'Biggest win of one basket in the selected period' : 'No basket ids for this magic'); tl('Worst trade', money(s.maxLoss), signCls(s.maxLoss), 'Biggest single losing trade'); tl('Best trade', money(s.maxWin), signCls(s.maxWin), 'Biggest single winning trade');
+    tl('Net ÷ drawdown', s.maxDD > 0 ? fmtNum(s.net / s.maxDD, 2) : '–', s.maxDD > 0 ? signCls(s.net) : '', 'Net result divided by the closed drawdown.');
+    if (mode === 'faders') { tl('Master $', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Difference $', money(me.masterDiff), signCls(me.masterDiff), 'Fader (first copies + extras) + master alone'); tl('Ratio copy', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); }
+  } else {
+    tl('Results', 'no closed trades in this selection', 'muted', '', true);
+    if (mode === 'masters') tl('Followers configured', String(e.fby ? e.fby.split(',').filter(Boolean).length : 0), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.', true);
+  }
   tl('Added (first trade)', Number.isFinite(first) ? fmtDate(first) : '–', '', 'Date of the very first trade of this magic on this account in the loaded data (any period). The roster file itself has no add date.');
-  { const sn = DB.snaps.get(e.a); const lastSn = sn && sn.length ? sn[sn.length - 1].t : NaN; const om = DB.openMeta.get(e.a);
+  { const sn = DB.snaps.get(e.a); const lastSn = sn && sn.length ? sn[sn.length - 1].t : NaN;
     let lc = NaN; for (const t of arr) if (!(t.closeTime <= lc)) lc = t.closeTime;
     tiles.appendChild(el('div', { class: 'ros-times muted', style: 'grid-column:1/-1' }, 'Closed results to ' + (Number.isFinite(lc) ? fmtTime(lc) : '–') + ' · account snapshot ' + (Number.isFinite(lastSn) ? fmtTime(lastSn) : '–') + ' · open positions as of ' + (om ? fmtTime(om.lastSeen) : '–') + ' (server time)')); }
   card.appendChild(tiles); if (arr.length) { const sp = el('div', { class: 'ros-spark', title: 'Cumulative net profit of this magic' }); sp.appendChild(rosSpark(arr)); card.appendChild(sp); }
@@ -3606,7 +3807,7 @@ function rosterCard(e, arr, CB, mode, first) {
   const det = el('details', { class: 'ros-det' }); det.appendChild(el('summary', null, 'Details & settings'));
   const dl = el('dl', { class: 'ros-kv' }); const add = (k, v) => { dl.appendChild(el('dt', null, k)); dl.appendChild(el('dd', null, v)); };
   add('EA version', e.b || 'not established'); for (const [k, v] of e.k || []) add(k, v); det.appendChild(dl); card.appendChild(det);
-  det.addEventListener('toggle', () => { if (det.open && !det._built) { det._built = true; const ft = rosFollowTable(e); if (ft) det.insertBefore(ft, dl); } });
+  det.addEventListener('toggle', () => { if (det.open && !det._built) { det._built = true; const ft = rosFollowTable(e); if (ft) det.insertBefore(ft, dl); if (mode !== 'history') det.insertBefore(rosDetailSections(e, arr, more), dl); } });
   return card;
 }
 // magic numbers that traded in the loaded data (filters apply) but have no entry in the roster for that account
