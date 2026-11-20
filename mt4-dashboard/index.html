@@ -355,6 +355,14 @@ th.dragging { opacity: .45; }
 table.ros-sub { font-size: 12px; }
 table.ros-sub th, table.ros-sub td { padding: 4px 7px; }
 table.ros-sub tr.tot td { font-weight: 600; background: var(--surface-2); }
+.ros-ev { display: flex; flex-wrap: wrap; gap: 5px; }
+.ros-chip { font-size: 11.5px; padding: 1px 8px; border-radius: 9px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary); }
+.ros-chip.ok { color: var(--pos-text); border-color: var(--pos-text); } .ros-chip.warn { background: var(--warn-bg); color: var(--warn-ink); } .ros-chip.bad { color: var(--neg-text); border-color: var(--neg-text); font-weight: 600; }
+.badge.ros-lv-ok { color: var(--pos-text); border-color: var(--pos-text); } .badge.ros-lv-warn, .badge.ros-lv-unv { background: var(--warn-bg); color: var(--warn-ink); } .badge.ros-lv-bad { color: var(--neg-text); border-color: var(--neg-text); font-weight: 600; }
+.ros-times { font-size: 11px; }
+.ros-flags { border: 1px solid var(--neg-text); border-left-width: 4px; border-radius: 8px; padding: 8px 12px; margin: 8px 0; background: var(--surface-1); }
+.ros-flags-h { font-weight: 600; color: var(--neg-text); margin-bottom: 4px; } .ros-flag { font-size: 13px; margin: 3px 0; } .ros-flag.bad { color: var(--neg-text); }
+.ros-fresh { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12.5px; color: var(--text-secondary); margin: 6px 0; } .ros-fp b { color: var(--text-primary); font-weight: 600; }
 @media (max-width: 520px) { .ros-grid { grid-template-columns: 1fr; } }
 </style>
 <style>
@@ -980,7 +988,7 @@ async function loadSources(files) {
     done++;
     if (done % 5 === 0) { showProgress('Reading files… ' + done + ' / ' + files.length); await new Promise((r) => setTimeout(r, 0)); }
   }
-  BY_TICKET = null; BY_ACC_TICKET = null; TK_CLOSED = null; TK_OPEN = null; TK_DB = null; MC_CACHE = null; MC_DB = null; FS_CACHE = null; MO_CACHE = null;   // lookups built on the old data must not keep it alive
+  TKX = null; ROS_SRC = null; MC_CACHE = null; MC_DB = null; FS_CACHE = null; MO_CACHE = null;   // lookups built on the old data must not keep it alive
   DB.trades = Array.from(TRADE_MAP.values()).sort((a, b) => a.closeTime - b.closeTime || (a.ticket < b.ticket ? -1 : 1));
   TRADE_MAP = new Map();
   fixBrokerComments();
@@ -1738,9 +1746,34 @@ const C = {
 const STD_COLS = ['n', 'winRate', 'net', 'pf', 'exp', 'avgR', 'totR', 'netPct', 'gp', 'gl', 'avgWin', 'avgLoss', 'payoff', 'maxWin', 'maxLoss', 'maxDD', 'mcl', 'lots', 'cs', 'sl', 'tp', 'oth', 'avgDur', 'mfe', 'mae', 'sqn', 'buyNet', 'sellNet', 'first', 'last'];
 
 // Master $ for a group of trades: the distinct master trades its first-copy faders copied (matched by ticket in any account); NaN when none are faders.
-let BY_TICKET = null;
+// ---- who copied what: a copy is tied to its source by SOURCE ACCOUNT + SOURCE TICKET ----
+// A fader comment only holds the source ticket. The same ticket number can exist in several accounts, so it is resolved with the roster's
+// source magic for that fader first, then the fader's own account. If it is still ambiguous the copy is NOT linked to any source (never guessed).
+let TKX = null, TKX_KEY = '', ROS_SRC = null;
+function ticketIndex() {
+  const key = DB.trades.length + '|' + DB.open.length; if (TKX && TKX_KEY === key) return TKX;
+  const add = (m, x) => { const v = m.get(x.ticket); if (v === undefined) m.set(x.ticket, x); else if (Array.isArray(v)) v.push(x); else if (v.account !== x.account) m.set(x.ticket, [v, x]); };
+  const closed = new Map(), open = new Map(); for (const t of DB.trades) add(closed, t); for (const o of DB.open) add(open, o);
+  TKX = { closed, open }; TKX_KEY = key; return TKX;
+}
+function rosSrcMagics(account, magic) {   // the source magics the roster lists for this fader
+  if (!ROS_SRC) { ROS_SRC = new Map(); if (typeof ROSTER !== 'undefined' && ROSTER) for (const f of ROSTER.faders) if (f.src) ROS_SRC.set(f.a + '|' + f.m, new Set(f.src.split(',').map((x) => x.trim()))); }
+  return ROS_SRC.get(account + '|' + magic) || null;
+}
+function pickSrc(v, fAccount, fMagic) {
+  if (!v) return null; if (!Array.isArray(v)) return v;
+  const sm = rosSrcMagics(fAccount, fMagic); let c = sm ? v.filter((x) => sm.has(x.magic)) : v;
+  if (c.length === 1) return c[0];
+  if (!c.length) c = v;
+  const same = c.filter((x) => x.account === fAccount); return same.length === 1 ? same[0] : null;
+}
+const srcKey = (m) => m.account + '|' + m.ticket;
+// the source trade a fader copy was copied from (closed trade first, else a still open position); closedOnly = closed trades only
+function srcOf(x, closedOnly) {
+  const f = faderOf(x); if (!f.master) return null; const ix = ticketIndex();
+  return pickSrc(ix.closed.get(f.master), x.account, x.magic) || (closedOnly ? null : pickSrc(ix.open.get(f.master), x.account, x.magic));
+}
 function masterExtra(arr) {
-  if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
   const seen = new Set(); let master = 0, found = 0, fnet = 0, xnet = 0, xn = 0, isF = false; const who = new Map(); const mkeys = new Set();
   let noRef = 0, stOpen = 0, stGone = 0; const chk = new Set(); const fkeys = new Set();
   for (const t of arr) {
@@ -1748,9 +1781,10 @@ function masterExtra(arr) {
     if (f.extra) { xn++; xnet += t.net; continue; }
     fnet += t.net; fkeys.add(t.account + '|' + t.magic);
     if (!f.master) noRef++;
-    else if (!chk.has(f.master)) { chk.add(f.master); tkMaps(); if (!TK_CLOSED.has(f.master)) { if (TK_OPEN.has(f.master)) stOpen++; else stGone++; } }
-    if (f.master && !seen.has(f.master)) {
-      seen.add(f.master); const m = BY_TICKET.get(f.master);
+    const sc = f.master ? srcOf(t) : null; const sk = f.master ? (sc ? srcKey(sc) : 'x' + f.master + '|' + t.account) : '';
+    if (f.master && !chk.has(sk)) { chk.add(sk); if (!sc) stGone++; else if (!Number.isFinite(sc.closeTime)) stOpen++; }
+    if (f.master && !seen.has(sk)) {
+      seen.add(sk); const m = sc && Number.isFinite(sc.closeTime) ? sc : null;
       if (m) { found++; master += m.net; mkeys.add(masterKeyOf(m)); const k = m.magic + ' ' + baseOf(m.base, m.comment); who.set(k, (who.get(k) || 0) + 1); }
     }
   }
@@ -1768,9 +1802,9 @@ function masterExtra(arr) {
     const counted = new Set();
     for (const o of openFiltered()) {
       if (!fkeys.has(o.account + '|' + o.magic)) continue;
-      const f = faderOf(o); if (!f.is || f.extra || !f.master || seen.has(f.master) || counted.has(f.master)) continue;
-      const mo = BY_TICKET.get(f.master) || TK_OPEN.get(f.master); if (!mo) continue;
-      counted.add(f.master); openCopied++; mkeys.add(masterKeyOf(mo));
+      const f = faderOf(o); if (!f.is || f.extra || !f.master) continue;
+      const mo = srcOf(o); if (!mo) continue; const ok = srcKey(mo); if (seen.has(ok) || counted.has(ok)) continue;
+      counted.add(ok); openCopied++; mkeys.add(masterKeyOf(mo));
     }
   }
   let den = 0; if (mkeys.size) { const mt = masterTimes(), mo2 = masterOpenTimes(); for (const k of mkeys) { for (const o of mt.get(k) || []) if (o >= since) den++; for (const o of mo2.get(k) || []) if (o >= since) den++; } }
@@ -1780,18 +1814,19 @@ function masterExtra(arr) {
   const masterStatus = !isF ? '' : why || 'all masters found';
   return found ? { master, masterDiff: fnet + xnet + master, mcov, mratio: master && fnet > 0 ? fnet / Math.abs(master) : NaN, copying, copyingAll, copyingList, masterStatus, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, mratio: NaN, copying: '', copyingAll: '', copyingList: [], masterStatus, ...fx };
 }
-// which faders copy each master magic: master magic -> [{account, magic, label, n, net}] (first copies in the selected dates, any account)
+// which faders copy each master (account + magic): 'account|magic' -> [{account, magic, label, n, net}] (first copies in the selected dates, any account)
 let CB_CACHE = null, CB_KEY = '', CB_DB = null;
+// merge the lists of one magic over several accounts (the magic number alone does not identify a strategy)
+function cbFor(CB, magic, accounts) { const out = []; for (const a of accounts) { const l = CB.get(a + '|' + magic); if (l) out.push(...l); } return out.length ? out.sort((a, b) => b.n - a.n) : null; }
 function copiedByMap() {
   const key = state.from + '|' + state.to + '|' + state.exclude.join(',') + '|' + DB.trades.length;
   if (CB_CACHE && CB_KEY === key && CB_DB === DB.trades) return CB_CACHE;
-  if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
   const tmp = new Map();
   for (const t of DB.trades) {
     const f = faderOf(t); if (!f.is || f.extra || !f.master) continue;
     if ((state.from !== null && t.closeTime < state.from) || (state.to !== null && t.closeTime >= state.to) || EXCSET.has(t.magic)) continue;
-    const m = BY_TICKET.get(f.master); if (!m) continue;
-    let mm = tmp.get(m.magic); if (!mm) tmp.set(m.magic, mm = new Map());
+    const m = srcOf(t, true); if (!m) continue;
+    const mk0 = m.account + '|' + m.magic; let mm = tmp.get(mk0); if (!mm) tmp.set(mk0, mm = new Map());
     const lb = f.src || f.type, k = t.magic + '|' + lb; let o = mm.get(k); if (!o) mm.set(k, o = { account: t.account, magic: t.magic, label: lb, n: 0, net: 0 });
     if (o.account !== t.account) o.account = '';   // the same fader on several accounts is one entry; its page then shows every account
     o.n++; o.net += t.net;
@@ -1870,10 +1905,10 @@ function masterOpenTimes() {
 function faderSince() {
   const key = DB.trades.length + '|' + DB.open.length;
   if (FS_CACHE && FS_KEY === key) return FS_CACHE;
-  FS_CACHE = new Map(); FS_KEY = key; tkMaps();
+  FS_CACHE = new Map(); FS_KEY = key;
   const see = (x) => {
     const f = faderOf(x); if (!f.is || f.extra || !f.master) return;
-    const m = TK_CLOSED.get(f.master) || TK_OPEN.get(f.master); if (!m) return;
+    const m = srcOf(x); if (!m) return;
     const o = Number.isFinite(m.openTime) ? m.openTime : m.closeTime; const k = x.account + '|' + x.magic; const c = FS_CACHE.get(k); if (c === undefined || o < c) FS_CACHE.set(k, o);
   };
   for (const t of DB.trades) see(t); for (const o of DB.open) see(o);
@@ -2120,7 +2155,7 @@ function renderTab() {
     const g = groupBy(T, (t) => (split ? t.account + '|' : '') + t.magic);
     const rows = [...g].map(([k, arr]) => {
       const bs = baskets(arr); const a0 = arr[0]; const acc = DB.accounts.get(a0.account) || {};
-      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), copiedBy: CB.get(a0.magic) || null, ...rosterExtra(a0.magic, a0.account), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
+      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), copiedBy: cbFor(CB, a0.magic, new Set(arr.map((t) => t.account))), ...rosterExtra(a0.magic, a0.account), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
     });
     const lead = split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'label', label: 'Magic', num: false }, { key: 'account', label: 'Account' }] : [{ key: 'label', label: 'Magic', num: false }];
     const cols = colsOf(['comments', 'strategy', 'about'].concat(STD_COLS.slice(0, 3), ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'mratio', 'masterStatus', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
@@ -2162,7 +2197,7 @@ function renderTab() {
     const now = dataMaxTime(); const CB = copiedByMap();
     const rows = [...groupBy(T, (t) => t.magic)].map(([k, arr]) => {
       const f = first.get(k) || { first: NaN, last: NaN, n: arr.length };
-      return dimRow(k, k, arr, { ...masterExtra(arr), ...rosterExtra(k, arr[0].account), copiedBy: CB.get(k) || null, firstTime: f.first, lastTime: f.last, age: Number.isFinite(f.first) ? Math.floor((now - f.first) / DAY) : NaN, allN: f.n });
+      return dimRow(k, k, arr, { ...masterExtra(arr), ...rosterExtra(k, arr[0].account), copiedBy: cbFor(CB, k, new Set(arr.map((t) => t.account))), firstTime: f.first, lastTime: f.last, age: Number.isFinite(f.first) ? Math.floor((now - f.first) / DAY) : NaN, allN: f.n });
     });
     const cols = [{ key: 'label', label: 'Magic' }, { key: 'firstTime', label: 'First trade (added)', f: fmtTime, title: 'Open time of the very first trade of this magic number in the loaded data (any date, other filters apply)' },
       { key: 'age', label: 'Days since first trade', num: true, f: (v) => (Number.isFinite(v) ? v : '–'), title: 'Days between the first trade and the newest data' },
@@ -2196,7 +2231,6 @@ function renderFaders(host, T) {
   const F = T.filter((t) => faderOf(t).is);
   host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment ends with the master ticket ("<type> <source> #<master ticket>", also "#BIG<ticket>" or "+#<ticket>"), whatever the EA version or magic number. Types the dashboard does not know are listed as COPY. Trades, Fader $, Master $ and Fader + master cover the first (normal) copies, so they compare with the plain faders. Extra copies are the second copies that ADDL5 / ADDP5 / ADDP20 test faders add (comment "+#<master ticket>"): how many closed and their result. Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Spread, comm and swap are the costs of those same trades, fader and master side by side; costs are negative, and Costs = spread + comm + swap (the spread is an estimate from the collector and is already inside the profit, so it is not subtracted from Net again). Use Category and Fader type above to filter the whole dashboard to them.'));
   if (!F.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader trades in this selection.')); return; }
-  const byTicket = new Map(); for (const t of DB.trades) byTicket.set(t.ticket, t);
   const groups = groupBy(F, (t) => t.account + '|' + t.magic + '|' + faderOf(t).type + '|' + faderOf(t).src);
   const rows = [];
   for (const [k, arr] of groups) {
@@ -2208,7 +2242,7 @@ function renderFaders(host, T) {
       const f = faderOf(t);
       if (f.extra) { xn++; xnet += t.net; continue; }
       n++; net += t.net; fsp -= t.spreadCost || 0; fcm += t.commission || 0; fsw += t.swap || 0;
-      if (f.master && !masters.has(f.master)) { masters.add(f.master); const m = byTicket.get(f.master); if (m) { found++; master += m.net; msp -= m.spreadCost || 0; mcm += m.commission || 0; msw += m.swap || 0; } }
+      const m0 = f.master ? srcOf(t, true) : null; const sk0 = m0 ? srcKey(m0) : 'x' + f.master + '|' + t.account; if (f.master && !masters.has(sk0)) { masters.add(sk0); const m = m0; if (m) { found++; master += m.net; msp -= m.spreadCost || 0; mcm += m.commission || 0; msw += m.swap || 0; } }
     }
     rows.push({ key: k, terminal: a.terminal || '', account: arr[0].account, magic: arr[0].magic, type: f0.type, src: f0.src, n, net, master: found ? master : NaN, both: found ? net + master : NaN,
       fsp, fcm, fsw, fcost: fsp + fcm + fsw, msp: found ? msp : NaN, mcm: found ? mcm : NaN, msw: found ? msw : NaN, mcost: found ? msp + mcm + msw : NaN,
@@ -2232,12 +2266,6 @@ function renderFaders(host, T) {
    Every first-copy fader trade is tied 1:1 to its master trade (the ticket at the end of the fader comment).
    Three views: fader x master matrix, per fader with first / extra copies, per master with all the faders that copied it. */
 const FA = { view: 'list', min: 5, flip: false, sel: '', q: '', full: false };
-let BY_ACC_TICKET = null;
-function ticketLookup(account, ticket) {
-  if (!BY_ACC_TICKET) { BY_ACC_TICKET = new Map(); for (const t of DB.trades) BY_ACC_TICKET.set(t.account + '|' + t.ticket, t); }
-  if (!BY_TICKET) { BY_TICKET = new Map(); for (const t of DB.trades) BY_TICKET.set(t.ticket, t); }
-  return BY_ACC_TICKET.get(account + '|' + ticket) || BY_TICKET.get(ticket);
-}
 const masterKeyOf = (m) => m.account + '|' + m.magic + '|' + baseOf(m.base, m.comment);
 // master trades a fader could have copied: those (closed in the dates, plus still open) from when its first copied master trade opened
 function faCovDen(x, m) {
@@ -2266,7 +2294,7 @@ function faderAnalysis() {
     let x = fa.get(fk);
     if (!x) { x = { key: fk, account: t.account, terminal: (DB.accounts.get(t.account) || {}).terminal || t.terminal || '', magic: t.magic, type: f.type, src: f.src,
       n: 0, net: 0, xn: 0, xnet: 0, sp: 0, cm: 0, sw: 0, dur: 0, durN: 0, mdur: 0, mdurN: 0, mnet: 0, found: 0, masters: new Set(), mkeys: new Set(), sym: new Map() }; fa.set(fk, x); }
-    const m = f.master ? ticketLookup(t.account, f.master) : null;
+    const m = f.master ? srcOf(t, true) : null;
     const mk = m ? masterKeyOf(m) : '';
     let mm = null;
     if (m) { mm = ma.get(mk); if (!mm) { mm = newMaster(mk, m); ma.set(mk, mm); } }
@@ -2278,18 +2306,17 @@ function faderAnalysis() {
     if (Number.isFinite(t.duration)) { x.dur += t.duration; x.durN++; }
     sy.n++; sy.net += t.net;
     if (!m) continue;
-    x.found++; x.mnet += m.net; sy.mnet += m.net; sy.found++; x.mkeys.add(mk); x.masters.add(m.ticket);
+    x.found++; x.mnet += m.net; sy.mnet += m.net; sy.found++; x.mkeys.add(mk); x.masters.add(srcKey(m));
     if (Number.isFinite(m.duration)) { x.mdur += m.duration; x.mdurN++; }
     const pk = fk + '>' + mk; let p = pairs.get(pk); if (!p) { p = { fk, mk, n: 0, net: 0, mnet: 0, wins: 0 }; pairs.set(pk, p); }
     p.n++; p.net += t.net; p.mnet += m.net; if (t.net > 0) p.wins++;
     mm.faders.add(fk); mm.copies++; mm.fnet += t.net; mm.pairSum += t.net + m.net;
-    if (!mm.copied.has(m.ticket)) { mm.copied.add(m.ticket); mm.cnet += m.net; }
+    if (!mm.copied.has(srcKey(m))) { mm.copied.add(srcKey(m)); mm.cnet += m.net; }
   }
   // copies that are still open count as copied (the closed-trade files do not have them yet)
-  tkMaps();
   for (const o of openFiltered()) {
     const f = faderOf(o); if (!f.is || f.extra || !f.master || (state.faderType && f.type !== state.faderType)) continue;
-    const mo = ticketLookup(o.account, f.master) || TK_OPEN.get(f.master); if (!mo) continue;
+    const mo = srcOf(o); if (!mo) continue;
     const pr = pairs.get(o.account + '|' + o.magic + '|' + f.type + '|' + f.src + '>' + masterKeyOf(mo)); if (pr) pr.open = (pr.open || 0) + 1;
   }
   const A = { fa, ma, pairs, xpairs };
@@ -2604,19 +2631,14 @@ function renderTime(host, T) {
   table(b, colsOf(['n', 'winRate', 'net', 'pf', 'exp', 'lots'], [{ key: 'wd', label: 'Weekday', num: false, f: (v) => names[v] }]), wd, { tabId: 'weekday', defKey: 'wd', defDir: 'asc' });
 }
 // role of a trade and, for a fader copy, the master trade it copied (looked up by ticket in the closed trades, then in the open positions)
-let TK_CLOSED = null, TK_OPEN = null, TK_DB = null;
-function tkMaps() {
-  if (TK_DB !== DB.trades) { TK_CLOSED = new Map(); for (const t of DB.trades) TK_CLOSED.set(t.ticket, t); TK_OPEN = new Map(); for (const o of DB.open) TK_OPEN.set(o.ticket, o); TK_DB = DB.trades; }
-}
 function copiedMaster(x) {
-  tkMaps();
   const f = faderOf(x);
   const base = { role: f.is ? (f.extra ? 'Fader extra copy' : 'Fader first copy') : 'Master / other', faderType: f.is ? f.type : '', masterTicket: f.master || '', masterAccount: '', masterMagic: '', masterComment: '', masterState: '', masterProfit: NaN };
   if (!f.master) return base;
-  const m = TK_CLOSED.get(f.master); const o = m ? null : TK_OPEN.get(f.master);
+  const sc = srcOf(x); const m = sc && Number.isFinite(sc.closeTime) ? sc : null; const o = m ? null : sc;
   if (m) return Object.assign(base, { masterAccount: m.account, masterMagic: m.magic, masterComment: m.comment, masterState: 'closed', masterProfit: m.net });
   if (o) return Object.assign(base, { masterAccount: o.account, masterMagic: o.magic, masterComment: o.comment, masterState: 'open', masterProfit: o.pnl });
-  return Object.assign(base, { masterState: 'not found in the loaded data' });
+  return Object.assign(base, { masterState: 'not found in the loaded data (or the same ticket exists in several accounts and the source account is not certain)' });
 }
 const copyCols = [{ key: 'role', label: 'Role' }, { key: 'faderType', label: 'Fader type' }, { key: 'masterTicket', label: 'Copied master ticket' }, { key: 'masterAccount', label: 'Copied master account' },
   { key: 'masterMagic', label: 'Copied master magic' }, { key: 'masterComment', label: 'Copied master comment' }, { key: 'masterState', label: 'Copied master state' }, { key: 'masterProfit', label: 'Copied master profit (net / floating)', num: true }];
@@ -3321,6 +3343,113 @@ function rosterFirst() {
   for (const t of DB.trades) { const a = Number.isFinite(t.openTime) ? Math.min(t.openTime, t.closeTime) : t.closeTime; const k = t.account + '|' + t.magic; const o = m.get(k); if (o === undefined || a < o) m.set(k, a); }
   ROS_FIRST = m; ROS_FIRST_N = DB.trades.length; return m;
 }
+// ---- is this EA really running? Evidence from the Experts logs (the roster only says what is SAVED) ----
+// settings saved = in the roster; initialized = "loaded / started" line in the log; heartbeat = recent log activity of that magic;
+// initialization failed = "EA stopped: init failed". No heartbeat = unverified, never "running".
+let ROS_EV = null, ROS_EV_KEY = '', ROS_AT = null, ROS_AT_KEY = '';
+const ROS_HB_HOURS = 6;
+function rosEvIndex() {
+  const key = DB.health.length + '|' + DB.accounts.size; if (ROS_EV && ROS_EV_KEY === key) return ROS_EV;
+  const idx = new Map(); let ref = -Infinity;
+  for (const h of DB.health) {
+    if (h.kind !== 'experts') continue; if (Number.isFinite(h.last) && h.last > ref) ref = h.last;
+    if (!h.magic) continue;
+    const k = h.terminal + '|' + h.magic; let o = idx.get(k); if (!o) idx.set(k, o = { init: NaN, hb: NaN, failed: NaN, stopped: NaN, why: '' });
+    const c = h.category, t = h.last;
+    if (c === 'EA started (inputs)' || c === 'EA loaded') { if (!(t <= o.init)) o.init = t; }
+    else if (c === '_activity') { if (!(t <= o.hb)) o.hb = t; }
+    else if (c === 'EA stopped: init failed') { if (!(t <= o.failed)) o.failed = t; }
+    else if (c === 'EA removed' || c.startsWith('EA stopped')) { if (!(t <= o.stopped)) { o.stopped = t; o.why = c.replace('EA stopped: ', ''); } }
+  }
+  ROS_EV = { idx, ref }; ROS_EV_KEY = key; return ROS_EV;
+}
+function rosTermsOf(account) {
+  const key = DB.health.length + '|' + DB.sync.terminals.size + '|' + DB.accounts.size; if (!ROS_AT || ROS_AT_KEY !== key) { ROS_AT = new Map(); for (const [term, acc] of terminalAccounts()) { let l = ROS_AT.get(acc); if (!l) ROS_AT.set(acc, l = []); l.push(term); } ROS_AT_KEY = key; }
+  return ROS_AT.get(account) || [];
+}
+function rosStatus(e) {
+  const EV = rosEvIndex(); const o = { init: NaN, hb: NaN, failed: NaN, stopped: NaN, why: '' };
+  for (const term of rosTermsOf(e.a)) { const x = EV.idx.get(term + '|' + e.m); if (!x) continue; for (const k of ['init', 'hb', 'failed', 'stopped']) if (!(x[k] <= o[k])) o[k] = x[k]; if (x.why) o.why = x.why; }
+  o.hasLogs = DB.health.length > 0; o.ref = EV.ref;
+  o.hbRecent = Number.isFinite(o.hb) && o.hb >= EV.ref - ROS_HB_HOURS * 3600000;
+  o.failedNow = Number.isFinite(o.failed) && !(o.init > o.failed);
+  o.stoppedNow = Number.isFinite(o.stopped) && !(o.init > o.stopped) && !(o.hb > o.stopped);
+  o.seen = Number.isFinite(o.init) || Number.isFinite(o.hb);
+  if (!o.hasLogs) { o.level = 'unv'; o.label = 'Unverified: no log data loaded'; }
+  else if (o.failedNow) { o.level = 'bad'; o.label = 'Initialization failed'; }
+  else if (o.stoppedNow) { o.level = 'bad'; o.label = 'Stopped' + (o.why ? ': ' + o.why : ''); }
+  else if (o.hbRecent) { o.level = 'ok'; o.label = 'Heartbeat seen'; }
+  else if (Number.isFinite(o.init)) { o.level = 'warn'; o.label = 'Initialized, no recent heartbeat'; }
+  else { o.level = 'unv'; o.label = 'Unverified: no heartbeat'; }
+  return o;
+}
+// per account: is the collector alive while its masters are not? (the account 48754085 case)
+function rosAccountFlags() {
+  const accs = new Map(); let newest = -Infinity;
+  for (const [, sn] of DB.snaps) if (sn.length && sn[sn.length - 1].t > newest) newest = sn[sn.length - 1].t;
+  for (const e of ROSTER.masters) {
+    if (e.r !== 'MASTER') continue;
+    let o = accs.get(e.a); if (!o) accs.set(e.a, o = { account: e.a, t: e.t, masters: 0, seen: 0, unseen: [] });
+    o.masters++; if (rosStatus(e).seen) o.seen++; else o.unseen.push(e.m);
+  }
+  const out = new Map();
+  for (const o of accs.values()) {
+    const sn = DB.snaps.get(o.account); const last = sn && sn.length ? sn[sn.length - 1].t : NaN;
+    o.lastSample = last; o.healthy = Number.isFinite(last) && Number.isFinite(newest) && last >= newest - 60 * 60000;
+    o.flag = DB.health.length > 0 && o.healthy && o.masters > 0 && o.seen < o.masters; o.none = o.flag && o.seen === 0; out.set(o.account, o);
+  }
+  return out;
+}
+function rosterFlagsBanner(host) {
+  const flags = [...rosAccountFlags().values()].filter((o) => o.flag).sort((a, b) => (b.none ? 1 : 0) - (a.none ? 1 : 0));
+  if (!flags.length) return;
+  const box = el('div', { class: 'ros-flags' });
+  box.appendChild(el('div', { class: 'ros-flags-h' }, 'Collector healthy, but masters not seen'));
+  for (const o of flags) box.appendChild(el('div', { class: 'ros-flag' + (o.none ? ' bad' : '') }, (ROSTER.pretty[o.t] || o.t) + ' · account ' + o.account + ': the collector is updating (last sample ' + fmtTime(o.lastSample) + '), but ' + (o.none ? 'none of its ' + o.masters + ' masters shows an initialization or heartbeat in the logs: the masters have failed or are not attached.' : (o.masters - o.seen) + ' of its ' + o.masters + ' masters show no initialization or heartbeat: ' + o.unseen.slice(0, 8).join(', ') + (o.unseen.length > 8 ? ' …' : '') + '.')));
+  box.appendChild(el('p', { class: 'hint' }, 'Based on the Experts logs of the last ' + ((SOURCE.manifest && SOURCE.manifest.logDays) || 'few') + ' days. "Not seen" means unverified, not proven stopped. A collector that is healthy while its masters are silent is the typical sign of EAs that did not start.'));
+  host.appendChild(box);
+}
+function rosStatusRow(e) {
+  const st = rosStatus(e); const row = el('div', { class: 'ros-ev' });
+  const chip = (label, val, cls, tip) => row.appendChild(el('span', { class: 'ros-chip ' + (cls || ''), title: tip || '' }, label + ': ' + val));
+  chip('Settings', e.r === 'DECLARED_SOURCE_NO_CHART' ? 'not available' : 'saved', '', 'From the roster' + (e.st ? ' (' + e.st[0] + ')' : '') + '. Saved settings say what the chart holds; they do not mean the EA is running.');
+  chip('Initialized', Number.isFinite(st.init) ? fmtTime(st.init) : 'not in logs', Number.isFinite(st.init) ? 'ok' : '', 'Last "loaded / started" line of this magic in the Experts log (log days loaded only).');
+  chip('Heartbeat', Number.isFinite(st.hb) ? fmtTime(st.hb) + (st.hbRecent ? '' : ' (old)') : 'none', st.hbRecent ? 'ok' : 'warn', 'Last Experts-log activity of this magic. Recent = within ' + ROS_HB_HOURS + ' h of the newest log line. No heartbeat = unverified, not running.');
+  chip('Init failed', Number.isFinite(st.failed) ? fmtTime(st.failed) : 'no', Number.isFinite(st.failed) ? 'bad' : '', 'Log line "EA stopped: init failed" for this magic.');
+  const fl = rosAccountFlags().get(e.a);
+  if (e.r === 'MASTER' && fl && fl.flag && !st.seen) row.appendChild(el('span', { class: 'ros-chip bad', title: 'The account collector is updating but this master shows no initialization or heartbeat.' }, 'Collector healthy; master not seen'));
+  return { row, st };
+}
+// when each piece of data was taken: build, browser refresh, closed trades, open positions, roster file, and every terminal's last sample
+function rosterFreshness(host) {
+  const bm = builtMillis(), age = buildAgeMinutes(); let newestOpen = -Infinity; for (const m of DB.openMeta.values()) if (m.lastSeen > newestOpen) newestOpen = m.lastSeen;
+  const box = el('div', { class: 'ros-fresh' });
+  const part = (l, v) => { const sp = el('span', { class: 'ros-fp' }); sp.append(el('b', null, l + ' '), document.createTextNode(v)); box.appendChild(sp); };
+  part('Last build:', SOURCE.manifest ? (SOURCE.manifest.generatedAt || '') + ' server time' + (Number.isFinite(age) ? ' (' + (age < 1 ? 'just now' : fmtDur(age * 60) + ' ago') + ')' : '') : 'not from Drive');
+  part('Browser refreshed:', SUMMARY ? localStamp(SUMMARY.loadedAt) + ' (' + fmtDur((Date.now() - SUMMARY.loadedAt) / 1000) + ' ago)' : '–');
+  part('Closed trades to:', fmtTime(dataMaxTime()));
+  part('Open positions as of:', Number.isFinite(newestOpen) && newestOpen > 0 ? fmtTime(newestOpen) : '–');
+  part('Roster file:', ROSTER.updated);
+  host.appendChild(box);
+  const det = el('details', { class: 'ros-flt' }); det.appendChild(el('summary', null, 'Snapshot time of every terminal (closed results and floating results are timestamped separately)'));
+  det.addEventListener('toggle', () => {
+    if (!det.open || det._built) return; det._built = true;
+    const rows = buildHealthRows().filter((r) => r.account).sort((a, b) => String(a.terminal).localeCompare(String(b.terminal), 'en', { numeric: true }));
+    const tbl = el('table', { class: 'ros-sub' }); const hr = el('tr'); for (const l of ['Terminal', 'Account', 'Last account snapshot', 'Last closed trade', 'Open positions as of', 'Last log line', 'Collector']) hr.appendChild(el('th', null, l));
+    tbl.appendChild(el('thead')).appendChild(hr); const tb = el('tbody'); tbl.appendChild(tb);
+    for (const r of rows) { const om = DB.openMeta.get(r.account); const tr = el('tr'); for (const v of [r.terminal, r.account, fmtTime(r.lastSnap), fmtTime(r.lastTrade), om ? fmtTime(om.lastSeen) : '–', fmtTime(r.lastLog), r.label]) tr.appendChild(el('td', null, v)); tb.appendChild(tr); }
+    const wrap = el('div', { class: 'tablewrap', style: 'max-height:360px' }); wrap.appendChild(tbl); det.appendChild(wrap);
+    det.appendChild(el('p', { class: 'hint' }, 'Closed results are final up to the closed-trade time shown. Floating results (open positions, equity) are only as of their own snapshot time. An older time does not make the numbers wrong; it only says how current they are. Times are server time.'));
+  });
+  host.appendChild(det);
+}
+// one matcher for the cards, the counts and the mode buttons. Numbers: several = exact magics; one = exact or PART of a magic (or an account number); words = text.
+function rosMatch(e) {
+  if (ROS.term && e.t !== ROS.term) return false;
+  const toks = ROS.q.split(/[\s,;]+/).filter(Boolean); if (!toks.length) return true;
+  if (toks.every((t) => /^\d+$/.test(t))) return toks.length > 1 ? toks.includes(String(e.m)) : (String(e.m).includes(toks[0]) || String(e.a) === toks[0]);
+  return (e.m + ' ' + e.n + ' ' + e.l + ' ' + e.d + ' ' + e.t + ' ' + (ROSTER.pretty[e.t] || '') + ' ' + e.a).toLowerCase().includes(ROS.q.toLowerCase());
+}
 function rosShow(account, magic) {   // filter the whole dashboard to one magic (and its account) and open By magic
   const has = DB.trades.some((t) => t.account === account && t.magic === magic);
   state.account = has ? account : ''; state.magic = String(magic); state.tab = 'magic'; state.page = {};
@@ -3383,16 +3512,16 @@ function rosFollowRows(e) {
   if (e.r === 'FADER') {
     const arr = byAM.get(e.a + '|' + e.m) || []; const g = new Map();
     for (const t of arr) {
-      const f = faderOf(t); if (f.extra || !f.master) continue; const m = ticketLookup(t.account, f.master); const k = m ? masterKeyOf(m) : '(master not in the loaded data)';
+      const f = faderOf(t); if (f.extra || !f.master) continue; const m = srcOf(t, true); const k = m ? masterKeyOf(m) : '(master not in the loaded data)';
       let o = g.get(k); if (!o) g.set(k, o = { label: m ? m.magic + ' ' + baseOf(m.base, m.comment) : k, magic: m ? m.magic : '', account: m ? m.account : '', arr: [], mnet: 0, seen: new Set() });
-      o.arr.push(t); if (m && !o.seen.has(m.ticket)) { o.seen.add(m.ticket); o.mnet += m.net; }
+      o.arr.push(t); if (m && !o.seen.has(srcKey(m))) { o.seen.add(srcKey(m)); o.mnet += m.net; }
     }
     out.push(...g.values());
   } else {
     for (const f of ROSTER.faders) {
       if (!f.src || !f.src.split(',').map((x) => x.trim()).includes(e.m)) continue;
       const mine = []; const seen = new Set(); let mnet = 0;
-      for (const t of byAM.get(f.a + '|' + f.m) || []) { const ff = faderOf(t); if (ff.extra || !ff.master) continue; const m = ticketLookup(t.account, ff.master); if (!m || m.magic !== e.m || m.account !== e.a) continue; mine.push(t); if (!seen.has(m.ticket)) { seen.add(m.ticket); mnet += m.net; } }
+      for (const t of byAM.get(f.a + '|' + f.m) || []) { const ff = faderOf(t); if (ff.extra || !ff.master) continue; const m = srcOf(t, true); if (!m || m.magic !== e.m || m.account !== e.a) continue; mine.push(t); if (!seen.has(srcKey(m))) { seen.add(srcKey(m)); mnet += m.net; } }
       out.push({ label: (f.l || f.n) + ' · ' + f.m, magic: f.m, account: f.a, arr: mine, mnet });
     }
   }
@@ -3427,7 +3556,9 @@ function rosterCard(e, arr, CB, mode, first) {
   top.appendChild(ti); const tr2 = el('div', { class: 'ros-topr' }); if (e.nw) tr2.appendChild(el('span', { class: 'badge stale' }, 'NEW TEST'));
   const isSel = ROS.cmp.includes(rosKey(e)); if (isSel) card.classList.add('ros-sel'); tr2.appendChild(toggleBtn('Compare', isSel, (v) => rosToggleCompare(e, v), 'Pick two cards to compare them side by side: results, a combined profit chart and which settings differ')); top.appendChild(tr2); card.appendChild(top);
   const idl = el('div', { class: 'ros-id' }); idl.appendChild(el('span', { class: 'muted' }, e.r === 'FADER' ? 'Fader' : 'Magic')); idl.appendChild(el('strong', null, e.m));
-  idl.appendChild(el('span', { class: 'badge' + (e.st && e.st[1] === 'amber' ? ' stale' : '') }, e.st ? e.st[0] : e.r)); card.appendChild(idl);
+  let evRes = null; if (mode !== 'history') evRes = rosStatusRow(e);
+  if (evRes) idl.appendChild(el('span', { class: 'badge ros-lv-' + evRes.st.level, title: 'Evidence from the Experts logs. The roster itself says: ' + (e.st ? e.st[0] : '') }, evRes.st.label)); else idl.appendChild(el('span', { class: 'badge' }, e.st ? e.st[0] : e.r));
+  card.appendChild(idl); if (evRes) card.appendChild(evRes.row);
   // live results of this magic on this account (the filters above the tabs apply)
   const tiles = el('div', { class: 'ros-tiles' }); const tl = (label, val, cls, tip) => { const d = el('div', { class: 'ros-tile', title: tip || '' }); d.appendChild(el('div', { class: 'label' }, label)); d.appendChild(el('div', { class: 'value ' + (cls || '') }, val)); tiles.appendChild(d); };
   let s = null, me = null;
@@ -3442,9 +3573,17 @@ function rosterCard(e, arr, CB, mode, first) {
     const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opn = op.reduce((a, o) => a + (Number.isFinite(o.pnl) ? o.pnl : 0), 0);
     tl('Open now', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, floating P/L as of the last snapshot' : 'No open positions of this magic');
     if (mode === 'faders') { me = masterExtra(arr); tl('Master $', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Difference $', money(me.masterDiff), signCls(me.masterDiff), 'Fader + master alone'); tl('Ratio copy', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); tl('Coverage', pct(me.mcov)); }
-    if (mode === 'masters' && CB) { const fn = CB.reduce((a, x) => a + x.net, 0); tl('Copied by', CB.length + ' fader' + (CB.length === 1 ? '' : 's'), '', 'Faders that copied this master in the period'); tl('Faders made', money(fn), signCls(fn), 'Total result of those faders'); }
-  } else tl('Results', 'no closed trades in this selection', 'muted');
+    if (mode === 'masters') {   // configured followers (roster) are not the same as followers that really copied trades of THIS master (account + magic)
+      const conf = e.fby ? e.fby.split(',').filter(Boolean).length : 0; const fn = CB ? CB.reduce((a, x) => a + x.net, 0) : 0;
+      tl('Followers configured', String(conf), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.');
+      tl('Followers that copied', String(CB ? CB.length : 0), '', 'Faders with at least one copy linked to THIS master (same account + magic, by source account + source ticket) in the selected period.');
+      tl('Their net (linked copies)', CB ? money(fn) : '–', CB ? signCls(fn) : '', 'Result of the copies linked to this master only, not of everything those faders did.');
+    }
+  } else { tl('Results', 'no closed trades in this selection', 'muted'); if (mode === 'masters') tl('Followers configured', String(e.fby ? e.fby.split(',').filter(Boolean).length : 0), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.'); }
   tl('Added (first trade)', Number.isFinite(first) ? fmtDate(first) : '–', '', 'Date of the very first trade of this magic on this account in the loaded data (any period). The roster file itself has no add date.');
+  { const sn = DB.snaps.get(e.a); const lastSn = sn && sn.length ? sn[sn.length - 1].t : NaN; const om = DB.openMeta.get(e.a);
+    let lc = NaN; for (const t of arr) if (!(t.closeTime <= lc)) lc = t.closeTime;
+    tiles.appendChild(el('div', { class: 'ros-times muted', style: 'grid-column:1/-1' }, 'Closed results to ' + (Number.isFinite(lc) ? fmtTime(lc) : '–') + ' · account snapshot ' + (Number.isFinite(lastSn) ? fmtTime(lastSn) : '–') + ' · open positions as of ' + (om ? fmtTime(om.lastSeen) : '–'))); }
   card.appendChild(tiles); if (arr.length) { const sp = el('div', { class: 'ros-spark', title: 'Cumulative net profit of this magic' }); sp.appendChild(rosSpark(arr)); card.appendChild(sp); }
   card.appendChild(el('p', { class: 'ros-desc' }, e.d));
   if (e.p && e.p.length) { const pl = el('div', { class: 'ros-pills' }); for (const [t, c] of e.p) pl.appendChild(el('span', { class: 'badge' + (c === 'amber' ? ' stale' : '') }, t)); card.appendChild(pl); }
@@ -3503,12 +3642,14 @@ function renderRoster(host, T) {
   const modes = [['masters', 'Masters'], ['faders', 'Faders'], ['copiers', 'Copy routes'], ['history', 'History'], ['missing', 'Not in roster']];
   const help = { masters: 'The source strategies and what each version tests. Net, win % and the copied-by figures are live from your data.', faders: 'Reverse copies of a master: which trades they copy, their limits, and live fader $, master $ and the ratio copy.', copiers: 'Same-direction copy routes between accounts, not reverse strategies.', history: 'Older source links and candidates, kept apart from current settings.' };
   const bar = el('div', { class: 'fa-bar' });
-  for (const [v, l] of modes) { const b = el('button', { type: 'button', class: 'btn small' + (ROS.mode === v ? ' on' : '') }, l + ' (' + (v === 'missing' ? missing.length : ROSTER[v].length) + ')'); b.addEventListener('click', () => { ROS.mode = v; ROS.term = ''; ROS.limit = 48; renderTab(); }); bar.appendChild(b); }
+  for (const [v, l] of modes) { const b = el('button', { type: 'button', class: 'btn small' + (ROS.mode === v ? ' on' : '') }, l + ' (' + (v === 'missing' ? missing.length : (ROS.q || ROS.term) ? ROSTER[v].filter(rosMatch).length + ' of ' + ROSTER[v].length : ROSTER[v].length) + ')'); b.addEventListener('click', () => { ROS.mode = v; ROS.term = ''; ROS.limit = 48; renderTab(); }); bar.appendChild(b); }
   host.appendChild(bar);
+  if (ROS.mode !== 'missing') rosterFreshness(host);
+  if (ROS.mode === 'masters' || ROS.mode === 'faders') rosterFlagsBanner(host);
   rosterComparePanel(host, byAM);
   if (ROS.mode === 'missing') { renderRosterMissing(host, missing); return; }
   const ctl = el('div', { class: 'controls' });
-  const q = el('input', { type: 'search', placeholder: 'Magic numbers (several: 7667, 7682 …) or words…', value: ROS.q, style: 'min-width:240px' }); q.addEventListener('change', () => { ROS.q = q.value.trim(); ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Search')).appendChild(q);
+  const q = el('input', { type: 'search', placeholder: 'Magic numbers (several: 7667, 7682 …), part of a magic, or words…', value: ROS.q, style: 'min-width:240px' }); q.addEventListener('input', debounce(() => { ROS.q = q.value.trim(); ROS.limit = 48; renderTab(); const i2 = document.querySelector('#tabBody input[type=search]'); if (i2) { i2.focus(); i2.setSelectionRange(i2.value.length, i2.value.length); } }, 250)); ctl.appendChild(el('label', null, 'Search')).appendChild(q);
   const terms = [...new Set(ROSTER[ROS.mode].map((x) => x.t))].sort((a, b) => { const ia = ROS_PRIO.indexOf(a), ib = ROS_PRIO.indexOf(b); return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b); });
   const ts = el('select'); ts.appendChild(el('option', { value: '' }, 'All terminals')); for (const t of terms) { const o = el('option', { value: t }, ROSTER.pretty[t] || t); if (t === ROS.term) o.selected = true; ts.appendChild(o); }
   ts.addEventListener('change', () => { ROS.term = ts.value; ROS.limit = 48; renderTab(); }); ctl.appendChild(el('label', null, 'Terminal')).appendChild(ts);
@@ -3536,7 +3677,7 @@ function renderRoster(host, T) {
   const CB = ROS.mode === 'masters' ? copiedByMap() : null;
   const qq = ROS.q.toLowerCase(); const FM = rosterFirst();
   const toks = ROS.q.split(/[\s,;]+/).filter(Boolean); const multi = toks.length > 1 && toks.every((t) => /^\d+$/.test(t)); const wanted = multi ? new Set(toks) : null;
-  let rows = ROSTER[ROS.mode].filter((e) => (!ROS.term || e.t === ROS.term) && (multi ? wanted.has(e.m) : (!qq || (e.m + ' ' + e.n + ' ' + e.l + ' ' + e.d + ' ' + e.t + ' ' + (ROSTER.pretty[e.t] || '') + ' ' + e.a).toLowerCase().includes(qq))))
+  let rows = ROSTER[ROS.mode].filter(rosMatch)
     .map((e) => { const arr = byAM.get(e.a + '|' + e.m) || (ROS.mode === 'history' ? byM.get(e.m) : null) || []; let net = 0, last = 0; for (const t of arr) { net += t.net; if (t.closeTime > last) last = t.closeTime; } const needMe = !!((ROS.flt.cov || {}).on || (ROS.flt.diff || {}).on); const sx = arr.length ? stats(arr) : null; return { e, arr, net, n: arr.length, last, first: FM.get(e.a + '|' + e.m), payoff: sx ? sx.payoff : NaN, dd: sx ? sx.maxDD : NaN, eff: sx && sx.maxDD > 0 ? sx.net / sx.maxDD : NaN, sx, me: needMe && sx && e.r === 'FADER' ? masterExtra(arr) : null }; });
   const active = ROS_MEAS.filter(([k]) => ROS.flt[k] && ROS.flt[k].on && (ROS.flt[k].min !== '' || ROS.flt[k].max !== ''));
   if (active.length) rows = rows.filter((r) => {
@@ -3556,7 +3697,7 @@ function renderRoster(host, T) {
   if (multi) { const got = new Set(rows.map((r) => r.e.m)); const miss = [...wanted].filter((m) => !got.has(m)); host.appendChild(el('p', { class: 'ros-sum' }, wanted.size + ' magic numbers entered · ' + (wanted.size - miss.length) + ' found in this list' + (miss.length ? ' · not found here: ' + miss.join(', ') + ' (try another switch above or Not in roster)' : ''))); }
   host.appendChild(el('p', { class: 'ros-sum' }, rows.length + ' listed · ' + withT.length + ' with trades in the period · ' + win + ' in profit, ' + (withT.length - win) + ' at a loss · together ' + money(tot)));
   const grid = el('div', { class: 'ros-grid' }); host.appendChild(grid);
-  for (const r of rows.slice(0, ROS.limit)) grid.appendChild(rosterCard(r.e, r.arr, CB ? CB.get(r.e.m) : null, ROS.mode, r.first));
+  for (const r of rows.slice(0, ROS.limit)) grid.appendChild(rosterCard(r.e, r.arr, CB ? CB.get(r.e.a + '|' + r.e.m) || null : null, ROS.mode, r.first));
   if (!rows.length) host.appendChild(el('p', { class: 'muted' }, 'Nothing matches. Clear the search or the Show filter.'));
   if (rows.length > ROS.limit) { const more = el('button', { type: 'button', class: 'btn' }, 'Show ' + Math.min(48, rows.length - ROS.limit) + ' more (' + (rows.length - ROS.limit) + ' left)'); more.addEventListener('click', () => { ROS.limit += 48; renderTab(); }); host.appendChild(more); }
 }
