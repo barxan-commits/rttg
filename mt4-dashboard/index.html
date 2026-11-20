@@ -1026,11 +1026,11 @@ function renderSummary() {
   if ((SOURCE.kind === 'drive' || SOURCE.kind === 'folder') && SOURCE.manifest) {
     const builtMs = builtMillis(), age = buildAgeMinutes();
     if (Number.isFinite(builtMs)) {
-      host.appendChild(document.createTextNode(' · Drive data built ' + localStamp(builtMs) + ' (' + (age < 1 ? 'just now' : fmtDur(age * 60) + ' ago') + ')' + SUMMARY.builtOn));
+      host.appendChild(document.createTextNode(' · Drive data built ' + localStamp(builtMs) + ' your time (' + (age < 1 ? 'just now' : fmtDur(age * 60) + ' ago') + ')' + SUMMARY.builtOn));
       host.appendChild(age <= 60 ? markSpan('ok', 'The VPS built the data recently (it builds every 30 minutes).') : age <= STALE_BUILD_MIN ? markSpan('warn', 'The build is late; a build runs every 30 minutes and takes up to about 15.') : markSpan('bad', 'The build on the VPS has stopped or is stuck: this data is old.'));
     } else host.appendChild(document.createTextNode(' · Drive data built ' + SOURCE.manifest.generatedAt + SUMMARY.builtOn));
     const loadAge = (Date.now() - SUMMARY.loadedAt) / 60000;
-    host.appendChild(document.createTextNode(' · page loaded ' + localStamp(SUMMARY.loadedAt)));
+    host.appendChild(document.createTextNode(' · page loaded ' + localStamp(SUMMARY.loadedAt) + ' your time'));
     host.appendChild(loadAge <= 20 ? markSpan('ok', 'This page read Drive recently (it refreshes every 15 minutes).') : loadAge <= 40 ? markSpan('warn', 'This page has not refreshed for a while. Press Refresh from Drive.') : markSpan('bad', 'This page has not refreshed for a long time. Press Refresh from Drive or reload.'));
   }
   if (DB.trades.length) {
@@ -1817,21 +1817,21 @@ function masterExtra(arr) {
 // which faders copy each master (account + magic): 'account|magic' -> [{account, magic, label, n, net}] (first copies in the selected dates, any account)
 let CB_CACHE = null, CB_KEY = '', CB_DB = null;
 // merge the lists of one magic over several accounts (the magic number alone does not identify a strategy)
-function cbFor(CB, magic, accounts) { const out = []; for (const a of accounts) { const l = CB.get(a + '|' + magic); if (l) out.push(...l); } return out.length ? out.sort((a, b) => b.n - a.n) : null; }
+function cbFor(CB, magic, accounts) { const out = []; for (const a of accounts) { const l = CB.get(a + '|' + magic); if (l) out.push(...l); } return out.length ? out.sort((a, b) => (b.n + b.xn) - (a.n + a.xn)) : null; }
 function copiedByMap() {
   const key = state.from + '|' + state.to + '|' + state.exclude.join(',') + '|' + DB.trades.length;
   if (CB_CACHE && CB_KEY === key && CB_DB === DB.trades) return CB_CACHE;
   const tmp = new Map();
   for (const t of DB.trades) {
-    const f = faderOf(t); if (!f.is || f.extra || !f.master) continue;
+    const f = faderOf(t); if (!f.is || !f.master) continue;   // first copies AND extras (+#): kept apart in n / net and xn / xnet
     if ((state.from !== null && t.closeTime < state.from) || (state.to !== null && t.closeTime >= state.to) || EXCSET.has(t.magic)) continue;
     const m = srcOf(t, true); if (!m) continue;
     const mk0 = m.account + '|' + m.magic; let mm = tmp.get(mk0); if (!mm) tmp.set(mk0, mm = new Map());
-    const lb = f.src || f.type, k = t.magic + '|' + lb; let o = mm.get(k); if (!o) mm.set(k, o = { account: t.account, magic: t.magic, label: lb, n: 0, net: 0 });
+    const lb = f.src || f.type, k = t.magic + '|' + lb; let o = mm.get(k); if (!o) mm.set(k, o = { account: t.account, magic: t.magic, label: lb, n: 0, net: 0, xn: 0, xnet: 0 });
     if (o.account !== t.account) o.account = '';   // the same fader on several accounts is one entry; its page then shows every account
-    o.n++; o.net += t.net;
+    if (f.extra) { o.xn++; o.xnet += t.net; } else { o.n++; o.net += t.net; }
   }
-  CB_CACHE = new Map(); for (const [mg, mm] of tmp) CB_CACHE.set(mg, [...mm.values()].sort((a, b) => b.n - a.n)); CB_KEY = key; CB_DB = DB.trades;
+  CB_CACHE = new Map(); for (const [mg, mm] of tmp) CB_CACHE.set(mg, [...mm.values()].sort((a, b) => (b.n + b.xn) - (a.n + a.xn))); CB_KEY = key; CB_DB = DB.trades;
   return CB_CACHE;
 }
 // a small menu under the "+N more" button: one line per fader that is not shown in the cell; click one to open its page
@@ -3380,11 +3380,13 @@ function rosStatus(e) {
   else if (o.stoppedNow) { o.level = 'bad'; o.label = 'Stopped' + (o.why ? ': ' + o.why : ''); }
   else if (o.hbRecent) { o.level = 'ok'; o.label = 'Heartbeat seen'; }
   else if (Number.isFinite(o.init)) { o.level = 'warn'; o.label = 'Initialized, no recent heartbeat'; }
-  else { o.level = 'unv'; o.label = 'Unverified: no heartbeat'; }
+  else { o.level = 'unv'; o.label = 'Unverified: no heartbeat observed'; }
   return o;
 }
 // per account: is the collector alive while its masters are not? (the account 48754085 case)
+let ROS_FL = null, ROS_FL_KEY = '';
 function rosAccountFlags() {
+  const fkey = DB.health.length + '|' + DB.snaps.size + '|' + DB.accounts.size + '|' + DB.trades.length; if (ROS_FL && ROS_FL_KEY === fkey) return ROS_FL;
   const accs = new Map(); let newest = -Infinity;
   for (const [, sn] of DB.snaps) if (sn.length && sn[sn.length - 1].t > newest) newest = sn[sn.length - 1].t;
   for (const e of ROSTER.masters) {
@@ -3398,26 +3400,26 @@ function rosAccountFlags() {
     o.lastSample = last; o.healthy = Number.isFinite(last) && Number.isFinite(newest) && last >= newest - 60 * 60000;
     o.flag = DB.health.length > 0 && o.healthy && o.masters > 0 && o.seen < o.masters; o.none = o.flag && o.seen === 0; out.set(o.account, o);
   }
-  return out;
+  ROS_FL = out; ROS_FL_KEY = fkey; return out;
 }
 function rosterFlagsBanner(host) {
   const flags = [...rosAccountFlags().values()].filter((o) => o.flag).sort((a, b) => (b.none ? 1 : 0) - (a.none ? 1 : 0));
   if (!flags.length) return;
   const box = el('div', { class: 'ros-flags' });
-  box.appendChild(el('div', { class: 'ros-flags-h' }, 'Collector healthy, but masters not seen'));
-  for (const o of flags) box.appendChild(el('div', { class: 'ros-flag' + (o.none ? ' bad' : '') }, (ROSTER.pretty[o.t] || o.t) + ' · account ' + o.account + ': the collector is updating (last sample ' + fmtTime(o.lastSample) + '), but ' + (o.none ? 'none of its ' + o.masters + ' masters shows an initialization or heartbeat in the logs: the masters have failed or are not attached.' : (o.masters - o.seen) + ' of its ' + o.masters + ' masters show no initialization or heartbeat: ' + o.unseen.slice(0, 8).join(', ') + (o.unseen.length > 8 ? ' …' : '') + '.')));
-  box.appendChild(el('p', { class: 'hint' }, 'Based on the Experts logs of the last ' + ((SOURCE.manifest && SOURCE.manifest.logDays) || 'few') + ' days. "Not seen" means unverified, not proven stopped. A collector that is healthy while its masters are silent is the typical sign of EAs that did not start.'));
+  box.appendChild(el('div', { class: 'ros-flags-h' }, 'Collector healthy, masters unverified'));
+  for (const o of flags) box.appendChild(el('div', { class: 'ros-flag' + (o.none ? ' bad' : '') }, (ROSTER.pretty[o.t] || o.t) + ' · account ' + o.account + ': the collector is updating (last sample ' + fmtTime(o.lastSample) + ' server time), but ' + (o.none ? 'none of its ' + o.masters + ' masters shows an initialization or heartbeat in the available logs: unverified (they may have failed, not be attached, or be quiet).' : (o.masters - o.seen) + ' of its ' + o.masters + ' masters show no initialization or heartbeat in the available logs (unverified): ' + o.unseen.slice(0, 8).join(', ') + (o.unseen.length > 8 ? ' …' : '') + '.')));
+  box.appendChild(el('p', { class: 'hint' }, 'Based on the Experts logs of the last ' + ((SOURCE.manifest && SOURCE.manifest.logDays) || 'few') + ' days. "Unverified" means no initialization or heartbeat was observed in those logs; it is not proof that the EA failed or is not attached.'));
   host.appendChild(box);
 }
 function rosStatusRow(e) {
   const st = rosStatus(e); const row = el('div', { class: 'ros-ev' });
   const chip = (label, val, cls, tip) => row.appendChild(el('span', { class: 'ros-chip ' + (cls || ''), title: tip || '' }, label + ': ' + val));
   chip('Settings', e.r === 'DECLARED_SOURCE_NO_CHART' ? 'not available' : 'saved', '', 'From the roster' + (e.st ? ' (' + e.st[0] + ')' : '') + '. Saved settings say what the chart holds; they do not mean the EA is running.');
-  chip('Initialized', Number.isFinite(st.init) ? fmtTime(st.init) : 'not in logs', Number.isFinite(st.init) ? 'ok' : '', 'Last "loaded / started" line of this magic in the Experts log (log days loaded only).');
-  chip('Heartbeat', Number.isFinite(st.hb) ? fmtTime(st.hb) + (st.hbRecent ? '' : ' (old)') : 'none', st.hbRecent ? 'ok' : 'warn', 'Last Experts-log activity of this magic. Recent = within ' + ROS_HB_HOURS + ' h of the newest log line. No heartbeat = unverified, not running.');
-  chip('Init failed', Number.isFinite(st.failed) ? fmtTime(st.failed) : 'no', Number.isFinite(st.failed) ? 'bad' : '', 'Log line "EA stopped: init failed" for this magic.');
+  chip('Initialized', Number.isFinite(st.init) ? fmtTime(st.init) : 'not observed in available logs', Number.isFinite(st.init) ? 'ok' : '', 'Last "loaded / started" line of this magic in the Experts log (only the log days loaded; Experts-log time = the terminal PC clock). Not observed = unverified, not proven absent.');
+  chip('Heartbeat', Number.isFinite(st.hb) ? fmtTime(st.hb) + (st.hbRecent ? '' : ' (old)') : 'none observed in available logs', st.hbRecent ? 'ok' : 'warn', 'Last Experts-log activity of this magic. Recent = within ' + ROS_HB_HOURS + ' h of the newest log line. No heartbeat = unverified, not running.');
+  chip('Init failed', Number.isFinite(st.failed) ? fmtTime(st.failed) : 'none observed in available logs', Number.isFinite(st.failed) ? 'bad' : '', 'Log line "EA stopped: init failed" for this magic. None observed only means none in the log days available.');
   const fl = rosAccountFlags().get(e.a);
-  if (e.r === 'MASTER' && fl && fl.flag && !st.seen) row.appendChild(el('span', { class: 'ros-chip bad', title: 'The account collector is updating but this master shows no initialization or heartbeat.' }, 'Collector healthy; master not seen'));
+  if (e.r === 'MASTER' && fl && fl.flag && !st.seen) row.appendChild(el('span', { class: 'ros-chip bad', title: 'The account collector is updating but this master shows no initialization or heartbeat in the available logs. Unverified: it may have failed, not be attached, or just be quiet.' }, 'Collector healthy; master unverified'));
   return { row, st };
 }
 // when each piece of data was taken: build, browser refresh, closed trades, open positions, roster file, and every terminal's last sample
@@ -3425,21 +3427,21 @@ function rosterFreshness(host) {
   const bm = builtMillis(), age = buildAgeMinutes(); let newestOpen = -Infinity; for (const m of DB.openMeta.values()) if (m.lastSeen > newestOpen) newestOpen = m.lastSeen;
   const box = el('div', { class: 'ros-fresh' });
   const part = (l, v) => { const sp = el('span', { class: 'ros-fp' }); sp.append(el('b', null, l + ' '), document.createTextNode(v)); box.appendChild(sp); };
-  part('Last build:', SOURCE.manifest ? (SOURCE.manifest.generatedAt || '') + ' server time' + (Number.isFinite(age) ? ' (' + (age < 1 ? 'just now' : fmtDur(age * 60) + ' ago') + ')' : '') : 'not from Drive');
-  part('Browser refreshed:', SUMMARY ? localStamp(SUMMARY.loadedAt) + ' (' + fmtDur((Date.now() - SUMMARY.loadedAt) / 1000) + ' ago)' : '–');
-  part('Closed trades to:', fmtTime(dataMaxTime()));
-  part('Open positions as of:', Number.isFinite(newestOpen) && newestOpen > 0 ? fmtTime(newestOpen) : '–');
+  part('Last build:', SOURCE.manifest ? (Number.isFinite(bm) ? localStamp(bm) + ' your time' : '') + (Number.isFinite(age) ? ' (' + (age < 1 ? 'just now' : fmtDur(age * 60) + ' ago') + ')' : '') + (SOURCE.manifest.generatedAt ? ' · build PC clock ' + SOURCE.manifest.generatedAt : '') : 'not from Drive');
+  part('Browser refreshed:', SUMMARY ? localStamp(SUMMARY.loadedAt) + ' your time (' + fmtDur((Date.now() - SUMMARY.loadedAt) / 1000) + ' ago)' : '–');
+  part('Closed trades to:', fmtTime(dataMaxTime()) + ' server time');
+  part('Open positions as of:', Number.isFinite(newestOpen) && newestOpen > 0 ? fmtTime(newestOpen) + ' server time' : '–');
   part('Roster file:', ROSTER.updated);
   host.appendChild(box);
   const det = el('details', { class: 'ros-flt' }); det.appendChild(el('summary', null, 'Snapshot time of every terminal (closed results and floating results are timestamped separately)'));
   det.addEventListener('toggle', () => {
     if (!det.open || det._built) return; det._built = true;
     const rows = buildHealthRows().filter((r) => r.account).sort((a, b) => String(a.terminal).localeCompare(String(b.terminal), 'en', { numeric: true }));
-    const tbl = el('table', { class: 'ros-sub' }); const hr = el('tr'); for (const l of ['Terminal', 'Account', 'Last account snapshot', 'Last closed trade', 'Open positions as of', 'Last log line', 'Collector']) hr.appendChild(el('th', null, l));
+    const tbl = el('table', { class: 'ros-sub' }); const hr = el('tr'); for (const l of ['Terminal', 'Account', 'Last account snapshot (server time)', 'Last closed trade (server time)', 'Open positions as of (server time)', 'Last log line (terminal PC clock)', 'Collector']) hr.appendChild(el('th', null, l));
     tbl.appendChild(el('thead')).appendChild(hr); const tb = el('tbody'); tbl.appendChild(tb);
     for (const r of rows) { const om = DB.openMeta.get(r.account); const tr = el('tr'); for (const v of [r.terminal, r.account, fmtTime(r.lastSnap), fmtTime(r.lastTrade), om ? fmtTime(om.lastSeen) : '–', fmtTime(r.lastLog), r.label]) tr.appendChild(el('td', null, v)); tb.appendChild(tr); }
     const wrap = el('div', { class: 'tablewrap', style: 'max-height:360px' }); wrap.appendChild(tbl); det.appendChild(wrap);
-    det.appendChild(el('p', { class: 'hint' }, 'Closed results are final up to the closed-trade time shown. Floating results (open positions, equity) are only as of their own snapshot time. An older time does not make the numbers wrong; it only says how current they are. Times are server time.'));
+    det.appendChild(el('p', { class: 'hint' }, 'Closed results are final up to the closed-trade time shown. Floating results (open positions, equity) are only as of their own snapshot time. An older time does not make the numbers wrong; it only says how current they are. Times are MT4 server time except the last log line (terminal PC clock) and the browser / build times (your time).'));
   });
   host.appendChild(det);
 }
@@ -3512,20 +3514,20 @@ function rosFollowRows(e) {
   if (e.r === 'FADER') {
     const arr = byAM.get(e.a + '|' + e.m) || []; const g = new Map();
     for (const t of arr) {
-      const f = faderOf(t); if (f.extra || !f.master) continue; const m = srcOf(t, true); const k = m ? masterKeyOf(m) : '(master not in the loaded data)';
-      let o = g.get(k); if (!o) g.set(k, o = { label: m ? m.magic + ' ' + baseOf(m.base, m.comment) : k, magic: m ? m.magic : '', account: m ? m.account : '', arr: [], mnet: 0, seen: new Set() });
-      o.arr.push(t); if (m && !o.seen.has(srcKey(m))) { o.seen.add(srcKey(m)); o.mnet += m.net; }
+      const f = faderOf(t); if (!f.master) continue; const m = srcOf(t, true); const k = m ? masterKeyOf(m) : '(master not in the loaded data)';
+      let o = g.get(k); if (!o) g.set(k, o = { label: m ? m.magic + ' ' + baseOf(m.base, m.comment) : k, magic: m ? m.magic : '', account: m ? m.account : '', arr: [], xarr: [], mnet: 0, seen: new Set() });
+      if (f.extra) { o.xarr.push(t); continue; } o.arr.push(t); if (m && !o.seen.has(srcKey(m))) { o.seen.add(srcKey(m)); o.mnet += m.net; }
     }
     out.push(...g.values());
   } else {
     for (const f of ROSTER.faders) {
       if (!f.src || !f.src.split(',').map((x) => x.trim()).includes(e.m)) continue;
-      const mine = []; const seen = new Set(); let mnet = 0;
-      for (const t of byAM.get(f.a + '|' + f.m) || []) { const ff = faderOf(t); if (ff.extra || !ff.master) continue; const m = srcOf(t, true); if (!m || m.magic !== e.m || m.account !== e.a) continue; mine.push(t); if (!seen.has(srcKey(m))) { seen.add(srcKey(m)); mnet += m.net; } }
-      out.push({ label: (f.l || f.n) + ' · ' + f.m, magic: f.m, account: f.a, arr: mine, mnet });
+      const mine = [], xmine = []; const seen = new Set(); let mnet = 0;
+      for (const t of byAM.get(f.a + '|' + f.m) || []) { const ff = faderOf(t); if (!ff.master) continue; const m = srcOf(t, true); if (!m || m.magic !== e.m || m.account !== e.a) continue; if (ff.extra) { xmine.push(t); continue; } mine.push(t); if (!seen.has(srcKey(m))) { seen.add(srcKey(m)); mnet += m.net; } }
+      out.push({ label: (f.l || f.n) + ' · ' + f.m, magic: f.m, account: f.a, arr: mine, xarr: xmine, mnet });
     }
   }
-  return out.map((o) => { const s = o.arr.length ? stats(o.arr) : null; return Object.assign(o, { s, net: s ? s.net : 0, diff: s ? s.net + o.mnet : NaN }); }).sort((a, b) => (b.arr.length ? 1 : 0) - (a.arr.length ? 1 : 0) || b.net - a.net);
+  return out.map((o) => { const s = o.arr.length ? stats(o.arr) : null; let xnet = 0; for (const t of o.xarr) xnet += t.net; const net = s ? s.net : 0; return Object.assign(o, { s, net, xn: o.xarr.length, xnet, total: net + xnet, diff: (o.arr.length || o.xarr.length) ? net + xnet + o.mnet : NaN }); }).sort((a, b) => ((b.arr.length + b.xn) ? 1 : 0) - ((a.arr.length + a.xn) ? 1 : 0) || b.total - a.total);
 }
 function rosFollowTable(e) {
   if (e.r !== 'FADER' && e.r !== 'MASTER') return null;
@@ -3533,20 +3535,28 @@ function rosFollowTable(e) {
   box.appendChild(el('h4', null, e.r === 'FADER' ? 'Masters this fader copies (results of the copies, selected period)' : 'Faders that follow this master (results of their copies of it, selected period)'));
   if (!rows.length) { box.appendChild(el('p', { class: 'muted' }, e.r === 'FADER' ? 'No copies in the loaded data for this selection.' : 'No fader of the roster follows this master.')); return box; }
   const tbl = el('table', { class: 'ros-sub' }); const hr = el('tr');
-  for (const [l, num] of [[e.r === 'FADER' ? 'Master' : 'Fader', 0], ['Trades', 1], ['Net', 1], ['Win %', 1], ['PF', 1], ['Max DD', 1], ['Master $', 1], ['Difference $', 1], ['', 0]]) hr.appendChild(el('th', { class: num ? 'num' : '' }, l));
+  const heads = [[e.r === 'FADER' ? 'Master' : 'Fader', 0, ''], ['First copies', 1, 'Number of first copies'], ['First copies $', 1, 'Result of the first copies'], ['Extras', 1, 'Number of extra copies (+# in the comment)'], ['Extras $', 1, 'Result of the extra copies'], ['Total $', 1, 'First copies + extras'],
+    ['Win %', 1, 'First copies only'], ['PF', 1, 'First copies only'], ['Max DD', 1, 'First copies only'], ['Master $', 1, 'Result of the master trades that were copied'], ['Difference $', 1, 'Total $ + Master $'], ['', 0, '']];
+  for (const [l, num, tip] of heads) hr.appendChild(el('th', { class: num ? 'num' : '', title: tip }, l));
   tbl.appendChild(el('thead')).appendChild(hr); const tb = el('tbody'); tbl.appendChild(tb);
-  const T0 = { n: 0, net: 0, mnet: 0, diff: 0 };
+  const T0 = { n: 0, net: 0, xn: 0, xnet: 0, mnet: 0, diff: 0 };
   for (const o of rows) {
-    const tr = el('tr'); const s = o.s;
-    tr.appendChild(el('td', null, o.label));
+    const tr = el('tr'); const s = o.s; tr.appendChild(el('td', null, o.label));
     const cell = (txt, cls) => tr.appendChild(el('td', { class: 'num ' + (cls || '') }, txt));
-    if (s) { cell(String(s.n)); cell(money(s.net), signCls(s.net)); cell(pct(s.winRate)); cell(ratio(s.pf)); cell(s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD)); cell(money(o.mnet), signCls(o.mnet)); cell(money(o.diff), signCls(o.diff)); T0.n += s.n; T0.net += s.net; T0.mnet += o.mnet; T0.diff += o.diff; }
-    else { cell('0'); for (let i = 0; i < 6; i++) cell('–'); }
+    const any = o.arr.length || o.xn;
+    cell(String(o.arr.length)); cell(o.arr.length ? money(o.net) : '–', o.arr.length ? signCls(o.net) : ''); cell(String(o.xn)); cell(o.xn ? money(o.xnet) : '–', o.xn ? signCls(o.xnet) : ''); cell(any ? money(o.total) : '–', any ? signCls(o.total) : '');
+    if (s) { cell(pct(s.winRate)); cell(ratio(s.pf)); cell(s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD)); } else { cell('–'); cell('–'); cell('–'); }
+    cell(any ? money(o.mnet) : '–', any ? signCls(o.mnet) : ''); cell(any ? money(o.diff) : '–', any ? signCls(o.diff) : '');
+    if (any) { T0.n += o.arr.length; T0.net += o.net; T0.xn += o.xn; T0.xnet += o.xnet; T0.mnet += o.mnet; T0.diff += o.diff; }
     const td = el('td'); if (o.magic) { const b = el('button', { type: 'button', class: 'cm-open', title: 'Show this magic in the dashboard' }, 'Show'); b.addEventListener('click', () => rosShow(o.account, o.magic)); td.appendChild(b); } tr.appendChild(td); tb.appendChild(tr);
   }
-  if (rows.length > 1) { const tr = el('tr', { class: 'tot' }); tr.appendChild(el('td', null, 'Total')); tr.appendChild(el('td', { class: 'num' }, String(T0.n))); tr.appendChild(el('td', { class: 'num ' + signCls(T0.net) }, money(T0.net))); for (let i = 0; i < 3; i++) tr.appendChild(el('td')); tr.appendChild(el('td', { class: 'num ' + signCls(T0.mnet) }, money(T0.mnet))); tr.appendChild(el('td', { class: 'num ' + signCls(T0.diff) }, money(T0.diff))); tr.appendChild(el('td')); tb.appendChild(tr); }
+  if (rows.length > 1) {
+    const tr = el('tr', { class: 'tot' }); tr.appendChild(el('td', null, 'Total'));
+    const c = (txt, cls) => tr.appendChild(el('td', { class: 'num ' + (cls || '') }, txt));
+    c(String(T0.n)); c(money(T0.net), signCls(T0.net)); c(String(T0.xn)); c(money(T0.xnet), signCls(T0.xnet)); c(money(T0.net + T0.xnet), signCls(T0.net + T0.xnet)); for (let i = 0; i < 3; i++) tr.appendChild(el('td')); c(money(T0.mnet), signCls(T0.mnet)); c(money(T0.diff), signCls(T0.diff)); tr.appendChild(el('td')); tb.appendChild(tr);
+  }
   const wrap = el('div', { class: 'tablewrap', style: 'max-height:340px' }); wrap.appendChild(tbl); box.appendChild(wrap);
-  box.appendChild(el('p', { class: 'hint' }, 'Net = what the fader made on those copies. Master $ = what the master trades they copied made. Difference = Net + Master $.'));
+  box.appendChild(el('p', { class: 'hint' }, 'First copies $ = what the fader made on its first copies of this master; Extras $ = its extra (+#) copies; Total $ = both. Win %, PF and Max DD are for the first copies. Master $ = what the master trades they copied made. Difference = Total $ + Master $.'));
   return box;
 }
 function rosterCard(e, arr, CB, mode, first) {
@@ -3574,16 +3584,18 @@ function rosterCard(e, arr, CB, mode, first) {
     tl('Open now', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, floating P/L as of the last snapshot' : 'No open positions of this magic');
     if (mode === 'faders') { me = masterExtra(arr); tl('Master $', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Difference $', money(me.masterDiff), signCls(me.masterDiff), 'Fader + master alone'); tl('Ratio copy', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); tl('Coverage', pct(me.mcov)); }
     if (mode === 'masters') {   // configured followers (roster) are not the same as followers that really copied trades of THIS master (account + magic)
-      const conf = e.fby ? e.fby.split(',').filter(Boolean).length : 0; const fn = CB ? CB.reduce((a, x) => a + x.net, 0) : 0;
+      const conf = e.fby ? e.fby.split(',').filter(Boolean).length : 0; const fn = CB ? CB.reduce((a, x) => a + x.net, 0) : 0, fx = CB ? CB.reduce((a, x) => a + x.xnet, 0) : 0, cn = CB ? CB.reduce((a, x) => a + x.n, 0) : 0, cx = CB ? CB.reduce((a, x) => a + x.xn, 0) : 0;
       tl('Followers configured', String(conf), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.');
-      tl('Followers that copied', String(CB ? CB.length : 0), '', 'Faders with at least one copy linked to THIS master (same account + magic, by source account + source ticket) in the selected period.');
-      tl('Their net (linked copies)', CB ? money(fn) : '–', CB ? signCls(fn) : '', 'Result of the copies linked to this master only, not of everything those faders did.');
+      tl('Followers that copied', String(CB ? CB.length : 0), '', 'Faders with at least one copy (first copy or extra) linked to THIS master (same account + magic, by source account + source ticket) in the selected period.');
+      tl('First copies $', CB ? money(fn) : '–', CB ? signCls(fn) : '', 'Result of the FIRST copies linked to this master only' + (CB ? ' (' + cn + ' trades)' : '') + '. Extras are separate.');
+      tl('Extras $', CB ? money(fx) : '–', CB ? signCls(fx) : '', 'Result of the extra copies (+# in the comment) linked to this master' + (CB ? ' (' + cx + ' trades)' : '') + '.');
+      tl('All linked copies $', CB ? money(fn + fx) : '–', CB ? signCls(fn + fx) : '', 'First copies + extras linked to this master. Not everything those faders did, only their copies of this master.');
     }
   } else { tl('Results', 'no closed trades in this selection', 'muted'); if (mode === 'masters') tl('Followers configured', String(e.fby ? e.fby.split(',').filter(Boolean).length : 0), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.'); }
   tl('Added (first trade)', Number.isFinite(first) ? fmtDate(first) : '–', '', 'Date of the very first trade of this magic on this account in the loaded data (any period). The roster file itself has no add date.');
   { const sn = DB.snaps.get(e.a); const lastSn = sn && sn.length ? sn[sn.length - 1].t : NaN; const om = DB.openMeta.get(e.a);
     let lc = NaN; for (const t of arr) if (!(t.closeTime <= lc)) lc = t.closeTime;
-    tiles.appendChild(el('div', { class: 'ros-times muted', style: 'grid-column:1/-1' }, 'Closed results to ' + (Number.isFinite(lc) ? fmtTime(lc) : '–') + ' · account snapshot ' + (Number.isFinite(lastSn) ? fmtTime(lastSn) : '–') + ' · open positions as of ' + (om ? fmtTime(om.lastSeen) : '–'))); }
+    tiles.appendChild(el('div', { class: 'ros-times muted', style: 'grid-column:1/-1' }, 'Closed results to ' + (Number.isFinite(lc) ? fmtTime(lc) : '–') + ' · account snapshot ' + (Number.isFinite(lastSn) ? fmtTime(lastSn) : '–') + ' · open positions as of ' + (om ? fmtTime(om.lastSeen) : '–') + ' (server time)')); }
   card.appendChild(tiles); if (arr.length) { const sp = el('div', { class: 'ros-spark', title: 'Cumulative net profit of this magic' }); sp.appendChild(rosSpark(arr)); card.appendChild(sp); }
   card.appendChild(el('p', { class: 'ros-desc' }, e.d));
   if (e.p && e.p.length) { const pl = el('div', { class: 'ros-pills' }); for (const [t, c] of e.p) pl.appendChild(el('span', { class: 'badge' + (c === 'amber' ? ' stale' : '') }, t)); card.appendChild(pl); }
@@ -3697,9 +3709,10 @@ function renderRoster(host, T) {
   if (multi) { const got = new Set(rows.map((r) => r.e.m)); const miss = [...wanted].filter((m) => !got.has(m)); host.appendChild(el('p', { class: 'ros-sum' }, wanted.size + ' magic numbers entered · ' + (wanted.size - miss.length) + ' found in this list' + (miss.length ? ' · not found here: ' + miss.join(', ') + ' (try another switch above or Not in roster)' : ''))); }
   host.appendChild(el('p', { class: 'ros-sum' }, rows.length + ' listed · ' + withT.length + ' with trades in the period · ' + win + ' in profit, ' + (withT.length - win) + ' at a loss · together ' + money(tot)));
   const grid = el('div', { class: 'ros-grid' }); host.appendChild(grid);
-  for (const r of rows.slice(0, ROS.limit)) grid.appendChild(rosterCard(r.e, r.arr, CB ? CB.get(r.e.a + '|' + r.e.m) || null : null, ROS.mode, r.first));
+  const cap = ROS.mode === 'history' ? ROS.limit : rows.length;   // masters, faders and copy routes are shown in full; only the 565 history entries are paged
+  for (const r of rows.slice(0, cap)) grid.appendChild(rosterCard(r.e, r.arr, CB ? CB.get(r.e.a + '|' + r.e.m) || null : null, ROS.mode, r.first));
   if (!rows.length) host.appendChild(el('p', { class: 'muted' }, 'Nothing matches. Clear the search or the Show filter.'));
-  if (rows.length > ROS.limit) { const more = el('button', { type: 'button', class: 'btn' }, 'Show ' + Math.min(48, rows.length - ROS.limit) + ' more (' + (rows.length - ROS.limit) + ' left)'); more.addEventListener('click', () => { ROS.limit += 48; renderTab(); }); host.appendChild(more); }
+  if (rows.length > cap) { const more = el('button', { type: 'button', class: 'btn' }, 'Show ' + Math.min(48, rows.length - ROS.limit) + ' more (' + (rows.length - ROS.limit) + ' left)'); more.addEventListener('click', () => { ROS.limit += 48; renderTab(); }); host.appendChild(more); }
 }
 
 /* ---------------- render ---------------- */
