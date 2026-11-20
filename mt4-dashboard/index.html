@@ -3749,7 +3749,7 @@ function rosDetailSections(e, arr, moreTiles) {
   if (moreTiles.length) sec('More results', (b) => { const g = el('div', { class: 'ros-tiles' }); for (const t of moreTiles) g.appendChild(t); b.appendChild(g); });
   return wrap;
 }
-const ROS_BACK = new Set(['Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown', 'Open now', 'Added (first trade)', 'Followers configured', 'First copies $', 'Extras $']);
+const ROS_BACK = new Set(['Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown', 'Open now', 'Added (first trade)', 'Followers configured', "Followers' first copies $", "Followers' extras $"]);
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
@@ -3780,9 +3780,9 @@ function rosterCard(e, arr, CB, mode, first) {
       const conf = e.fby ? e.fby.split(',').filter(Boolean).length : 0; const fn = CB ? CB.reduce((a, x) => a + x.net, 0) : 0, fx = CB ? CB.reduce((a, x) => a + x.xnet, 0) : 0, cn = CB ? CB.reduce((a, x) => a + x.n, 0) : 0, cx = CB ? CB.reduce((a, x) => a + x.xn, 0) : 0;
       tl('Followers configured', String(conf), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.');
       tl('Followers that copied', String(CB ? CB.length : 0), '', 'Faders with at least one copy linked to THIS master (same account + magic, by source account + source ticket) in the selected period, of the ' + conf + ' the roster lists as followers.', true);
-      tl('All linked copies $', CB ? money(fn + fx) : '–', CB ? signCls(fn + fx) : '', 'First copies + extras linked to this master. Not everything those faders did, only their copies of this master.', true);
-      tl('First copies $', CB ? money(fn) : '–', CB ? signCls(fn) : '', 'Result of the FIRST copies linked to this master only' + (CB ? ' (' + cn + ' trades)' : '') + '. Extras are separate.');
-      tl('Extras $', CB ? money(fx) : '–', CB ? signCls(fx) : '', 'Result of the extra copies (+# in the comment) linked to this master' + (CB ? ' (' + cx + ' trades)' : '') + '.');
+      tl("Followers' profit $", CB ? money(fn + fx) : '–', CB ? signCls(fn + fx) : '', 'First copies + extras linked to this master. Not everything those faders did, only their copies of this master.', true);
+      tl("Followers' first copies $", CB ? money(fn) : '–', CB ? signCls(fn) : '', 'Result of the FIRST copies linked to this master only' + (CB ? ' (' + cn + ' trades)' : '') + '. Extras are separate.');
+      tl("Followers' extras $", CB ? money(fx) : '–', CB ? signCls(fx) : '', 'Result of the extra copies (+# in the comment) linked to this master' + (CB ? ' (' + cx + ' trades)' : '') + '.');
     }
     tl('Max drawdown', s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD), 'Biggest fall from a peak of the cumulative result of this magic\'s CLOSED trades in the selected period (floating loss while trades were open is not included)');
     tl('Open now', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, floating P/L as of the last snapshot' : 'No open positions of this magic');
