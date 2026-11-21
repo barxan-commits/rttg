@@ -1652,17 +1652,17 @@ function renderCharts(T, s) {
   for (const t of T) { const d = Math.floor(t.closeTime / DAY) * DAY; const o = days.get(d) || { v: 0, n: 0 }; o.v += t.net; o.n++; days.set(d, o); }
   const items = [...days].sort((a, b) => a[0] - b[0]).map(([d, o]) => ({ xl: fmtDate(d).slice(5), v: o.v, title: fmtDate(d) + ' (' + ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(d).getUTCDay()] + ')', sub: o.n + ' trades' }));
   columnChart($('#dailyChart'), items, { height: 372, label: 'daily net profit' });
-  const g = groupBy(T, (t) => t.magic);
-  let mi = [...g].map(([k, arr]) => { let v = 0; for (const t of arr) v += t.net; return { label: k, v, sub: arr.length + ' trades', n: arr.length, arr }; });
+  const g = groupBy(T, (t) => t.account + '|' + t.magic);   // one bar per magic AND account, so the same magic on two accounts is never merged
+  let mi = [...g].map(([k, arr]) => { let v = 0; for (const t of arr) v += t.net; return { label: arr[0].magic + ' · ' + arr[0].account, magic: arr[0].magic, acc: arr[0].account, v, sub: arr.length + ' trades', n: arr.length, arr }; });
   mi.sort((a, b) => b.v - a.v);
   const total = mi.length;
   if (mi.length > 24) { mi = mi.slice(0, 12).concat(mi.slice(-12)); }
-  $('#magicChartSub').textContent = total > 24 ? 'Top 12 and bottom 12 of ' + total + ' magic numbers. Click a bar to filter.' : total + ' magic numbers. Click a bar to filter.';
+  $('#magicChartSub').textContent = total > 24 ? 'Top 12 and bottom 12 of ' + total + ' magic + account bars. Click a bar to filter.' : total + ' magic + account bars. Click a bar to filter.';
   for (const it of mi) {   // the comment of each magic (its most used one, and how many others)
     const c = new Map(); for (const t of it.arr) { const k = commentOf(t); c.set(k, (c.get(k) || 0) + 1); }
     const top = [...c].sort((a, b) => b[1] - a[1]); it.note = top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) : '') : ''; it.arr = null;
   }
-  barChartH($('#magicChart'), mi, (it) => { state.magic = it.label; syncFilterInputs(); render(); });
+  barChartH($('#magicChart'), mi, (it) => { state.magic = it.magic; state.account = it.acc; syncFilterInputs(); render(); });
 }
 
 /* ---------------- tables ---------------- */
