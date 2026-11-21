@@ -3749,7 +3749,7 @@ function rosDetailSections(e, arr, moreTiles) {
   if (moreTiles.length) sec('More results', (b) => { const g = el('div', { class: 'ros-tiles' }); for (const t of moreTiles) g.appendChild(t); b.appendChild(g); });
   return wrap;
 }
-const ROS_BACK = new Set(['Master lost → fader', 'Master won → fader', 'Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown (closed)', 'Open P/L', 'First trade', 'Followers in roster', "Followers' first copies", "Followers' extras"]);
+const ROS_BACK = new Set(['Master lost $', 'Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown (closed)', 'Open P/L', 'First trade', 'Followers in roster', "Followers' first copies", "Followers' extras"]);
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
@@ -3793,10 +3793,9 @@ function rosterCard(e, arr, CB, mode, first) {
     tl('Best basket', bsk.length ? money(maxOf(bsk.map((b) => b.net))) : '–', bsk.length ? 'pos' : '', bsk.length ? 'Biggest win of one basket in the selected period' : 'No basket ids for this magic'); tl('Worst trade', money(s.maxLoss), signCls(s.maxLoss), 'Biggest single losing trade'); tl('Best trade', money(s.maxWin), signCls(s.maxWin), 'Biggest single winning trade');
     tl('Net ÷ drawdown', s.maxDD > 0 ? fmtNum(s.net / s.maxDD, 2) : '–', s.maxDD > 0 ? signCls(s.net) : '', 'Net result divided by the closed drawdown.');
     if (mode === 'faders') {   // per source trade the fader copied (first copies): what the fader made when the master lost / won
-      let lN = 0, lM = 0, lF = 0, wN = 0, wM = 0, wF = 0;
-      for (const [, o] of rosParents(e, arr)) { const mn = o.src.net; if (!Number.isFinite(mn)) continue; if (mn < 0) { lN++; lM += mn; lF += o.net; } else if (mn > 0) { wN++; wM += mn; wF += o.net; } }
-      tl('Master lost → fader', money(lF), signCls(lF), 'On the ' + lN + ' source trades where the MASTER lost (' + money(lM) + ' together), the fader\'s first copies made ' + money(lF) + '. Only closed source trades are counted; extras are not included.');
-      tl('Master won → fader', money(wF), signCls(wF), 'On the ' + wN + ' source trades where the MASTER won (' + money(wM) + ' together), the fader\'s first copies made ' + money(wF) + '. Only closed source trades are counted; extras are not included.');
+      let lN = 0, lM = 0;
+      for (const [, o] of rosParents(e, arr)) { const mn = o.src.net; if (!Number.isFinite(mn)) continue; if (mn < 0) { lN++; lM += mn; } }
+      tl('Master lost $', money(lM), signCls(lM), 'Total of the master\'s LOSING trades among the ' + lN + ' source trades this fader copied (first copies, closed source trades). Compare it with what the fader made (Master made, Copy ratio).');
     }
     if (mode === 'faders') { tl('Master made', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Fader vs master', money(me.masterDiff), signCls(me.masterDiff), 'Fader (first copies + extras) + master alone'); tl('Copy ratio', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); }
   } else {
