@@ -3749,7 +3749,7 @@ function rosDetailSections(e, arr, moreTiles) {
   if (moreTiles.length) sec('More results', (b) => { const g = el('div', { class: 'ros-tiles' }); for (const t of moreTiles) g.appendChild(t); b.appendChild(g); });
   return wrap;
 }
-const ROS_BACK = new Set(['Master lost $', 'Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown (closed)', 'Open P/L', 'First trade', 'Followers in roster', "Followers' first copies", "Followers' extras"]);
+const ROS_BACK = new Set(['Master lost $', 'Fader net : master loss', 'Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown (closed)', 'Open P/L', 'First trade', 'Followers in roster', "Followers' first copies", "Followers' extras"]);
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
@@ -3796,6 +3796,7 @@ function rosterCard(e, arr, CB, mode, first) {
       let lN = 0, lM = 0;
       for (const [, o] of rosParents(e, arr)) { const mn = o.src.net; if (!Number.isFinite(mn)) continue; if (mn < 0) { lN++; lM += mn; } }
       tl('Master lost $', money(lM), signCls(lM), 'Total of the master\'s LOSING trades among the ' + lN + ' source trades this fader copied (first copies, closed source trades). Compare it with what the fader made (Master made, Copy ratio).');
+      tl('Fader net : master loss', lM < 0 ? fmtNum(s.net / -lM, 2) + ' : 1' : '–', lM < 0 ? signCls(s.net) : '', 'Fader net (the Net tile) divided by the master\'s losses on the trades it copied (Master lost $). 1.00 : 1 is perfect: the fader earned exactly what the master lost. Below 1 the fader kept less than the master lost.');
     }
     if (mode === 'faders') { tl('Master made', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Fader vs master', money(me.masterDiff), signCls(me.masterDiff), 'Fader (first copies + extras) + master alone'); tl('Copy ratio', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); }
   } else {
