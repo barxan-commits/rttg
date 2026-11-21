@@ -3309,7 +3309,7 @@ function renderPeriods(host, T) {
    The descriptions and settings come from the research roster (embedded below, dated); the numbers are live from the loaded data. */
 const ROSTER = (() => { try { return JSON.parse(document.getElementById('rosterData').textContent); } catch (e) { return null; } })();
 // filters the user ticks in the Roster: measure -> { on, min, max }; remembered in this browser
-const ROS_MEAS = [['net', 'Net ($)'], ['dd', 'Max drawdown ($, as a positive amount)'], ['eff', 'Net ÷ max drawdown'], ['n', 'Trades'], ['win', 'Win %'], ['pf', 'Profit factor'], ['payoff', 'Avg win ÷ avg loss'], ['exp', 'Expectancy ($ per trade)'], ['cov', 'Coverage % (faders)'], ['diff', 'Difference $ (faders)']];
+const ROS_MEAS = [['net', 'Net ($)'], ['dd', 'Max drawdown ($, as a positive amount)'], ['eff', 'Net ÷ max drawdown'], ['n', 'Trades'], ['win', 'Win %'], ['pf', 'Profit factor'], ['payoff', 'Avg win ÷ avg loss'], ['exp', 'Expectancy ($ per trade)'], ['cov', 'Coverage % (faders)'], ['diff', 'Difference $ (faders)'], ['lr', 'Fader net ÷ master loss (faders, 1 = perfect)']];
 function loadRosFlt() { try { const v = JSON.parse(localStorage.getItem('mt4dash-rosflt') || '{}'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; } }
 function saveRosFlt() { try { localStorage.setItem('mt4dash-rosflt', JSON.stringify(ROS.flt)); } catch (e) { /* storage unavailable */ } }
 const ROS = { mode: 'masters', q: '', term: '', sort: 'net', only: '', hasTrades: false, limit: 48, mf: '', cmp: [], flt: loadRosFlt(), fltOpen: false };
@@ -3581,6 +3581,8 @@ function rosFollowTable(e) {
   return box;
 }
 // ================= Roster: deeper analysis under "Details & settings" =================
+// fader net divided by the master's losses on the source trades it copied (first copies); 1 = perfect. NaN when the master had no losses among them
+function rosLossRatio(e, arr) { let lM = 0; for (const [, o] of rosParents(e, arr)) if (Number.isFinite(o.src.net) && o.src.net < 0) lM += o.src.net; return lM < 0 ? arr.reduce((a, t) => a + t.net, 0) / -lM : NaN; }
 const rosSecDays = (arr) => { const d = new Set(); for (const t of arr) d.add(Math.floor(t.closeTime / DAY)); return d.size; };
 const rosKVof = (e, key) => { for (const [k, v] of e.k || []) if (k === key) return v; return ''; };
 // maximum simultaneous orders and lots (trade intervals; still open positions have no end)
@@ -3905,7 +3907,7 @@ function renderRoster(host, T) {
   const active = ROS_MEAS.filter(([k]) => ROS.flt[k] && ROS.flt[k].on && (ROS.flt[k].min !== '' || ROS.flt[k].max !== ''));
   if (active.length) rows = rows.filter((r) => {
     if (!r.n) return false; const sx = r.sx;
-    const v = { net: r.net, dd: r.dd, eff: r.eff, n: r.n, win: sx.winRate * 100, pf: sx.pf, payoff: r.payoff, exp: sx.exp, cov: r.me ? r.me.mcov * 100 : NaN, diff: r.me ? r.me.masterDiff : NaN };
+    const v = { net: r.net, dd: r.dd, eff: r.eff, n: r.n, win: sx.winRate * 100, pf: sx.pf, payoff: r.payoff, exp: sx.exp, cov: r.me ? r.me.mcov * 100 : NaN, diff: r.me ? r.me.masterDiff : NaN, lr: r.e.r === 'FADER' ? rosLossRatio(r.e, r.arr) : NaN };
     for (const [k] of active) { const x = v[k], f = ROS.flt[k]; if (Number.isNaN(x) || x === undefined) return false; if (f.min !== '' && x < parseFloat(f.min)) return false; if (f.max !== '' && x > parseFloat(f.max)) return false; }
     return true;
   });
