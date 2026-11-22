@@ -4148,7 +4148,7 @@ function renderFamilies(host, byAM) {
   const showM = ROSF.show !== 'faders', showF = ROSF.show !== 'masters'; const cb = copiedByMap(), FM = rosterFirst(); const g = el('div', { class: 'ros-grid' });
   const seen = new Set(); const add = (e, mode) => { if (!e || seen.has(mode + e.m)) return; seen.add(mode + e.m); g.appendChild(rosterCard(e, byAM.get(e.a + '|' + e.m) || [], mode === 'masters' ? cb.get(e.a + '|' + e.m) || null : null, mode, FM.get(rosKey(e)))); };
   for (const a of arms) { if (showM) add(rosFindAM(fam.a, a.mm, ['masters', 'copiers']), 'masters'); if (showF) add(rosFindAM(fam.a, a.fm, ['faders']), 'faders'); }
-  const dc = el('details', { class: 'ros-sec', open: false }); dc.appendChild(el('summary', null, 'Cards of these masters and faders (' + seen.size + ')')); dc.appendChild(g); host.appendChild(dc);
+  const dc = el('details', { class: 'ros-sec' }); dc.appendChild(el('summary', null, 'Cards of these masters and faders (' + seen.size + ')')); dc.appendChild(g); host.appendChild(dc);
 }
 function renderRoster(host, T) {
   if (!ROSTER) { host.appendChild(el('p', { class: 'muted' }, 'The roster data is not available in this copy of the dashboard.')); return; }
