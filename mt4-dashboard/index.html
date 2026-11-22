@@ -3768,18 +3768,17 @@ function rosterCard(e, arr, CB, mode, first) {
   let s = null, me = null;
   const op = DB.open.filter((o) => o.account === e.a && o.magic === e.m); const opn = op.reduce((a, o) => a + (Number.isFinite(o.pnl) ? o.pnl : 0), 0); const om = DB.openMeta.get(e.a);
   if (arr.length) {
-    s = stats(arr); const isF = mode === 'faders' || arr.some((t) => faderOf(t).is); if (isF) me = masterExtra(arr);
+    s = stats(arr); if (mode === 'faders') me = masterExtra(arr);
     tl('Net', money(s.net), signCls(s.net), 'Profit + commission + swap of its closed trades in the selected period', true);
     tl('Floating P/L', op.length ? money(opn) : '–', op.length ? signCls(opn) : '', op.length ? op.length + ' open position(s) of this magic, as of ' + (om ? fmtTime(om.lastSeen) : '?') + ' (server time). Closed results and floating results are separate.' : 'No open positions of this magic', true);
     tl('Win ÷ loss size', Number.isFinite(s.payoff) ? fmtNum(s.payoff, 2) : '–', '', 'Average winning trade divided by the average losing trade. Above 1 = wins are bigger than losses.', true);
     tl('Profit factor', ratio(s.pf), '', 'Profit factor: gross profit / gross loss', true);
     tl('Drawdown (closed)', s.maxDD > 0 ? money(-s.maxDD) : money(0), signCls(-s.maxDD), 'Biggest fall from a peak of the cumulative result of its CLOSED trades in the selected period. Floating loss while trades were open is not included (see Details: Floating risk).', true);
     tl('Days traded', String(rosSecDays(arr)), '', 'Distinct days with at least one closed trade in the selected period', true);
-    if (isF) {
+    if (mode === 'faders') {
       tl('Master trades copied', String(rosParents(e, arr).size), '', 'Distinct source (master) trades this fader copied, by source account + source ticket. More parents = more independent evidence.', true);
       tl('Copied %', pct(me.mcov), '', C.mcov.title, true);
-    }
-    if (mode === 'masters') {
+    } else if (mode === 'masters') {
       const conf = e.fby ? e.fby.split(',').filter(Boolean).length : 0; const fn = CB ? CB.reduce((a, x) => a + x.net, 0) : 0, fx = CB ? CB.reduce((a, x) => a + x.xnet, 0) : 0, cn = CB ? CB.reduce((a, x) => a + x.n, 0) : 0, cx = CB ? CB.reduce((a, x) => a + x.xn, 0) : 0;
       tl('Followers in roster', String(conf), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.');
       tl('Followers with trades', String(CB ? CB.length : 0), '', 'Faders with at least one copy linked to THIS master (same account + magic, by source account + source ticket) in the selected period, of the ' + conf + ' the roster lists as followers.', true);
@@ -3795,7 +3794,7 @@ function rosterCard(e, arr, CB, mode, first) {
     const bsk = baskets(arr); tl('Worst basket', bsk.length ? money(minOf(bsk.map((b) => b.net))) : '–', bsk.length ? 'neg' : '', bsk.length ? 'Biggest loss of one basket in the selected period: ' + bsk.length + ' baskets' : 'No basket ids for this magic (collector v2.04+ writes them)');
     tl('Best basket', bsk.length ? money(maxOf(bsk.map((b) => b.net))) : '–', bsk.length ? 'pos' : '', bsk.length ? 'Biggest win of one basket in the selected period' : 'No basket ids for this magic'); tl('Worst trade', money(s.maxLoss), signCls(s.maxLoss), 'Biggest single losing trade'); tl('Best trade', money(s.maxWin), signCls(s.maxWin), 'Biggest single winning trade');
     tl('Net ÷ drawdown', s.maxDD > 0 ? fmtNum(s.net / s.maxDD, 2) : '–', s.maxDD > 0 ? signCls(s.net) : '', 'Net result divided by the closed drawdown.');
-    if (isF) {   // per source trade the fader copied (first copies): what the fader made when the master lost / won
+    if (mode === 'faders') {   // per source trade the fader copied (first copies): what the fader made when the master lost / won
       let lN = 0, lM = 0, wN = 0, wM = 0, fL = 0, mL = 0, early = 0, cmpN = 0;   // matched pairs: first copy(ies) of one closed source trade
       for (const [, o] of rosParents(e, arr)) { const mn = o.src.net; if (!Number.isFinite(mn)) continue; if (mn < 0) { lN++; lM += mn; } else if (mn > 0) { wN++; wM += mn; } const ml = o.src.lots, fl = o.trades.reduce((a, t) => a + (t.lots || 0), 0); if (ml > 0 && fl > 0) { mL += ml; fL += fl; } if (Number.isFinite(o.src.closeTime)) { cmpN++; if (o.trades.every((t) => t.closeTime < o.src.closeTime)) early++; } }
       tl('Master lost $', money(lM), signCls(lM), 'Total of the master\'s LOSING trades among the ' + lN + ' source trades this fader copied (first copies, closed source trades). Compare it with what the fader made (Master made, Copy ratio).');
@@ -3804,7 +3803,7 @@ function rosterCard(e, arr, CB, mode, first) {
       tl('Closed before master', cmpN ? early + ' of ' + cmpN : '–', early ? 'neg' : '', 'Source trades where the fader\'s copy was already closed BEFORE the master trade closed (early close: stop ceiling, daily guard, or a manual close). Out of ' + cmpN + ' copied source trades with a known master close time.');
       { const mnet = lM + wM, rr = mnet !== 0 && (lN + wN) ? s.net / -mnet : NaN; tl('Fader net : Master net (matched)', Number.isFinite(rr) ? fmtNum(rr, 2) + ' : 1' : '–', Number.isFinite(rr) ? signCls(s.net) : '', 'Fader net (the Net tile) divided by the MINUS of Master net (matched), so that 1.00 : 1 is perfect: the fader made exactly what the master lost. Negative = the fader and the master both made or both lost money on the same source trades. Net includes extras; the master side counts first copies only.'); }
     }
-    if (isF) { tl('Master made', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Fader vs master', money(me.masterDiff), signCls(me.masterDiff), 'Fader (first copies + extras) + master alone'); tl('Copy ratio', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); }
+    if (mode === 'faders') { tl('Master made', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Fader vs master', money(me.masterDiff), signCls(me.masterDiff), 'Fader (first copies + extras) + master alone'); tl('Copy ratio', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); }
   } else {
     tl('Results', 'no closed trades in this selection', 'muted', '', true);
     if (mode === 'masters') tl('Followers in roster', String(e.fby ? e.fby.split(',').filter(Boolean).length : 0), '', 'Faders the roster lists as following this master magic. A configured follower may never have copied anything.', true);
