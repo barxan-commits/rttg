@@ -3530,7 +3530,7 @@ function rosterComparePanel(host, byAM) {
     }
   }
   sect('Settings');
-  const kvs = ents.map((e) => { const o = new Map(); o.set('EA version', e.b || 'not established'); o.set('What it does', e.d); o.set('Status', e.st ? e.st[0] : ''); if (e.p && e.p.length) o.set('Key settings', e.p.map((x) => x[0]).join(' · ')); if (e.src) o.set('Source master', e.src); if (e.fby) o.set('Followed by', e.fby); for (const [k, v] of e.k || []) o.set(k, v); return o; });
+  const kvs = ents.map((e, i) => { const o = new Map(); o.set('EA version', e.b || 'not established'); o.set('What it does', rosDescOf(e, arrs[i])); o.set('Status', e.st ? e.st[0] : ''); if (e.p && e.p.length) o.set('Key settings', e.p.map((x) => x[0]).join(' · ')); if (e.src) o.set('Source master', e.src); if (e.fby) o.set('Followed by', e.fby); for (const [k, v] of e.k || []) o.set(k, v); return o; });
   const klabels = []; for (const o of kvs) for (const k of o.keys()) if (!klabels.includes(k)) klabels.push(k);
   for (const k of klabels) { const vals = kvs.map((o) => o.get(k) || '–'); const diff = vals[0] !== vals[1]; const tr = el('tr'); tr.appendChild(el('td', null, k)); vals.forEach((v) => tr.appendChild(el('td', { class: 'ros-vals' + (diff ? ' ros-diff' : '') }, v))); tb.appendChild(tr); }
   const wrap = el('div', { class: 'tablewrap', style: 'margin-top:10px;max-height:none' }); wrap.appendChild(tbl); panel.appendChild(wrap);
@@ -3897,6 +3897,12 @@ function rosDetailSections(e, arr, moreTiles) {
   if (moreTiles.length) sec('More results', (b) => { const g = el('div', { class: 'ros-tiles' }); for (const t of moreTiles) g.appendChild(t); b.appendChild(g); });
   return wrap;
 }
+// the saved description says "No extra orders" when extras are OFF: say what was actually observed (used on the card and in Compare)
+function rosDescOf(e, arr) {
+  let desc = e.d || '';
+  if (e.r === 'FADER' && arr && arr.length) { const R0 = rosPairs(e, arr); if (R0.ext.n && !R0.cfgExtras) { const msg = R0.ext.n + ' extra-tagged (+#) order' + (R0.ext.n === 1 ? '' : 's') + ' observed; saved settings: extras OFF' + (e.pw ? '; pre-window repeat copies ON' : '') + '.'; desc = /No extra (orders|copies)\.?/i.test(desc) ? desc.replace(/No extra (orders|copies)\.?/i, msg) : (desc + ' ' + msg).trim(); } }
+  return desc;
+}
 const ROS_BACK = new Set(['Baskets', 'Extra orders', 'Master lost $', 'Master net (matched)', 'Matched first-copy net', 'Fader net : Master net (matched)', 'Unmatched orders', 'Unmatched profit', 'Links: verified / reconstructed', 'Lot ratio (first copies)', 'Lot ratio (extras)', 'Early TP wins', 'Early SL losses', 'Early EA/manual/unknown', 'Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown (closed)', 'Open P/L', 'First trade', 'Followers in roster', "Followers' first copies", "Followers' extras"]);
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
@@ -3968,9 +3974,7 @@ function rosterCard(e, arr, CB, mode, first) {
     let lc = NaN; for (const t of arr) if (!(t.closeTime <= lc)) lc = t.closeTime;
     tiles.appendChild(el('div', { class: 'ros-times muted', style: 'grid-column:1/-1' }, 'Closed results to ' + (Number.isFinite(lc) ? fmtTime(lc) : '–') + ' · account snapshot ' + (Number.isFinite(lastSn) ? fmtTime(lastSn) : '–') + ' · open positions as of ' + (om ? fmtTime(om.lastSeen) : '–') + ' (server time)')); }
   card.appendChild(tiles); if (arr.length) { const sp = el('div', { class: 'ros-spark', title: 'Cumulative net profit of this magic' }); sp.appendChild(rosSpark(arr)); card.appendChild(sp); }
-  { let desc = e.d || '';   // the saved description says "no extra orders" when extras are OFF: say what was actually observed
-    if (e.r === 'FADER' && arr.length) { const R0 = rosPairs(e, arr); if (R0.ext.n && !R0.cfgExtras) { const msg = R0.ext.n + ' extra-tagged (+#) order' + (R0.ext.n === 1 ? '' : 's') + ' observed; saved settings: extras OFF' + (e.pw ? '; pre-window repeat copies ON' : '') + '.'; desc = /No extra (orders|copies)\.?/i.test(desc) ? desc.replace(/No extra (orders|copies)\.?/i, msg) : (desc + ' ' + msg).trim(); } }
-    card.appendChild(el('p', { class: 'ros-desc' }, desc)); }
+  card.appendChild(el('p', { class: 'ros-desc' }, rosDescOf(e, arr)));
   if (e.p && e.p.length) { const pl = el('div', { class: 'ros-pills' }); for (const [t, c] of e.p) pl.appendChild(el('span', { class: 'badge' + (c === 'amber' ? ' stale' : '') }, t)); card.appendChild(pl); }
   const rel = (label, list, go) => { if (!list) return; const r = el('div', { class: 'ros-rel' }); r.appendChild(el('span', { class: 'muted' }, label)); for (const m of String(list).split(',').map((x) => x.trim()).filter(Boolean)) { const b = el('button', { type: 'button', class: 'cm-open', title: 'Show this magic in the dashboard' }, m); b.addEventListener('click', () => go(m)); r.appendChild(b); } card.appendChild(r); };
   rel('Source master', e.src, (m) => rosShow('', m)); rel('Followed by', e.fby, (m) => rosShow('', m));
