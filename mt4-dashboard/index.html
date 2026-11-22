@@ -3309,7 +3309,7 @@ function renderPeriods(host, T) {
    The descriptions and settings come from the research roster (embedded below, dated); the numbers are live from the loaded data. */
 const ROSTER = (() => { try { return JSON.parse(document.getElementById('rosterData').textContent); } catch (e) { return null; } })();
 // filters the user ticks in the Roster: measure -> { on, min, max }; remembered in this browser
-const ROS_MEAS = [['net', 'Net ($)'], ['dd', 'Max drawdown ($, as a positive amount)'], ['eff', 'Net ÷ max drawdown'], ['n', 'Trades'], ['win', 'Win %'], ['pf', 'Profit factor'], ['payoff', 'Avg win ÷ avg loss'], ['exp', 'Expectancy ($ per trade)'], ['cov', 'Coverage % (faders)'], ['diff', 'Difference $ (faders)'], ['lr', 'Fader net ÷ master loss (faders, 1 = perfect)']];
+const ROS_MEAS = [['net', 'Net ($)'], ['dd', 'Max drawdown ($, as a positive amount)'], ['eff', 'Net ÷ max drawdown'], ['n', 'Trades'], ['win', 'Win %'], ['pf', 'Profit factor'], ['payoff', 'Avg win ÷ avg loss'], ['exp', 'Expectancy ($ per trade)'], ['cov', 'Coverage % (faders)'], ['diff', 'Difference $ (faders)'], ['lr', 'Fader net ÷ minus Master net (matched) (faders, 1 = perfect)']];
 function loadRosFlt() { try { const v = JSON.parse(localStorage.getItem('mt4dash-rosflt') || '{}'); return v && typeof v === 'object' ? v : {}; } catch (e) { return {}; } }
 function saveRosFlt() { try { localStorage.setItem('mt4dash-rosflt', JSON.stringify(ROS.flt)); } catch (e) { /* storage unavailable */ } }
 const ROS = { mode: 'masters', q: '', term: '', sort: 'net', only: '', hasTrades: false, limit: 48, mf: '', cmp: [], flt: loadRosFlt(), fltOpen: false };
@@ -3582,7 +3582,7 @@ function rosFollowTable(e) {
 }
 // ================= Roster: deeper analysis under "Details & settings" =================
 // fader net divided by the master's losses on the source trades it copied (first copies); 1 = perfect. NaN when the master had no losses among them
-function rosLossRatio(e, arr) { let lM = 0; for (const [, o] of rosParents(e, arr)) if (Number.isFinite(o.src.net) && o.src.net < 0) lM += o.src.net; return lM < 0 ? arr.reduce((a, t) => a + t.net, 0) / -lM : NaN; }
+function rosLossRatio(e, arr) { let mn = 0, any = false; for (const [, o] of rosParents(e, arr)) if (Number.isFinite(o.src.net)) { mn += o.src.net; any = true; } return any && mn !== 0 ? arr.reduce((a, t) => a + t.net, 0) / -mn : NaN; }   // fader net ÷ (minus the master net on the same source trades): 1 = the fader made exactly what the master lost
 const rosSecDays = (arr) => { const d = new Set(); for (const t of arr) d.add(Math.floor(t.closeTime / DAY)); return d.size; };
 const rosKVof = (e, key) => { for (const [k, v] of e.k || []) if (k === key) return v; return ''; };
 // maximum simultaneous orders and lots (trade intervals; still open positions have no end)
@@ -3751,7 +3751,7 @@ function rosDetailSections(e, arr, moreTiles) {
   if (moreTiles.length) sec('More results', (b) => { const g = el('div', { class: 'ros-tiles' }); for (const t of moreTiles) g.appendChild(t); b.appendChild(g); });
   return wrap;
 }
-const ROS_BACK = new Set(['Master lost $', 'Master net (matched)', 'Lot ratio fader : master', 'Closed before master', 'Fader net : master loss', 'Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown (closed)', 'Open P/L', 'First trade', 'Followers in roster', "Followers' first copies", "Followers' extras"]);
+const ROS_BACK = new Set(['Master lost $', 'Master net (matched)', 'Lot ratio fader : master', 'Closed before master', 'Fader net : Master net (matched)', 'Avg win', 'Avg loss', 'Worst basket', 'Best basket', 'Worst trade', 'Best trade', 'Max drawdown (closed)', 'Open P/L', 'First trade', 'Followers in roster', "Followers' first copies", "Followers' extras"]);
 function rosterCard(e, arr, CB, mode, first) {
   const card = el('article', { class: 'ros-card' });
   const top = el('div', { class: 'ros-top' }); const ti = el('div');
@@ -3801,7 +3801,7 @@ function rosterCard(e, arr, CB, mode, first) {
       tl('Master net (matched)', money(lM + wM), signCls(lM + wM), 'Net of the ' + (lN + wN) + ' source trades this fader copied (first copies, closed source trades): losing trades ' + money(lM) + ' (' + lN + ') + winning trades ' + money(wM) + ' (' + wN + '). Compare with this fader\'s Net.');
       tl('Lot ratio fader : master', mL > 0 ? fmtNum(fL / mL, 2) + ' : 1' : '–', '', 'Effective lot size: lots the fader opened on its first copies divided by the lots of the master trades they copied (' + fmtNum(fL, 2) + ' / ' + fmtNum(mL, 2) + '). 1.00 : 1 = same size as the master.');
       tl('Closed before master', cmpN ? early + ' of ' + cmpN : '–', early ? 'neg' : '', 'Source trades where the fader\'s copy was already closed BEFORE the master trade closed (early close: stop ceiling, daily guard, or a manual close). Out of ' + cmpN + ' copied source trades with a known master close time.');
-      tl('Fader net : master loss', lM < 0 ? fmtNum(s.net / -lM, 2) + ' : 1' : '–', lM < 0 ? signCls(s.net) : '', 'Fader net (the Net tile) divided by the master\'s losses on the trades it copied (Master lost $). 1.00 : 1 is perfect: the fader earned exactly what the master lost. Below 1 the fader kept less than the master lost.');
+      { const mnet = lM + wM, rr = mnet !== 0 && (lN + wN) ? s.net / -mnet : NaN; tl('Fader net : Master net (matched)', Number.isFinite(rr) ? fmtNum(rr, 2) + ' : 1' : '–', Number.isFinite(rr) ? signCls(s.net) : '', 'Fader net (the Net tile) divided by the MINUS of Master net (matched), so that 1.00 : 1 is perfect: the fader made exactly what the master lost. Negative = the fader and the master both made or both lost money on the same source trades. Net includes extras; the master side counts first copies only.'); }
     }
     if (mode === 'faders') { tl('Master made', money(me.master), signCls(me.master), 'What the copied master trades made'); tl('Fader vs master', money(me.masterDiff), signCls(me.masterDiff), 'Fader (first copies + extras) + master alone'); tl('Copy ratio', Number.isFinite(me.mratio) ? C.mratio.f(me.mratio) : '–', '', C.mratio.title); }
   } else {
