@@ -465,6 +465,7 @@ table.ros-sub tr.tot td { font-weight: 600; background: var(--surface-2); }
     </div>
     <div id="chips" class="chips" hidden></div>
     <div id="warn" class="warn" hidden></div>
+    <div id="dataChange" class="warn" hidden></div>
     <div class="kpis" id="kpis"></div>
 
     <div class="grid2">
@@ -1030,6 +1031,7 @@ async function loadSources(files) {
   else DB.loadWarning = '';
   if (!KEEP_FILTERS) resetFilters(false);
   KEEP_FILTERS = false;
+  guardCheck(files.map((f) => f.name));
   buildFilterOptions();
   render();
 }
@@ -1427,6 +1429,39 @@ function currencyNote(T) {
   if (set.size === 1) return ' (' + [...set][0] + ')';
   return '';
 }
+/* ---------------- data-change guard ----------------
+   Every Google Drive load is compared with the last ACCEPTED one. If data files disappeared or an account has fewer trades, a banner lists exactly what,
+   until you press "Accept this state". Nothing is deleted by the dashboard; this only makes a loss visible. */
+const BASE_KEY = 'mt4dash-baseline';
+function baseRead() { try { const v = JSON.parse(localStorage.getItem(BASE_KEY) || 'null'); return v && Array.isArray(v.files) ? v : null; } catch (e) { return null; } }
+function baseWrite(b) { try { localStorage.setItem(BASE_KEY, JSON.stringify(b)); } catch (e) { /* storage unavailable */ } }
+function guardSnapshot(names) {
+  const acc = {}; for (const t of DB.trades) acc[t.account] = (acc[t.account] || 0) + 1;
+  return { at: Date.now(), files: names.filter((n) => /^(archive_)?(trades|equity)_/i.test(n)).sort(), trades: DB.trades.length, acc };
+}
+function guardCheck(names) {
+  const box = document.getElementById('dataChange'); if (box) { box.hidden = true; box.textContent = ''; }
+  DATA_CHANGE = null;
+  if (SOURCE.kind !== 'drive' || DB.files.some((f) => f.kind === 'failed')) return;   // only a complete Drive load is comparable
+  const cur = guardSnapshot(names), base = baseRead();
+  if (!base) { baseWrite(cur); return; }
+  const have = new Set(cur.files), gone = base.files.filter((n) => !have.has(n));
+  const less = []; for (const a of Object.keys(base.acc || {})) { const c = cur.acc[a] || 0; if (c < base.acc[a]) less.push({ account: a, from: base.acc[a], to: c }); }
+  if (!gone.length && !less.length) { baseWrite(cur); return; }   // nothing lost: the baseline moves forward
+  less.sort((x, y) => (y.from - y.to) - (x.from - x.to));
+  DATA_CHANGE = { cur, base, gone, less };
+  if (!box) return; box.hidden = false;
+  const drop = base.trades - cur.trades;
+  box.appendChild(el('strong', null, 'Data changed since the last accepted load (' + new Date(base.at).toLocaleString('en-GB') + '): '));
+  box.appendChild(document.createTextNode((gone.length ? gone.length + ' data file(s) are gone' : '') + (gone.length && less.length ? ' and ' : '') + (less.length ? less.length + ' account(s) have fewer trades' : '') + ' (' + base.trades.toLocaleString('en-US') + ' → ' + cur.trades.toLocaleString('en-US') + ' closed trades' + (drop > 0 ? ', ' + drop.toLocaleString('en-US') + ' fewer' : '') + '). Nothing was deleted by this page: the build on the VPS no longer produced them. '));
+  const det = el('details', { style: 'margin-top:4px' }); det.appendChild(el('summary', null, 'Show what changed'));
+  if (less.length) { const ul = el('ul'); for (const x of less.slice(0, 40)) ul.appendChild(el('li', null, 'Account ' + x.account + ': ' + x.from.toLocaleString('en-US') + ' → ' + x.to.toLocaleString('en-US') + ' trades')); det.appendChild(el('div', null, 'Accounts with fewer trades:')); det.appendChild(ul); }
+  if (gone.length) { const ul = el('ul'); for (const n of gone.slice(0, 60)) ul.appendChild(el('li', null, n)); det.appendChild(el('div', null, 'Files that are gone:')); det.appendChild(ul); }
+  det.appendChild(el('div', { class: 'muted' }, 'The daily snapshot in _DASHBOARD_BACKUP still has them. Copy the missing files back into _DASHBOARD as archive_<name>.'));
+  box.appendChild(det);
+  const ok = el('button', { type: 'button', class: 'btn small', style: 'margin-top:6px' }, 'Accept this state'); ok.addEventListener('click', () => { baseWrite(cur); box.hidden = true; box.textContent = ''; DATA_CHANGE = null; }); box.appendChild(ok);
+}
+let DATA_CHANGE = null;
 function renderWarnings(T) {
   const w = $('#warn'); const msgs = [];
   const cur = new Set(T.map((t) => t.currency).filter(Boolean));
