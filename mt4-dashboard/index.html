@@ -3666,7 +3666,7 @@ function rosPairs(e, arr) {
 function rosNetBridge(R) {
   const B = { inverseMasterNet: 0, lotEffect: 0, masterCosts: 0, faderCosts: 0,
     entryEffect: 0, exitEffect: 0, otherGrossEffect: 0, result: 0,
-    observed: R.fnet, residual: 0, pairs: 0, invalid: 0, inferred: 0 };
+    mismatch: 0, observed: R.fnet, residual: 0, pairs: 0, invalid: 0, inferred: 0 };
   const finite = (...v) => v.every(Number.isFinite);
   for (const o of R.parents.values()) {
     const p = o.src, cc = o.trades;
@@ -3675,6 +3675,7 @@ function rosNetBridge(R) {
       B.invalid += cc.length; continue;
     }
     if (o.link !== 'verified') B.inferred += cc.length;
+    for (const r of [p].concat(cc)) if (Math.abs(r.net - (r.profit + r.commission + r.swap)) > 0.011) B.mismatch++;
     const totalRatio = cc.reduce((v,c) => v + c.lots/p.lots,0);
     B.inverseMasterNet -= p.net;
     B.lotEffect += (1-totalRatio)*p.profit;
@@ -3710,9 +3711,10 @@ const ROS_BRIDGE_ROWS = [
   ['Exit fill price effect','exitEffect'],
   ['Other gross / currency effect and rounding','otherGrossEffect'],
   ['Reconciled matched fader net','result'],
-  ['Unexplained cash residual','residual']
+  ['Unexplained cash residual','residual'],
+  ['Data check','check']
 ];
-function rosBridgeValue(B,k) { return B && B.valid ? money(Math.abs(B[k])<0.0000001?0:B[k]) : 'Unavailable: missing lots or cash fields'; }
+function rosBridgeValue(B,k) { if (k === 'check') return B && B.valid ? (B.mismatch ? 'Net does not equal profit + commission + swap (' + B.mismatch + ' record' + (B.mismatch === 1 ? '' : 's') + '). The residual is kept as it is, not forced to zero.' : 'Net equals profit + commission + swap in every record') : '–'; return B && B.valid ? money(Math.abs(B[k])<0.0000001?0:B[k]) : 'Unavailable: missing lots or cash fields'; }
 
 function rosParents(e, arr) { return rosPairs(e, arr).parents; }
 function rosLossRatio(e, arr) { return rosPairs(e, arr).ratio; }
@@ -4149,8 +4151,12 @@ function rosEmptyWhy(fam, magic) {
 function rosFamArmData(fam, arm, byAM, win, model, winH, pairWhy) {
   const fe = rosFindAM(fam.a, arm.fm, ['faders']), me = rosFindAM(fam.a, arm.mm, ['masters', 'copiers']);
   const clip = (a) => (win ? a.filter((t) => t.closeTime >= win[0] && t.closeTime <= win[1]) : a);
-  const f0 = clip(byAM.get(fam.a + '|' + arm.fm) || []), m0 = clip(byAM.get(fam.a + '|' + arm.mm) || []); const fArr = model ? rosModel(f0) : f0;
-  const D = { arm, fe, me, fArr, mArr: m0, empty: !fArr.length, sm: m0.length ? stats(m0) : null };
+  // carried-in: closed inside the window but OPENED before it. They are kept out of the numbers and listed on their own rows
+  const carried = (t) => win && win[0] > -Infinity && win[0] < Infinity && Number.isFinite(t.openTime) && t.openTime < win[0];
+  const fW = clip(byAM.get(fam.a + '|' + arm.fm) || []), mW = clip(byAM.get(fam.a + '|' + arm.mm) || []);
+  const f0 = fW.filter((t) => !carried(t)), m0 = mW.filter((t) => !carried(t)); const fArr = model ? rosModel(f0) : f0;
+  const sumN = (a) => ({ n: a.length, net: a.reduce((v, t) => v + t.net, 0) });
+  const D = { arm, fe, me, fArr, mArr: m0, empty: !fArr.length, sm: m0.length ? stats(m0) : null, fCarry: sumN(fW.filter(carried)), mCarry: sumN(mW.filter(carried)) };
   // historical master performance: the whole selected history of the master, independent of when (or whether) a fader was deployed on it
   const mAll = byAM.get(fam.a + '|' + arm.mm) || []; const mH = winH ? mAll.filter((t) => t.closeTime >= winH[0] && t.closeTime <= winH[1]) : mAll; D.smH = mH.length ? stats(mH) : null; D.mHn = mH.length;
   D.mHWhy = mH.length ? '' : rosEmptyWhy(fam, arm.mm);
@@ -4174,12 +4180,12 @@ function rosFamilyTable(fam, arms, byAM) {
   const obs = arms.map((a) => { const t = rosAllAM().get(fam.a + '|' + a.fm) || []; return t.length ? Math.min(...t.map((x) => (Number.isFinite(x.openTime) ? x.openTime : x.closeTime))) : NaN; }).filter(Number.isFinite);
   const depStart = Number.isFinite(depUser) ? depUser : obs.length ? Math.max(...obs) : NaN, depKind = Number.isFinite(depUser) ? 'entered by you' : obs.length ? 'observed: first trade of the arm that started last, a lower bound and not a verified deployment time' : 'unknown';
   let win = null, pairWhy = '';
-  if (!Number.isFinite(depStart)) pairWhy = 'Pair not deployed yet (no deployment start known and no fader trades)';
+  if (!Number.isFinite(depStart)) pairWhy = 'Deployment time unknown; no trades observed';
   else { const lo = H ? Math.max(H[0], depStart) : depStart, hi = H ? H[1] : Infinity; if (lo <= hi) win = [lo, hi]; else pairWhy = 'No loaded data since pair deployment (' + fmtTime(depStart) + ')'; }
   const NOWIN = [Infinity, -Infinity];   // an empty window: nothing clips in
   const D = arms.map((a) => rosFamArmData(fam, a, byAM, win || NOWIN, model, H, pairWhy));
   const wrap = el('div', { class: 'fam-wrap' });
-  wrap.appendChild(el('p', { class: 'sub' }, 'MASTER HISTORY window: ' + (H ? fmtTime(H[0]) + ' → ' + fmtTime(H[1]) : ROSF.dates === 'common' ? (note || 'none') : 'the dates selected at the top') + '. PAIR window (since the master–fader pair was deployed): ' + (win ? fmtTime(win[0]) + ' → ' + (Number.isFinite(win[1]) ? fmtTime(win[1]) : 'now') : pairWhy) + '. Deployment start: ' + depKind + '. Server time. The history says how the master did before and without the faders; only the pair window is evidence for the master–fader pair.' + (model ? ' FADER RESULTS ARE MODELED (Live1). Per order: lots = ' + LIVE1.mult + '× that fader order\'s own lots (master lots are not used), rounded down to the ' + LIVE1.step + ' lot step, then at least ' + LIVE1.min + ' and at most ' + LIVE1.max + '; that order\'s result (profit, commission and swap) is scaled by modeled lots ÷ actual lots. Net, profit factor, averages and drawdown are then recalculated from the individual modeled orders, not from scaled totals. Master results and the floating drawdown are not modeled.' : ' Actual lots.')));
+  wrap.appendChild(el('p', { class: 'sub' }, 'MASTER HISTORY window: ' + (H ? fmtTime(H[0]) + ' → ' + fmtTime(H[1]) : ROSF.dates === 'common' ? (note || 'none') : 'the dates selected at the top') + '. PAIR window (since the master–fader pair was deployed): ' + (win ? fmtTime(win[0]) + ' → ' + (Number.isFinite(win[1]) ? fmtTime(win[1]) : 'now') : pairWhy) + '. Deployment start: ' + depKind + '. Server time. The master history covers all the selected dates, including any period after deployment, so it is not evidence for the master–fader pair; only the pair window is.' + (model ? ' FADER RESULTS ARE MODELED (Live1). Per order: lots = ' + LIVE1.mult + '× that fader order\'s own lots (master lots are not used), rounded down to the ' + LIVE1.step + ' lot step, then at least ' + LIVE1.min + ' and at most ' + LIVE1.max + '; that order\'s result (profit, commission and swap) is scaled by modeled lots ÷ actual lots. Net, profit factor, averages and drawdown are then recalculated from the individual modeled orders, not from scaled totals. Master results and the floating drawdown are not modeled.' : ' Actual lots.')));
   const tw = el('div', { class: 'tablewrap fam-scroll' }); const tbl = el('table', { class: 'fam-table' }); tw.appendChild(tbl); wrap.appendChild(tw);
   const hr = el('tr'); hr.appendChild(el('th', null, '')); D.forEach((d) => { const th = el('th', { class: 'num' }); th.appendChild(el('div', { class: 'fam-h1' }, /^MASTER_PROFIT_CAP/.test(fam.sc) && d.arm.cap ? 'Master cap ' + ((d.arm.cap[0] === 'ON' || d.arm.cap[1] === true) ? '$' + (d.arm.cap[2] || d.arm.cap[3]) : d.arm.cap[0] === 'OFF' ? 'OFF' : d.arm.cap[0] === 'NOT_IMPLEMENTED' ? 'n/a' : '?') : d.arm.l)); th.appendChild(el('div', { class: 'muted', style: 'font-weight:400' }, 'master ' + d.arm.mm + ' → fader ' + d.arm.fm)); hr.appendChild(th); });
   tbl.appendChild(el('thead')).appendChild(hr); const tb = el('tbody'); tbl.appendChild(tb);
@@ -4194,13 +4200,14 @@ function rosFamilyTable(fam, arms, byAM) {
   row('Heartbeat in the loaded logs', (d) => rosHbTxt(d.fe), 'Experts-log evidence (log clock), separate from the roster file', null, true);
   row('Observed trade span (first open → last close; not the operating period)', (d) => { const a = rosAllAM().get(fam.a + '|' + d.arm.fm) || []; if (!a.length) return d.why || rosEmptyWhy(fam, d.arm.fm); return fmtTime(Math.min(...a.map((t) => (Number.isFinite(t.openTime) ? t.openTime : t.closeTime)))) + ' → ' + fmtTime(Math.max(...a.map((t) => t.closeTime))); }, 'Information only: first open to last close of every loaded trade of this fader (server time), ignoring the dashboard filters. It shows what traded, not when the EA was running, and it is NOT used for the comparison window.', null, true);
   if (wantM) {
-    sect('MASTER HISTORY — before and independent of the faders (not evidence for the pair)');
+    sect('Master history — selected dates');
     row('Historical master net, all closed trades', (d) => (d.smH ? money(d.smH.net) : d.mHWhy || 'no master trades'), 'Every closed master trade in the history window, whether or not a fader was copying it', (d) => (d.smH ? signCls(d.smH.net) : ''), true);
     row('Historical master trades · win %', (d) => (d.smH ? d.smH.n + ' · ' + pct(d.smH.winRate) : '–'), '', null, true); row('Historical master profit factor', (d) => (d.smH ? ratio(d.smH.pf) : '–'), '', null, true);
     row('Historical master closed drawdown', (d) => (d.smH ? (d.smH.maxDD > 0 ? money(-d.smH.maxDD) : money(0)) : '–'), '', (d) => (d.smH ? signCls(-d.smH.maxDD) : ''), true);
   }
   if (wantF) {
     sect('SINCE PAIR DEPLOYMENT — fader results' + mtag + (win ? '' : ' (no pair window)'));
+    row('Carried-in fader orders (opened before the window start, closed inside it): count · net' + mtag, (d) => d.fCarry.n + ' · ' + money(d.fCarry.net), 'Excluded from the fader numbers in this section; shown so they are not hidden', (d) => signCls(d.fCarry.net), true);
     row('Fader net, all orders' + mtag, (d) => money(d.s.net), '', (d) => signCls(d.s.net), false, true);
     row('Matched first-copy net' + mtag, (d) => (d.R && d.R.parents.size ? money(d.R.fnet) : '–'), 'First copies of master trades that are linked to a closed source trade', (d) => (d.R ? signCls(d.R.fnet) : ''));
     row('Matched master net', (d) => (d.R && d.R.parents.size ? money(d.R.mnet) : '–'), 'Same matched trades, actual master lots (not modeled)', (d) => (d.R ? signCls(d.R.mnet) : ''));
@@ -4222,7 +4229,8 @@ function rosFamilyTable(fam, arms, byAM) {
     row('Early TP wins · SL losses · other', (d) => (d.R ? d.R.early.first.tp.ord + ' · ' + d.R.early.first.sl.ord + ' · ' + d.R.early.first.oth.ord : '–'), 'First copies closed before the master closed');
   }
   if (wantM) {
-    sect('SINCE PAIR DEPLOYMENT — master results on the same window (actual lots, not modeled)');
+    sect('SINCE PAIR DEPLOYMENT — master results on the same window, carried-in positions listed separately (actual lots, not modeled)');
+    row('Carried-in master trades (opened before the window start, closed inside it): count · net', (d) => d.mCarry.n + ' · ' + money(d.mCarry.net), 'Excluded from the master numbers on this section; shown so they are not hidden', (d) => signCls(d.mCarry.net), true);
     row('Master net since pair deployment', (d) => (d.sm ? money(d.sm.net) : d.mWhy || 'no master trades'), '', (d) => (d.sm ? signCls(d.sm.net) : ''), true);
     row('Master trades · win % since deployment', (d) => (d.sm ? d.sm.n + ' · ' + pct(d.sm.winRate) : '–'), '', null, true); row('Master profit factor since deployment', (d) => (d.sm ? ratio(d.sm.pf) : '–'), '', null, true); row('Master closed drawdown since deployment', (d) => (d.sm ? (d.sm.maxDD > 0 ? money(-d.sm.maxDD) : money(0)) : '–'), '', (d) => (d.sm ? signCls(-d.sm.maxDD) : ''), true);
   }
