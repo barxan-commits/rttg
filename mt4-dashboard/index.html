@@ -720,6 +720,7 @@ function ingestTrades(rows, file, report) {
       magic: S(g(r, 'magic') || '0'), comment: S(comment), base: S(base),
       exit: S(normExit(g(r, 'exit_reason'), comment)),
       profit, commission, swap, net,
+      cashValid: ['profit','commission','swap'].every(k => g(r,k)!=='' && Number.isFinite(num(g(r,k)))),
       duration: num(g(r, 'duration_seconds')),
       avgSpread: num(g(r, 'avg_spread_points')), maxSpread: num(g(r, 'max_spread_points')),
       mfe: num(g(r, 'mfe_points')), mae: num(g(r, 'mae_points')),
@@ -3657,8 +3658,62 @@ function rosPairs(e, arr) {
   R.total = R.fnet + R.preNet + R.unm.net + R.ext.net + R.other.net;   // everything the reconciliation lists: must equal the Net of the arr passed in
   R.ratio = R.parents.size && R.mnet !== 0 ? R.fnet / -R.mnet : NaN;   // the same matched trades on both sides; 1 = the fader made exactly what the master lost
   R.lotRatio = R.mlots > 0 && R.flots > 0 ? R.flots / R.mlots : NaN; R.extLotRatio = R.extMlots > 0 && R.ext.lotsLinked > 0 ? R.ext.lotsLinked / R.extMlots : NaN;
+  R.bridge = rosNetBridge(R);
   return R;
 }
+// Cash reconciliation for precisely the parent/child population in rosPairs.
+// Parent costs occur once per parent. Child exposure can be unequal or repeated.
+function rosNetBridge(R) {
+  const B = { inverseMasterNet: 0, lotEffect: 0, masterCosts: 0, faderCosts: 0,
+    entryEffect: 0, exitEffect: 0, otherGrossEffect: 0, result: 0,
+    observed: R.fnet, residual: 0, pairs: 0, invalid: 0, inferred: 0 };
+  const finite = (...v) => v.every(Number.isFinite);
+  for (const o of R.parents.values()) {
+    const p = o.src, cc = o.trades;
+    if (!(p.lots > 0) || !finite(p.net, p.profit, p.commission, p.swap) || p.cashValid === false ||
+        cc.some(c => !(c.lots > 0) || c.cashValid === false || (c._m && c._m.noLots) || !finite(c.net,c.profit,c.commission,c.swap))) {
+      B.invalid += cc.length; continue;
+    }
+    if (o.link !== 'verified') B.inferred += cc.length;
+    const totalRatio = cc.reduce((v,c) => v + c.lots/p.lots,0);
+    B.inverseMasterNet -= p.net;
+    B.lotEffect += (1-totalRatio)*p.profit;
+    B.masterCosts += p.commission+p.swap;
+    for (const c of cc) {
+      const r=c.lots/p.lots, gross=c.profit+r*p.profit;
+      B.faderCosts += c.commission+c.swap; B.pairs++;
+      // Split price geometry only for verified EURUSD/USD 100k contract rows.
+      // Otherwise preserve the combined gross/currency amount without inventing pip values.
+      const d=p.type==='BUY'?1:-1;
+      const geometry=p.symbol==='EURUSD' && c.symbol===p.symbol && p.currency==='USD' && c.currency==='USD' &&
+        finite(p.openPrice,p.closePrice,c.openPrice,c.closePrice) && c.type!==p.type &&
+        Math.abs(p.profit-d*(p.closePrice-p.openPrice)*p.lots*100000)<0.011 &&
+        Math.abs(c.profit+d*(c.closePrice-c.openPrice)*c.lots*100000)<0.011;
+      if (geometry) {
+        const en=d*c.lots*100000*(c.openPrice-p.openPrice);
+        const ex=d*c.lots*100000*(p.closePrice-c.closePrice);
+        B.entryEffect+=en; B.exitEffect+=ex; B.otherGrossEffect+=gross-en-ex;
+      } else B.otherGrossEffect+=gross;
+    }
+  }
+  B.result=B.inverseMasterNet+B.lotEffect+B.masterCosts+B.faderCosts+B.entryEffect+B.exitEffect+B.otherGrossEffect;
+  B.residual=B.observed-B.result;
+  B.valid=B.invalid===0 && B.pairs>0;
+  return B;
+}
+const ROS_BRIDGE_ROWS = [
+  ['Negative matched master net (starting reference)','inverseMasterNet'],
+  ['Lot sizing / repeated-copy effect','lotEffect'],
+  ['Master commission + swap (not reversed)','masterCosts'],
+  ['Fader commission + swap','faderCosts'],
+  ['Entry fill price effect','entryEffect'],
+  ['Exit fill price effect','exitEffect'],
+  ['Other gross / currency effect and rounding','otherGrossEffect'],
+  ['Reconciled matched fader net','result'],
+  ['Unexplained cash residual','residual']
+];
+function rosBridgeValue(B,k) { return B && B.valid ? money(Math.abs(B[k])<0.0000001?0:B[k]) : 'Unavailable: missing lots or cash fields'; }
+
 function rosParents(e, arr) { return rosPairs(e, arr).parents; }
 function rosLossRatio(e, arr) { return rosPairs(e, arr).ratio; }
 const rosEarlyTxt = (a) => a.ord + ' (≤' + EARLY_SEC + 's ' + a.s5 + ' · >' + EARLY_SEC + 's ' + a.l5 + ')';
@@ -3678,6 +3733,8 @@ function rosSecMatched(e, arr, box) {
     box.appendChild(rosMini([{ l: '' }, { l: 'Orders', num: 1 }, { l: 'Net', num: 1 }], rr));
     box.appendChild(el('p', { class: 'hint' }, 'Every closed order of this magic in the selected dates is in exactly one row, so the rows add up to the Net tile. Orders outside the selected dates are not in the Net tile at all.'));
     box.appendChild(el('h4', null, 'Matched trades, extras and pre-window copies')); }
+  box.appendChild(el('h4',null,'Why matched fader net differs from negative master net'));
+  box.appendChild(rosMini([{l:'Component'},{l:'USD',num:1}],ROS_BRIDGE_ROWS.map(([label,k])=>({cells:[label,rosBridgeValue(R.bridge,k)]}))));
   const par = (name, list, tip) => rows.push({ cells: [name, sm(list, 'n'), list.length, { t: money(sm(list, 'net')), c: signCls(sm(list, 'net')) }, { t: money(mnV(list)), c: signCls(mnV(list)) }, fmtNum(sm(list, 'lots'), 2), fmtNum(list.reduce((a, o) => a + (o.src.lots || 0), 0), 2), fr(sm(list, 'lots'), list.reduce((a, o) => a + (o.src.lots || 0), 0))] });
   par('First copies · verified links', R.ver); par('First copies · reconstructed links', R.rec); par('All matched first copies', [...R.parents.values()]);
   const pre = [...R.pre.values()]; if (pre.length) par('Pre-window first copies (source opened before the selected dates)', pre);
@@ -3743,7 +3800,10 @@ function rosReviewRows(ents, arrs) {
   add('Master trades matched', R.map((r) => String(r.parents.size)));
   add('Matched master net', R.map((r) => (r.parents.size ? money(r.mnet) : '–')), 'Net of the master trades that BOTH sides of the matching use', R.map((r) => signCls(r.mnet)));
   add('Matched first-copy net', R.map((r) => (r.parents.size ? money(r.fnet) : '–')), 'First copies of exactly those master trades; extras and unmatched orders are NOT in this number', R.map((r) => signCls(r.fnet)));
-  add('Fader net ÷ negative master net (matched)', R.map((r) => (Number.isFinite(r.ratio) ? fmtNum(r.ratio, 2) + ' : 1' : '–')), 'Matched first-copy net ÷ negative master net, same matched trades. 1.00 : 1 = perfect; a negative value = fader and master both won or both lost.');
+  add('Fader net ÷ negative master net (matched)', R.map((r) => (Number.isFinite(r.ratio) ? fmtNum(r.ratio, 2) + ' : 1' : '–')), 'Matched first-copy net ÷ negative master net, same matched trades. 1.00 : 1 = equal and opposite net totals, not copy accuracy; a negative value = fader and master both won or both lost.');
+  add('Why matched fader net differs from negative master net', ['', ''], '', null, true);
+  for (const [label,k] of ROS_BRIDGE_ROWS) add(label, R.map(r => rosBridgeValue(r.bridge,k)), 'Same matched source trades. Prices include spread, timing and exit differences; not a pure spread estimate.');
+  add('Bridge links: verified / reconstructed', R.map(r => r.ver.length+' / '+r.rec.length));
   add('Average win / average loss', SM.map((s) => (s ? money(s.avgWin) + ' / ' + money(s.avgLoss) : '–')), 'Same matched first-copy orders as the net above, common dates');
   add('Closed drawdown', SM.map((s) => (s ? (s.maxDD > 0 ? money(-s.maxDD) : money(0)) : '–')), 'Closed matched first-copy orders only, common dates. Floating loss is not included.', SM.map((s) => (s ? signCls(-s.maxDD) : '')));
   add('Not in the matched numbers — scope: common dates', ['', ''], '', null, true);
@@ -3961,7 +4021,7 @@ function rosterCard(e, arr, CB, mode, first) {
       tl('Master lost $', money(R.mlost), signCls(R.mlost), 'Total of the master\'s LOSING trades among the ' + R.lostN + ' matched source trades (first copies with a linked closed source trade).');
       tl('Master net (matched)', money(R.mnet), signCls(R.mnet), 'Net of the ' + np + ' matched source trades: losing ' + money(R.mlost) + ' (' + R.lostN + ') + winning ' + money(R.mwon) + ' (' + R.wonN + ').');
       tl('Matched first-copy net', np ? money(R.fnet) : '–', np ? signCls(R.fnet) : '', 'What the fader\'s FIRST copies made on exactly those ' + np + ' matched source trades (' + R.fN + ' orders). Extras, pre-window copies and unmatched orders are not in this number.');
-      tl('Fader net ÷ negative master net (matched)', Number.isFinite(R.ratio) ? fmtNum(R.ratio, 2) + ' : 1' : '–', Number.isFinite(R.ratio) ? signCls(R.fnet) : '', 'Matched first-copy net ÷ NEGATIVE master net (matched), the same trades on both sides: fader net divided by (0 − master net). Example: master net −5.00 and fader net +73.00 give 73 ÷ 5 = 14.6. 1.00 : 1 is perfect: the fader made exactly what the master lost. A NEGATIVE value means the fader and the master both made money, or both lost money, on those trades (they did not offset each other).');
+      tl('Fader net ÷ negative master net (matched)', Number.isFinite(R.ratio) ? fmtNum(R.ratio, 2) + ' : 1' : '–', Number.isFinite(R.ratio) ? signCls(R.fnet) : '', 'Matched first-copy net ÷ NEGATIVE master net (matched), the same trades on both sides: fader net divided by (0 − master net). Example: master net −5.00 and fader net +73.00 give 73 ÷ 5 = 14.6. 1.00 : 1 means equal and opposite net totals: the fader made exactly what the master lost. A NEGATIVE value means the fader and the master both made money, or both lost money, on those trades (they did not offset each other).');
       tl('Unmatched orders', String(R.unm.n), R.unm.n ? 'neg' : '', 'First-copy orders left out of the matched numbers: ' + R.unm.noRef.n + ' without a parent ticket in the comment, ' + R.unm.gone.n + ' whose parent trade is not in the loaded data. Their profit is in the next tile.');
       tl('Unmatched profit', money(R.unm.net), signCls(R.unm.net), 'Profit of those ' + R.unm.n + ' unmatched first-copy orders (' + money(R.unm.noRef.net) + ' no parent ticket, ' + money(R.unm.gone.net) + ' parent not in the data). It is part of the Net tile but not of the matched numbers.');
       tl('Links: verified / reconstructed', R.ver.length + ' / ' + R.rec.length, R.rec.length ? 'neg' : '', 'Master links (distinct master trades) whose parent ticket points to exactly one trade of a roster source magic (verified) / that had to be picked among several accounts or magics (reconstructed).');
@@ -4050,7 +4110,7 @@ function rosModel(arr) {
     const base = t.lots;   // Live1 copies the FADER order, so the base is that order's own lots (first copy, extra or pre-window alike), never the master's
     const raw = base * LIVE1.mult, stepped = Math.floor(raw / LIVE1.step + 1e-9) * LIVE1.step;   // 0.20x of the source lots, then the lot step
     const nl = Math.round(Math.min(LIVE1.max, Math.max(LIVE1.min, stepped)) * 100) / 100; const k = t.lots > 0 ? nl / t.lots : 1;   // then min / max
-    return Object.assign({}, t, { lots: nl, net: t.net * k, _m: { from: t.lots, to: nl, lo: stepped < LIVE1.min - 1e-9, hi: stepped > LIVE1.max + 1e-9, noLots: !(t.lots > 0) } });   // each order is re-sized and scaled on its own; every statistic is recomputed from these orders
+    return Object.assign({}, t, { lots: nl, net: t.net * k, profit: t.profit * k, commission: t.commission * k, swap: t.swap * k, spreadCost: t.spreadCost * k, _m: { from: t.lots, to: nl, lo: stepped < LIVE1.min - 1e-9, hi: stepped > LIVE1.max + 1e-9, noLots: !(t.lots > 0) } });   // each order is re-sized and scaled on its own; every statistic is recomputed from these orders
   });
 }
 function rosCfgTxt(e) { if (!e) return '–'; const r = e.rt; if (!r) return e.st ? e.st[0] : '–'; return (r[5] || 'unknown') + ' · ' + (r[6] || '') + (r[4] === true ? ' · settings current' : r[4] === false ? ' · settings NOT current' : ''); }
@@ -4095,6 +4155,7 @@ function rosFamArmData(fam, arm, byAM, win, model, winH, pairWhy) {
   const mAll = byAM.get(fam.a + '|' + arm.mm) || []; const mH = winH ? mAll.filter((t) => t.closeTime >= winH[0] && t.closeTime <= winH[1]) : mAll; D.smH = mH.length ? stats(mH) : null; D.mHn = mH.length;
   D.mHWhy = mH.length ? '' : rosEmptyWhy(fam, arm.mm);
   const mSince = () => (pairWhy || ((byAM.get(fam.a + '|' + arm.mm) || []).length ? 'No master trades since pair deployment' : rosEmptyWhy(fam, arm.mm)));
+  if (model && fArr.some(t => t._m.noLots)) { D.empty=true; D.why='Model unavailable: missing order lots'; D.fArr=[]; return D; }
   if (!fArr.length) { D.why = (byAM.get(fam.a + '|' + arm.fm) || []).length ? 'No trades since pair deployment' : rosEmptyWhy(fam, arm.fm); if (!m0.length) D.mWhy = mSince(); return D; }
   if (!m0.length) D.mWhy = mSince();
   D.s = stats(fArr); D.R = fe ? rosPairs(fe, fArr) : null;
@@ -4143,7 +4204,12 @@ function rosFamilyTable(fam, arms, byAM) {
     row('Fader net, all orders' + mtag, (d) => money(d.s.net), '', (d) => signCls(d.s.net), false, true);
     row('Matched first-copy net' + mtag, (d) => (d.R && d.R.parents.size ? money(d.R.fnet) : '–'), 'First copies of master trades that are linked to a closed source trade', (d) => (d.R ? signCls(d.R.fnet) : ''));
     row('Matched master net', (d) => (d.R && d.R.parents.size ? money(d.R.mnet) : '–'), 'Same matched trades, actual master lots (not modeled)', (d) => (d.R ? signCls(d.R.mnet) : ''));
-    row('Fader net ÷ negative master net (matched)' + mtag, (d) => (d.R && Number.isFinite(d.R.ratio) ? fmtNum(d.R.ratio, 2) + ' : 1' : '–'), 'Matched first-copy net ÷ negative matched master net. 1.00 : 1 = perfect; a negative value = fader and master both won or both lost');
+    row('Fader net ÷ negative master net (matched)' + mtag, (d) => (d.R && Number.isFinite(d.R.ratio) ? fmtNum(d.R.ratio, 2) + ' : 1' : '–'), 'Matched first-copy net ÷ negative matched master net. 1.00 : 1 = equal and opposite net totals, not copy accuracy; a negative value = fader and master both won or both lost');
+    sect('Why matched fader net differs' + (model ? ' — actual master, modeled fader' : ''));
+    for (const [label,k] of ROS_BRIDGE_ROWS) row(label, d => d.R ? rosBridgeValue(d.R.bridge,k) : '–', 'Uses exactly the matched records above. Entry/exit prices include spread, timing and exit-policy effects. Master costs stay actual; child costs follow the selected child sizing.');
+    row('Bridge links: verified / reconstructed', d => d.R ? d.R.ver.length+' / '+d.R.rec.length : '–');
+    row('Other source trades in window: count · net', d => { if(!d.R) return '–'; const a=d.mArr.filter(t=>!d.R.parents.has(srcKey(t))); return a.length+' · '+money(a.reduce((v,t)=>v+t.net,0)); }, 'Source trades outside the matched bridge. This includes pre-window or uncopied trades; not all are eligible copy omissions.');
+    sect('Fader statistics' + mtag);
     row('Fader orders · win %', (d) => d.s.n + ' · ' + pct(d.s.winRate)); row('Profit factor' + mtag, (d) => ratio(d.s.pf));
     row('Average win / average loss' + mtag, (d) => money(d.s.avgWin) + ' / ' + money(d.s.avgLoss), 'All fader orders in the dates');
     row('Closed drawdown' + mtag, (d) => (d.s.maxDD > 0 ? money(-d.s.maxDD) : money(0)), 'Closed trades of this fader only', (d) => signCls(-d.s.maxDD));
@@ -4749,3 +4815,5 @@ document.addEventListener('drop', async (e) => {
 </script>
 </body>
 </html>
+
+</body></html>
