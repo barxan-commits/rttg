@@ -3723,7 +3723,7 @@ function rosEquityRange(acc, from, to) {
 function rosReviewRows(ents, arrs) {
   const rows = []; const add = (label, vals, tip, cls, head) => rows.push({ label, vals, tip: tip || '', cls: cls || ['', ''], head: !!head });
   const ok = ents.every((e) => e.r === 'FADER' || e.r === 'COPIER'); const ext = arrs.map((a) => ({ f: a.length ? Math.min(...a.map((t) => (Number.isFinite(t.openTime) ? t.openTime : t.closeTime))) : NaN, l: a.length ? Math.max(...a.map((t) => t.closeTime)) : NaN }));
-  const cf = Math.max(ext[0].f, ext[1].f), ct = Math.min(ext[0].l, ext[1].l); const has = Number.isFinite(cf) && Number.isFinite(ct) && cf <= ct;
+  const w0 = rosWindow(ents.map((e) => e.a)); const cf = w0.win ? w0.win[0] : NaN, ct = w0.win ? w0.win[1] : NaN; const has = !!w0.win;
   const sub = arrs.map((a) => (has ? a.filter((t) => t.closeTime >= cf && t.closeTime <= ct) : a)); const R = ents.map((e, i) => rosPairs(e, sub[i]));
   const matched = R.map((r) => [...r.parents.values()].flatMap((o) => o.trades)); const SM = matched.map((a) => (a.length ? stats(a) : null)); const SA = sub.map((a) => (a.length ? stats(a) : null));
   const MC = ents.map((e, i) => (e.r === 'FADER' ? rosMissing(e, sub[i], has ? cf - 600000 : undefined, has ? ct : undefined) : null));
@@ -3737,7 +3737,8 @@ function rosReviewRows(ents, arrs) {
     if (fam) add('Roster comparison group', ents.map((e) => fam.t + ' · arm: ' + arm(e)), fam.n); }
   add('Terminal · account · master magic', ents.map((e) => (ROSTER.pretty[e.t] || e.t) + ' · ' + e.a + ' · master ' + (e.src || '–')), 'Where it runs and which master magic(s) the roster lists as its source');
   add('Master profit cap (source master)', cap, 'From the roster\'s structured data for the source master(s). The fader\'s own independent caps are in the guards row.'); add('Fader\'s independent guards', gd); add('Copy scope', sc, 'ALL = every BASE and ADD trade; ADD / filtered = comment filter; extras = extra copies (+#)');
-  add('Common comparison dates', [has ? fmtTime(cf) + ' → ' + fmtTime(ct) : 'no common dates: each shown over its own dates', has ? 'every figure below uses only this window' : ''], 'The overlap of the two entries\' first and last trade, server time. Trades outside it are left out of this block');
+  add('Comparison window', [has ? fmtTime(cf) + ' → ' + fmtTime(ct) : 'no window: each shown over the dates selected at the top', has ? 'selected dates inside the loaded data; every figure below uses only this window' : ''], 'The dates selected at the top, limited to the loaded data of the accounts (server time). Never derived from trade times.');
+  add('Observed trade span (information only)', ext.map((x) => (Number.isFinite(x.f) ? fmtTime(x.f) + ' → ' + fmtTime(x.l) : 'no trades')), 'First open to last close of the loaded trades. It shows what traded, not when the EA operated, and does not set the window.');
   add('Matched trades (first copies with a linked master trade) — scope: common dates', ['', ''], '', null, true);
   add('Master trades matched', R.map((r) => String(r.parents.size)));
   add('Matched master net', R.map((r) => (r.parents.size ? money(r.mnet) : '–')), 'Net of the master trades that BOTH sides of the matching use', R.map((r) => signCls(r.mnet)));
@@ -4045,7 +4046,7 @@ function rosFindAM(a, m, lists) { for (const l of lists) for (const e of ROSTER[
 const LIVE1 = { mult: 0.2, min: 0.01, max: 0.04, step: 0.01 };   // Live1 preset; lot step 0.01 is assumed, rounded DOWN (how an EA normalises a lot)
 function rosModel(arr) {
   return arr.map((t) => {
-    const s = faderOf(t).master ? srcOf(t, true) : null; const base = s && s.lots > 0 ? s.lots : t.lots;
+    const base = t.lots;   // Live1 copies the FADER order, so the base is that order's own lots (first copy, extra or pre-window alike), never the master's
     const raw = base * LIVE1.mult, stepped = Math.floor(raw / LIVE1.step + 1e-9) * LIVE1.step;   // 0.20x of the source lots, then the lot step
     const nl = Math.round(Math.min(LIVE1.max, Math.max(LIVE1.min, stepped)) * 100) / 100; const k = t.lots > 0 ? nl / t.lots : 1;   // then min / max
     return Object.assign({}, t, { lots: nl, net: t.net * k, _m: { from: t.lots, to: nl, lo: stepped < LIVE1.min - 1e-9, hi: stepped > LIVE1.max + 1e-9, noLots: !(t.lots > 0) } });   // each order is re-sized and scaled on its own; every statistic is recomputed from these orders
@@ -4054,13 +4055,30 @@ function rosModel(arr) {
 function rosCfgTxt(e) { if (!e) return '–'; const r = e.rt; if (!r) return e.st ? e.st[0] : '–'; return (r[5] || 'unknown') + ' · ' + (r[6] || '') + (r[4] === true ? ' · settings current' : r[4] === false ? ' · settings NOT current' : ''); }
 function rosRtTxt(e, arm) { const r = e && e.rt; if (!r) return (arm && arm.rs) || '–'; return (r[0] || 'unknown') + (r[3] === true ? ' (verified)' : ' (not verified)') + (r[1] ? ' · observed ' + r[1] + ' (PC clock when the roster was built)' : '') + (Number.isFinite(r[2]) ? ' · status file age ' + fmtNum(r[2], 1) + ' s' : ''); }
 function rosHbTxt(e) { if (!e) return '–'; const st = rosStatus(e); if (!st.hasLogs) return 'no log data loaded'; return 'heartbeat ' + (Number.isFinite(st.hb) ? fmtTime(st.hb) + (st.hbRecent ? '' : ' (old)') : 'none observed') + ' · initialized ' + (Number.isFinite(st.init) ? fmtTime(st.init) : 'not observed') + ' (log clock)'; }
+// data coverage of loaded accounts: snapshots first..last, or the trades when there are no snapshots. The comparison window is the SELECTED dates inside this coverage;
+// it is never derived from trade open / close times (those only show what traded, not when the EA operated)
+function rosCoverage(accs) {
+  let lo = -Infinity, hi = Infinity, any = false;
+  for (const a of new Set(accs)) {
+    let f = Infinity, l = -Infinity; const sn = DB.snaps.get(a); if (sn && sn.length) { f = sn[0].t; l = sn[sn.length - 1].t; }
+    for (const t of DB.trades) if (t.account === a) { const o = Number.isFinite(t.openTime) ? t.openTime : t.closeTime; if (o < f) f = o; if (t.closeTime > l) l = t.closeTime; }
+    if (f === Infinity) continue; any = true; lo = Math.max(lo, f); hi = Math.min(hi, l);
+  }
+  return any && lo <= hi ? { lo, hi } : null;
+}
+function rosWindow(accs) {
+  const cov = rosCoverage(accs); if (!cov) return { win: null, cov: null };
+  const f = Math.max(state.from === null ? -Infinity : state.from, cov.lo), t = Math.min(state.to === null ? Infinity : state.to - 1, cov.hi);
+  return { win: f <= t ? [f, t] : null, cov };
+}
 let ROS_ALLAM = null, ROS_ALLAM_KEY = '';
 function rosAllAM() { const k = DB.trades.length; if (ROS_ALLAM && ROS_ALLAM_KEY === k) return ROS_ALLAM; ROS_ALLAM = groupBy(DB.trades, (t) => t.account + '|' + t.magic); ROS_ALLAM_KEY = k; return ROS_ALLAM; }
 // why an arm has no trades in the current view: four distinct states
 function rosEmptyWhy(fam, magic) {
   const all = rosAllAM().get(fam.a + '|' + magic) || [];
+  const loaded = DB.accounts.has(fam.a) || DB.snaps.has(fam.a) || DB.trades.some((t) => t.account === fam.a);
+  if (loaded && !dimOk('account', fam.a)) return 'Excluded by account filter';   // the account filter hides the whole account, so every arm of the family says so
   if (all.length) {
-    if (!dimOk('account', fam.a)) return 'Excluded by account filter';
     const inDates = all.some((t) => (state.from === null || t.closeTime >= state.from) && (state.to === null || t.closeTime < state.to));
     return inDates ? 'Excluded by filter' : 'No trades in selected dates';
   }
@@ -4082,15 +4100,12 @@ function rosFamArmData(fam, arm, byAM, win, model) {
 }
 function rosFamilyTable(fam, arms, byAM) {
   const model = ROSF.model, wantM = ROSF.show !== 'faders', wantF = ROSF.show !== 'masters';
-  // one common period for every column: overlap of the first open and last close of all arms that have trades
-  let win = null, note = '';
-  if (ROSF.dates === 'common') {
-    const ext = arms.map((a) => { const t = byAM.get(fam.a + '|' + a.fm) || []; return t.length ? [Math.min(...t.map((x) => (Number.isFinite(x.openTime) ? x.openTime : x.closeTime))), Math.max(...t.map((x) => x.closeTime))] : null; }).filter(Boolean);
-    if (ext.length >= 2) { const f = Math.max(...ext.map((x) => x[0])), l = Math.min(...ext.map((x) => x[1])); if (f <= l) win = [f, l]; else note = 'The arms with trades share no common dates, so each column uses the dates selected at the top.'; }
-  }
+  // one period for every column: the selected calendar dates, limited to the data coverage of the family's account (not the span between first open and last close)
+  let win = null, note = '', cov = null;
+  if (ROSF.dates === 'common') { const w = rosWindow([fam.a]); win = w.win; cov = w.cov; if (!cov) note = 'No data is loaded for account ' + fam.a + ', so there is no window.'; else if (!win) note = 'The selected dates lie outside the loaded data (' + fmtTime(cov.lo) + ' → ' + fmtTime(cov.hi) + ').'; }
   const D = arms.map((a) => rosFamArmData(fam, a, byAM, win, model));
   const wrap = el('div', { class: 'fam-wrap' });
-  wrap.appendChild(el('p', { class: 'sub' }, (win ? 'Common dates for every column: ' + fmtTime(win[0]) + ' → ' + fmtTime(win[1]) + ' (server time).' : ROSF.dates === 'common' ? (note || 'Fewer than two arms have trades, so there is no common period yet; dates selected at the top are used.') : 'Dates selected at the top of the dashboard.') + (model ? ' FADER RESULTS ARE MODELED (Live1). Per order: lots = ' + LIVE1.mult + '× the source lots, rounded down to the ' + LIVE1.step + ' lot step, then at least ' + LIVE1.min + ' and at most ' + LIVE1.max + '; that order\'s result (profit, commission and swap) is scaled by modeled lots ÷ actual lots. Net, profit factor, averages and drawdown are then recalculated from the individual modeled orders, not from scaled totals. Master results and the floating drawdown are not modeled.' : ' Actual lots.')));
+  wrap.appendChild(el('p', { class: 'sub' }, (win ? 'One window for every column: the selected dates inside the loaded data, ' + fmtTime(win[0]) + ' → ' + fmtTime(win[1]) + ' (server time). It is not taken from trade times and does not assume when an EA was attached or running; set the dates at the top to the period you know the EAs operated.' : ROSF.dates === 'common' ? (note || 'No window.') : 'Dates selected at the top of the dashboard, no data-coverage limit.') + (model ? ' FADER RESULTS ARE MODELED (Live1). Per order: lots = ' + LIVE1.mult + '× that fader order\'s own lots (master lots are not used), rounded down to the ' + LIVE1.step + ' lot step, then at least ' + LIVE1.min + ' and at most ' + LIVE1.max + '; that order\'s result (profit, commission and swap) is scaled by modeled lots ÷ actual lots. Net, profit factor, averages and drawdown are then recalculated from the individual modeled orders, not from scaled totals. Master results and the floating drawdown are not modeled.' : ' Actual lots.')));
   const tw = el('div', { class: 'tablewrap fam-scroll' }); const tbl = el('table', { class: 'fam-table' }); tw.appendChild(tbl); wrap.appendChild(tw);
   const hr = el('tr'); hr.appendChild(el('th', null, '')); D.forEach((d) => { const th = el('th', { class: 'num' }); th.appendChild(el('div', { class: 'fam-h1' }, /^MASTER_PROFIT_CAP/.test(fam.sc) && d.arm.cap ? 'Master cap ' + ((d.arm.cap[0] === 'ON' || d.arm.cap[1] === true) ? '$' + (d.arm.cap[2] || d.arm.cap[3]) : d.arm.cap[0] === 'OFF' ? 'OFF' : d.arm.cap[0] === 'NOT_IMPLEMENTED' ? 'n/a' : '?') : d.arm.l)); th.appendChild(el('div', { class: 'muted', style: 'font-weight:400' }, 'master ' + d.arm.mm + ' → fader ' + d.arm.fm)); hr.appendChild(th); });
   tbl.appendChild(el('thead')).appendChild(hr); const tb = el('tbody'); tbl.appendChild(tb);
@@ -4103,7 +4118,7 @@ function rosFamilyTable(fam, arms, byAM) {
   row('Copy scope', (d) => (d.fe ? rosScopeOf(d.fe) : d.arm.cs), '', null, true); row('Configuration evidence', (d) => rosCfgTxt(d.fe), 'What the saved chart / settings file proves: the inputs, not that the EA is running', null, true);
   row('Runtime status (roster file)', (d) => rosRtTxt(d.fe, d.arm), 'The EA\'s own status file when the roster was built. READY means attached and mapped; it does not certify fills.', null, true);
   row('Heartbeat in the loaded logs', (d) => rosHbTxt(d.fe), 'Experts-log evidence (log clock), separate from the roster file', null, true);
-  row('Fader active period (all loaded trades)', (d) => { const a = rosAllAM().get(fam.a + '|' + d.arm.fm) || []; if (!a.length) return d.why || rosEmptyWhy(fam, d.arm.fm); return fmtTime(Math.min(...a.map((t) => (Number.isFinite(t.openTime) ? t.openTime : t.closeTime)))) + ' → ' + fmtTime(Math.max(...a.map((t) => t.closeTime))); }, 'First open to last close of every loaded trade of this fader (server time), ignoring the dashboard filters. The comparison window never starts before this.', null, true);
+  row('Observed trade span (first open → last close; not the operating period)', (d) => { const a = rosAllAM().get(fam.a + '|' + d.arm.fm) || []; if (!a.length) return d.why || rosEmptyWhy(fam, d.arm.fm); return fmtTime(Math.min(...a.map((t) => (Number.isFinite(t.openTime) ? t.openTime : t.closeTime)))) + ' → ' + fmtTime(Math.max(...a.map((t) => t.closeTime))); }, 'Information only: first open to last close of every loaded trade of this fader (server time), ignoring the dashboard filters. It shows what traded, not when the EA was running, and it is NOT used for the comparison window.', null, true);
   if (wantF) {
     sect('Fader results' + mtag + ' — ' + (win ? 'common dates' : 'selected dates'));
     row('Fader net, all orders' + mtag, (d) => money(d.s.net), '', (d) => signCls(d.s.net), false, true);
@@ -4156,7 +4171,7 @@ function renderFamilies(host, byAM) {
   fs.addEventListener('change', () => { ROSF.id = fs.value; ROSF.sel = null; renderTab(); }); ctl.appendChild(el('label', null, 'Family')).appendChild(fs);
   const sh = el('select'); for (const [v, l] of [['both', 'Masters and faders'], ['masters', 'Masters only'], ['faders', 'Faders only']]) { const o = el('option', { value: v }, l); if (v === ROSF.show) o.selected = true; sh.appendChild(o); } sh.addEventListener('change', () => { ROSF.show = sh.value; renderTab(); }); ctl.appendChild(el('label', null, 'Show')).appendChild(sh);
   const sz = el('select'); for (const [v, l] of [['actual', 'Actual lots'], ['model', 'Live1 model: ' + LIVE1.mult + '×, min ' + LIVE1.min + ', max ' + LIVE1.max]]) { const o = el('option', { value: v }, l); if ((v === 'model') === ROSF.model) o.selected = true; sz.appendChild(o); } sz.addEventListener('change', () => { ROSF.model = sz.value === 'model'; renderTab(); }); ctl.appendChild(el('label', null, 'Sizing')).appendChild(sz);
-  const dt = el('select'); for (const [v, l] of [['common', 'Common dates of the compared arms'], ['top', 'Dates selected at the top']]) { const o = el('option', { value: v }, l); if (v === ROSF.dates) o.selected = true; dt.appendChild(o); } dt.addEventListener('change', () => { ROSF.dates = dt.value; renderTab(); }); ctl.appendChild(el('label', null, 'Dates')).appendChild(dt);
+  const dt = el('select'); for (const [v, l] of [['common', 'Selected dates, within data coverage'], ['top', 'Dates selected at the top (no coverage limit)']]) { const o = el('option', { value: v }, l); if (v === ROSF.dates) o.selected = true; dt.appendChild(o); } dt.addEventListener('change', () => { ROSF.dates = dt.value; renderTab(); }); ctl.appendChild(el('label', null, 'Dates')).appendChild(dt);
   if (fam.n) card.appendChild(el('p', { class: 'hint' }, fam.pr ? fam.pr + ': ' + fam.n : fam.n));
   // arms: compare up to 10
   const armBar = el('div', { class: 'fam-arms' }); card.appendChild(armBar); armBar.appendChild(el('span', { class: 'muted' }, 'Compare:'));
