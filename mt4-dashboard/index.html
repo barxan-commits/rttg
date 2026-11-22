@@ -644,8 +644,8 @@ function fixRow(row, header, idx) {
 /* ---------------- file classification ---------------- */
 function classify(name, header) {
   const n = name.toLowerCase();
-  if (/^trades_.*\.csv\.gz$/.test(n)) return 'trades';
-  if (/^equity_.*\.csv\.gz$/.test(n)) return 'snaps';
+  if (/^(?:archive_)?trades_.*\.csv\.gz$/.test(n)) return 'trades';   // archive_* = older copies the build set aside, so no trade is ever lost
+  if (/^(?:archive_)?equity_.*\.csv\.gz$/.test(n)) return 'snaps';
   if (/^open_now\.csv\.gz$/.test(n)) return 'open';
   if (n === 'status_all.txt') return 'statusAll';
   if (n === 'health_events.csv.gz') return 'health';
@@ -667,7 +667,7 @@ function tagOf(name) { const m = /_(Quant[A-Za-z]*\d+)_/i.exec(name); return m ?
 function isCandidate(name) {
   const n = name.toLowerCase();
   return /_detailedstatementlive\.csv$|_account_snapshots\.csv$|_open_now\.csv$|collector_status\.txt$/.test(n)
-    || /^(trades_.*|equity_.*|open_now|health_events)\.csv\.gz$|^(status_all|sync_all)\.txt$|^mt4dash_manifest\.json$/.test(n)
+    || /^((?:archive_)?trades_.*|(?:archive_)?equity_.*|open_now|health_events)\.csv\.gz$|^(status_all|sync_all)\.txt$|^mt4dash_manifest\.json$/.test(n)
     || /^_sync_status.*\.txt$|^_terminal_identity_map.*\.txt$/.test(n);
 }
 
@@ -4697,7 +4697,7 @@ async function loadFromDrive(keepFilters) {
       const page = await driveCall('search_files', q);
       files = files.concat(page.files || []); token = page.nextPageToken || '';
     } while (token && files.length < 5000);
-    files = files.filter((f) => /^(trades_.*\.csv\.gz|equity_.*\.csv\.gz|open_now\.csv\.gz|health_events\.csv\.gz|status_all\.txt|sync_all\.txt|mt4dash_manifest\.json)$/i.test(f.title || ''));
+    files = files.filter((f) => /^((?:archive_)?trades_.*\.csv\.gz|(?:archive_)?equity_.*\.csv\.gz|open_now\.csv\.gz|health_events\.csv\.gz|status_all\.txt|sync_all\.txt|mt4dash_manifest\.json)$/i.test(f.title || ''));
     let manifest = null;
     const items = []; let done = 0; const queue = files.slice();
     const worker = async () => {

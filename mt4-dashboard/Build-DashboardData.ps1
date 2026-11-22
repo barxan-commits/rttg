@@ -1001,6 +1001,16 @@ Write-Host ("Found {0} statement, {1} open, {2} snapshot, {3} status, {4} sync, 
   $tradeFiles.Count, $openFiles.Count, $snapFiles.Count, $statusFiles.Count, $syncFiles.Count, $logFiles.Count)
 Add-Timing 'scan'
 
+# DATA SAFETY: keep a copy of what is published now. A build that produces less (a retired terminal, a trimmed statement file) can then never lose data:
+# such files are kept as archive_<name> (the dashboard reads archive_ files too and ignores duplicate trades).
+$preDir = Join-Path ([System.IO.Path]::GetTempPath()) 'mt4dash_prebuild'
+try {
+  if (Test-Path -LiteralPath $preDir) { Remove-Item -LiteralPath $preDir -Recurse -Force }
+  New-Item -ItemType Directory -Force -Path $preDir | Out-Null
+  Get-ChildItem -LiteralPath $OutDir -File | Where-Object { $_.Name -like 'trades_*.csv.gz' -or $_.Name -like 'equity_*.csv.gz' } |
+    ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $preDir -Force }
+} catch { Write-Warning "Pre-build copy failed (archive safety skipped this run): $($_.Exception.Message)"; $preDir = $null }
+
 [Mt4DashV2.Watchdog]::Begin('building trades')
 $total = 0
 $produced = New-Object System.Collections.Generic.List[string]
@@ -1020,10 +1030,32 @@ $produced.AddRange([Mt4DashV2.Builder]::BuildHealth([string[]]@($logFiles | ForE
 Add-Timing 'logs'
 [Mt4DashV2.Cache]::Prune()
 
-# remove outputs that are no longer produced (e.g. a month split differently)
-Get-ChildItem -LiteralPath $OutDir -File | Where-Object {
-  ($_.Name -like 'trades_*.csv.gz' -or $_.Name -like 'equity_*.csv.gz' -or $_.Name -like '*.tmp') -and -not $produced.Contains($_.Name)
-} | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force; [Mt4DashV2.Builder]::Log.Add('removed ' + $_.Name) }
+# DATA SAFETY: nothing is deleted any more. An output that is no longer produced, or that came out clearly smaller than before,
+# is kept as archive_<name> (a different size gets a timestamped name, so older versions are never overwritten).
+function Save-Archive([string]$SourcePath, [string]$Name) {
+  $dst = Join-Path $OutDir ('archive_' + $Name)
+  if (Test-Path -LiteralPath $dst) {
+    if ((Get-Item -LiteralPath $dst).Length -eq (Get-Item -LiteralPath $SourcePath).Length) { return $true }
+    $dst = Join-Path $OutDir ('archive_' + ($Name -replace '\.csv\.gz$', ('_' + (Get-Date).ToString('yyyyMMddHHmm') + '.csv.gz')))
+  }
+  try { Copy-Item -LiteralPath $SourcePath -Destination $dst -Force -ErrorAction Stop } catch { return $false }
+  if (Test-Path -LiteralPath $dst) { [Mt4DashV2.Builder]::Log.Add('archived ' + $Name + ' as ' + (Split-Path -Leaf $dst)); return $true }
+  return $false
+}
+try {
+  # (a) trades_/equity_ files that are not produced any more: archive first, then take them out of the live names
+  foreach ($f in @(Get-ChildItem -LiteralPath $OutDir -File | Where-Object { ($_.Name -like 'trades_*.csv.gz' -or $_.Name -like 'equity_*.csv.gz') -and -not $produced.Contains($_.Name) })) {
+    if (Save-Archive $f.FullName $f.Name) { Remove-Item -LiteralPath $f.FullName -Force } else { Write-Warning ("Could not archive {0}: left in place" -f $f.Name) }
+  }
+  # (b) files that came out clearly smaller than before (more than 10% smaller): keep the previous version
+  if ($preDir -and (Test-Path -LiteralPath $preDir)) {
+    foreach ($old in @(Get-ChildItem -LiteralPath $preDir -File)) {
+      $new = Join-Path $OutDir $old.Name
+      if ((Test-Path -LiteralPath $new) -and ((Get-Item -LiteralPath $new).Length -lt ($old.Length * 0.9))) { [void](Save-Archive $old.FullName $old.Name) }
+    }
+  }
+} catch { Write-Warning "Archive step failed (nothing was deleted by it): $($_.Exception.Message)" }
+Get-ChildItem -LiteralPath $OutDir -File -Filter '*.tmp' -ErrorAction SilentlyContinue | ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue }
 
 $manifest = [ordered]@{
   generatedAt = $started.ToString('yyyy-MM-dd HH:mm:ss')
