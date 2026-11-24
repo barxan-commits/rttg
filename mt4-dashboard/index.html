@@ -1766,7 +1766,7 @@ const C = {
   firstN: { label: 'First trade count', num: true, f: (v) => v, title: 'Number of first (normal) copies of the fader.' },
   masterN: { label: 'Master trade count', num: true, f: (v) => v, title: 'Number of master trades the fader copied (each counted once).' },
   copying: { label: 'Copying master', num: false, f: (v) => v || '', render: (td, v, r) => {
-    if (!v) { if (r.copiedBy && r.copiedBy.length) renderCopiedBy(td, r.copiedBy); return; }
+    if (!v) { if (r.copiedBy && r.copiedBy.length) renderCopiedBy(td, r.copiedBy, r); return; }
     const m = /^(\S+)\s+(.*?)(?:\s+\+(\d+) more)?$/.exec(v) || [0, '', v, ''];
     const go = (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(r.account, r.magic); };
     const box = el('span', { class: 'cm', title: (r.copyingAll || '') + '\n\nClick to open this fader\'s page' });
@@ -1907,26 +1907,27 @@ function openPickMenu(anchor, head, items, pick) {
   m.style.left = Math.max(8, Math.min(r.left, window.innerWidth - w - 8)) + 'px';
   m.style.top = useBelow ? r.bottom + 6 + 'px' : Math.max(8, r.top - 6 - Math.min(h, room)) + 'px';
 }
-function openFaderMenu(anchor, list) {
+function openFaderMenu(anchor, list, group) {
   openPickMenu(anchor, list.length + ' more fader' + (list.length > 1 ? 's' : '') + ' copying this master',
-    list.map((x) => ({ label: x.magic + ' ' + x.label, sub: x.n + ' trades · ' + money(x.net), cls: signCls(x.net), title: 'Open this fader', f: x })), (it) => openFaderDetail(it.f.account, it.f.magic));
+    list.map((x) => ({ label: x.magic + ' ' + x.label, sub: x.n + ' trades · ' + money(x.net), cls: signCls(x.net), title: 'Open this fader', f: x })), (it) => (group ? openFaderGroup(group.master, group.all, it.f) : openFaderDetail(it.f.account, it.f.magic)));
 }
 document.addEventListener('click', (e) => { if (FADER_MENU && !e.target.closest('.fader-menu')) closeFaderMenu(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeFaderMenu(); });
 window.addEventListener('scroll', (e) => { if (FADER_MENU && e.target && e.target.nodeType === 1 && FADER_MENU.contains(e.target)) return; closeFaderMenu(); }, true);   // scrolling the menu itself must not close it
-function renderCopiedBy(td, L) {
+function renderCopiedBy(td, L, mr) {
+  const grp = mr ? { master: { account: mr.account, magic: mr.magic, label: mr.comment || mr.label || '' }, all: L } : null;
   const box = el('span', { class: 'cm', style: 'cursor:default', title: L.slice(0, 40).map((x) => x.magic + ' ' + x.label + '  (' + x.n + ' trades, ' + money(x.net) + ')').join('\n') + (L.length > 40 ? '\n…' : '') });
   box.appendChild(el('span', { class: 'cm-name' }, 'Copied by ' + L.length + ' fader' + (L.length > 1 ? 's' : '') + ':'));
   const btn = (x) => {
-    const b = el('button', { class: 'cm-open', type: 'button', title: x.magic + ' ' + x.label + ': ' + x.n + ' copies, ' + money(x.net) + '. Click to open this fader.' }, x.magic + ' ' + x.label + ' (' + x.n + ')');
-    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFaderDetail(x.account, x.magic); });
+    const b = el('button', { class: 'cm-open', type: 'button', title: x.magic + ' ' + x.label + ': ' + x.n + ' copies, ' + money(x.net) + '. Click to open the page with all ' + L.length + ' faders copying this master (this one first).' }, x.magic + ' ' + x.label + ' (' + x.n + ')');
+    b.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); if (grp) openFaderGroup(grp.master, L, x); else openFaderDetail(x.account, x.magic); });
     return b;
   };
   for (const x of L.slice(0, 3)) box.appendChild(btn(x));
   if (L.length > 3) {
     const rest = L.slice(3);
     const more = el('button', { class: 'cm-more', type: 'button', style: 'border:0;cursor:pointer', title: 'Open a list of the other faders that copy this master' }, '+' + rest.length + ' more ▾');
-    more.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFaderMenu(more, rest); });
+    more.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); openFaderMenu(more, rest, grp); });
     box.appendChild(more);
   }
   td.appendChild(box);
@@ -2499,18 +2500,36 @@ function showMaster(magic) {
 }
 // the whole detail of one fader (or of every fader with that magic) on a page of its own; opened from the Copying master cell
 function openFaderDetail(account, magic) {
-  FA.detail = { account, magic, back: state.tab, backView: FA.view };
+  FA.detail = { account, magic, back: state.tab, backView: FA.view, scrollY: window.scrollY };
   FA.view = 'detail'; state.tab = 'fa'; renderTabsNav(); renderTab(); window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+// every fader copying one master on a page of its own (opened from "Copied by N faders"); focus = the fader that was clicked, shown first
+function openFaderGroup(master, all, focus) {
+  FA.detail = { group: { master, all, focus }, back: state.tab, backView: FA.view, scrollY: window.scrollY };
+  FA.view = 'detail'; state.tab = 'fa'; renderTabsNav(); renderTab(); window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function faGroupPage(host, A, d) {
+  const g = d.group, keys = new Set(g.all.map((x) => x.account + '|' + x.magic));
+  const list = [...A.fa.values()].filter((x) => keys.has(x.account + '|' + x.magic)).sort((p, q) => (g.focus && p.account === g.focus.account && String(p.magic) === String(g.focus.magic) ? -1 : 0) - (g.focus && q.account === g.focus.account && String(q.magic) === String(g.focus.magic) ? -1 : 0) || (q.net + q.xnet) - (p.net + p.xnet));
+  host.appendChild(el('h2', { class: 'section-title' }, 'Faders copying master ' + g.master.magic + (g.master.label && String(g.master.label) !== String(g.master.magic) ? ' · ' + g.master.label : '') + ' (' + list.length + ')'));
+  if (!list.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader copies for this master in the current selection.')); return; }
+  host.appendChild(el('p', { class: 'sub' }, 'All faders that copy this master, side by side, then the full detail of each one below (the one you clicked is first). Use the button at the top to go back to where you were.'));
+  const rows = list.map((x) => ({ fader: faLabel(x), magic: x.magic, account: x.account, trades: x.n + x.xn, net: x.net + x.xnet, mnet: x.mnet, diff: x.net + x.mnet, x }));
+  table(host, [{ key: 'magic', label: 'Fader magic', render: (td, v, r) => { const b = el('button', { class: 'cm-open', type: 'button', title: 'Jump to this fader\'s detail below' }, String(v)); b.addEventListener('click', (e) => { e.stopPropagation(); const t = document.getElementById('fa-grp-' + r.account + '-' + r.magic); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); td.appendChild(b); } },
+    { key: 'fader', label: 'Name' }, { key: 'account', label: 'Account' }, { key: 'trades', label: 'Trades', num: true },
+    { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls, title: 'Net of the fader (first copies + extras)' }, { key: 'mnet', label: 'Master $ (same trades)', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'diff', label: 'Difference $', num: true, f: money, cls: signCls, title: C.masterDiff.title }], rows, { tabId: 'faGrp', defKey: 'net' });
+  for (const x of list) { const w = el('div', { id: 'fa-grp-' + x.account + '-' + x.magic }); host.appendChild(w); faDetail(w, A, x, true); }
 }
 function faDetailPage(host, A) {
   const d = FA.detail || {};
   const bar = el('div', { class: 'fa-bar' });
   const back = el('button', { type: 'button', class: 'btn small' }, '← Back to ' + (TABS.find((t) => t[0] === d.back) || ['', 'the table'])[1]);
-  back.addEventListener('click', () => { FA.view = d.backView || 'matrix'; state.tab = d.back || 'magic'; renderTabsNav(); renderTab(); });
+  back.addEventListener('click', () => { FA.view = d.backView || 'matrix'; state.tab = d.back || 'magic'; renderTabsNav(); renderTab(); if (Number.isFinite(d.scrollY)) window.scrollTo({ top: d.scrollY }); });
   bar.appendChild(back);
   const fullBtn = el('button', { type: 'button', class: 'btn small', title: 'Switch between the short tables and every column (extra copies, first/extra counts, coverage...)' }, FA.full ? 'Show fewer columns' : 'Show all columns');
   fullBtn.addEventListener('click', () => { FA.full = !FA.full; renderTab(); });
   bar.appendChild(fullBtn); host.appendChild(bar);
+  if (d.group) { faGroupPage(host, A, d); return; }
   const list = [...A.fa.values()].filter((x) => String(x.magic) === String(d.magic) && (!d.account || x.account === d.account));
   if (!list.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader copies for this magic in the current selection.')); return; }
   for (const x of list) faDetail(host, A, x, true);
