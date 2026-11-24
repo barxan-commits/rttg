@@ -2513,12 +2513,23 @@ function faGroupPage(host, A, d) {
   const list = [...A.fa.values()].filter((x) => keys.has(x.account + '|' + x.magic)).sort((p, q) => (g.focus && p.account === g.focus.account && String(p.magic) === String(g.focus.magic) ? -1 : 0) - (g.focus && q.account === g.focus.account && String(q.magic) === String(g.focus.magic) ? -1 : 0) || (q.net + q.xnet) - (p.net + p.xnet));
   host.appendChild(el('h2', { class: 'section-title' }, 'Faders copying master ' + g.master.magic + (g.master.label && String(g.master.label) !== String(g.master.magic) ? ' · ' + g.master.label : '') + ' (' + list.length + ')'));
   if (!list.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader copies for this master in the current selection.')); return; }
-  host.appendChild(el('p', { class: 'sub' }, 'All faders that copy this master, side by side, then the full detail of each one below (the one you clicked is first). Use the button at the top to go back to where you were.'));
+  const selKey = d.sel || (g.focus ? g.focus.account + '|' + g.focus.magic : ''), isAll = !!d.showAll;
+  host.appendChild(el('p', { class: 'sub' }, 'All faders that copy this master, side by side. Click a fader magic to see its details (per pair and masters copied) below the table.'));
   const rows = list.map((x) => ({ fader: faLabel(x), magic: x.magic, account: x.account, trades: x.n + x.xn, net: x.net + x.xnet, mnet: x.mnet, diff: x.net + x.mnet, x }));
-  table(host, [{ key: 'magic', label: 'Fader magic', render: (td, v, r) => { const b = el('button', { class: 'cm-open', type: 'button', title: 'Jump to this fader\'s detail below' }, String(v)); b.addEventListener('click', (e) => { e.stopPropagation(); const t = document.getElementById('fa-grp-' + r.account + '-' + r.magic); if (t) t.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); td.appendChild(b); } },
+  const det = el('div', { id: 'fa-grp-detail' });
+  const fill = () => {
+    det.textContent = ''; const key = FA.detail.sel || selKey, all = !!FA.detail.showAll;
+    const shown = all ? list : list.filter((x) => x.account + '|' + x.magic === key);
+    if (!shown.length) { det.appendChild(el('p', { class: 'muted' }, 'Click a fader magic in the table to see its details here.')); return; }
+    for (const x of shown) { const w = el('div'); det.appendChild(w); faDetail(w, A, x, true); }
+  };
+  const bar2 = el('div', { class: 'fa-bar' }); const allBtn = el('button', { type: 'button', class: 'btn small' }, isAll ? 'Show only the selected fader' : 'Show details of all ' + list.length + ' faders');
+  allBtn.addEventListener('click', () => { FA.detail.showAll = !FA.detail.showAll; allBtn.textContent = FA.detail.showAll ? 'Show only the selected fader' : 'Show details of all ' + list.length + ' faders'; fill(); });
+  bar2.appendChild(allBtn);
+  table(host, [{ key: 'magic', label: 'Fader magic', render: (td, v, r) => { const b = el('button', { class: 'cm-open', type: 'button', title: 'Show the details of this fader below' }, String(v)); b.addEventListener('click', (e) => { e.stopPropagation(); FA.detail.sel = r.account + '|' + r.magic; FA.detail.showAll = false; allBtn.textContent = 'Show details of all ' + list.length + ' faders'; fill(); det.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); td.appendChild(b); } },
     { key: 'fader', label: 'Name' }, { key: 'account', label: 'Account' }, { key: 'trades', label: 'Trades', num: true },
     { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls, title: 'Net of the fader (first copies + extras)' }, { key: 'mnet', label: 'Master $ (same trades)', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'diff', label: 'Difference $', num: true, f: money, cls: signCls, title: C.masterDiff.title }], rows, { tabId: 'faGrp', defKey: 'net' });
-  for (const x of list) { const w = el('div', { id: 'fa-grp-' + x.account + '-' + x.magic }); host.appendChild(w); faDetail(w, A, x, true); }
+  host.appendChild(bar2); fill(); host.appendChild(det);
 }
 function faDetailPage(host, A) {
   const d = FA.detail || {};
