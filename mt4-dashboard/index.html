@@ -1789,7 +1789,7 @@ const C = {
   mratio: { label: 'Ratio copy', num: true, f: (v) => (Number.isFinite(v) ? '1 : ' + (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) : ''), title: 'Master : fader result on the same trades, only where the fader made a profit: fader first copies $ divided by the size of the Master $ (win or loss, no minus sign). "1 : 3" = the fader made 3 times what the master made or lost. Blank when the fader lost or the master result is 0.' },
   strategy: { label: 'Strategy', num: false, f: (v) => v || '', title: 'Name of this magic number from the research roster (Roster tab).' },
   about: { label: 'What it does', num: false, render: (td, v) => { td.textContent = v || ''; td.title = v || ''; td.style.maxWidth = '300px'; td.style.overflow = 'hidden'; td.style.textOverflow = 'ellipsis'; }, f: (v) => v || '', title: 'Plain-language description from the research roster (hover for the full text).' },
-  masterDiff: { label: 'Difference $', num: true, f: money, cls: signCls, title: 'Net + Master alone: positive = the fader gains more than the master loses (or loses less than it gains); negative = the fader is worse off.' },
+  masterDiff: { label: 'Difference $', num: true, f: money, cls: signCls, title: 'MATCHED first copies only: the fader\'s net on first copies whose closed master trade was found, plus Master alone on those same trades. Orders with no matched closed master (and extra copies) are not included. Positive = the fader gains more than the master loses; negative = the fader is worse off.' },
   mcov: { label: 'Coverage', num: true, f: pct, title: 'Share of the master strategy\'s trades (same account, magic and comment) that this fader copied, counted from the moment its first copied master trade opened (before that the fader did not exist). Copies still open count as copied, and master trades still open count in the total.' },
   baskets: { label: 'Baskets', num: true, f: (v) => v },
   basketWin: { label: 'Basket win %', num: true, f: pct },
@@ -1826,14 +1826,15 @@ function srcOf(x, closedOnly) {
   return pickSrc(ix.closed.get(f.master), x.account, x.magic) || (closedOnly ? null : pickSrc(ix.open.get(f.master), x.account, x.magic));
 }
 function masterExtra(arr) {
-  const seen = new Set(); let master = 0, found = 0, fnet = 0, xnet = 0, xn = 0, isF = false; const who = new Map(); const mkeys = new Set();
+  const seen = new Set(); let master = 0, found = 0, fnet = 0, xnet = 0, xn = 0, isF = false, mf = 0, unm = 0, unmN = 0; const who = new Map(); const mkeys = new Set();
   let noRef = 0, stOpen = 0, stGone = 0; const chk = new Set(); const fkeys = new Set();
   for (const t of arr) {
     const f = faderOf(t); if (!f.is) continue; isF = true;
     if (f.extra) { xn++; xnet += t.net; continue; }
     fnet += t.net; fkeys.add(t.account + '|' + t.magic);
     if (!f.master) noRef++;
-    const sc = f.master ? srcOf(t) : null; const sk = f.master ? (sc ? srcKey(sc) : 'x' + f.master + '|' + t.account) : '';
+    const sc = f.master ? srcOf(t) : null; if (sc && Number.isFinite(sc.closeTime)) mf += t.net; else { unm += t.net; unmN++; }
+    const sk = f.master ? (sc ? srcKey(sc) : 'x' + f.master + '|' + t.account) : '';
     if (f.master && !chk.has(sk)) { chk.add(sk); if (!sc) stGone++; else if (!Number.isFinite(sc.closeTime)) stOpen++; }
     if (f.master && !seen.has(sk)) {
       seen.add(sk); const m = sc && Number.isFinite(sc.closeTime) ? sc : null;
@@ -1864,7 +1865,7 @@ function masterExtra(arr) {
   // why a fader row has no (or only some) master: the comment has no master ticket, the master is still open, or it is not in the loaded data
   const why = [noRef ? noRef + ' without ticket in comment' : '', stOpen ? stOpen + ' master still open' : '', stGone ? stGone + ' master not in loaded data' : ''].filter(Boolean).join(' · ');
   const masterStatus = !isF ? '' : why || 'all masters found';
-  return found ? { master, masterDiff: fnet + xnet + master, mcov, mratio: master && fnet > 0 ? fnet / Math.abs(master) : NaN, copying, copyingAll, copyingList, masterStatus, ...fx } : { master: NaN, masterDiff: NaN, mcov: NaN, mratio: NaN, copying: '', copyingAll: '', copyingList: [], masterStatus, ...fx };
+  return found ? { master, masterDiff: mf + master, matchedNet: mf, unmatchedNet: unm, unmatchedN: unmN, mcov, mratio: master && mf > 0 ? mf / Math.abs(master) : NaN, copying, copyingAll, copyingList, masterStatus, ...fx } : { master: NaN, masterDiff: NaN, matchedNet: NaN, unmatchedNet: isF ? unm : NaN, unmatchedN: isF ? unmN : '', mcov: NaN, mratio: NaN, copying: '', copyingAll: '', copyingList: [], masterStatus, ...fx };
 }
 // which faders copy each master (account + magic): 'account|magic' -> [{account, magic, label, n, net}] (first copies in the selected dates, any account)
 let CB_CACHE = null, CB_KEY = '', CB_DB = null;
@@ -2346,19 +2347,20 @@ function faderAnalysis() {
     const fk = t.account + '|' + t.magic + '|' + f.type + '|' + f.src;
     let x = fa.get(fk);
     if (!x) { x = { key: fk, account: t.account, terminal: (DB.accounts.get(t.account) || {}).terminal || t.terminal || '', magic: t.magic, type: f.type, src: f.src,
-      n: 0, net: 0, xn: 0, xnet: 0, sp: 0, cm: 0, sw: 0, dur: 0, durN: 0, mdur: 0, mdurN: 0, mnet: 0, found: 0, masters: new Set(), mkeys: new Set(), sym: new Map() }; fa.set(fk, x); }
+      n: 0, net: 0, xn: 0, xnet: 0, mf: 0, unm: 0, unmN: 0, sp: 0, cm: 0, sw: 0, dur: 0, durN: 0, mdur: 0, mdurN: 0, mnet: 0, found: 0, masters: new Set(), mkeys: new Set(), sym: new Map() }; fa.set(fk, x); }
     const m = f.master ? srcOf(t, true) : null;
     const mk = m ? masterKeyOf(m) : '';
     let mm = null;
     if (m) { mm = ma.get(mk); if (!mm) { mm = newMaster(mk, m); ma.set(mk, mm); } }
-    let sy = x.sym.get(t.symbol); if (!sy) { sy = { symbol: t.symbol, n: 0, net: 0, mnet: 0, found: 0, xn: 0, xnet: 0, wins: 0, who: new Map() }; x.sym.set(t.symbol, sy); }
+    let sy = x.sym.get(t.symbol); if (!sy) { sy = { symbol: t.symbol, n: 0, net: 0, mf: 0, unm: 0, unmN: 0, mnet: 0, found: 0, xn: 0, xnet: 0, wins: 0, who: new Map() }; x.sym.set(t.symbol, sy); }
     if (t.net > 0) sy.wins++;
     if (m) { const wk = m.magic + ' ' + baseOf(m.base, m.comment); sy.who.set(wk, (sy.who.get(wk) || 0) + 1); }
     if (f.extra) { sy.xn++; sy.xnet += t.net; x.xn++; x.xnet += t.net; if (mm) { mm.xn++; mm.xnet += t.net; const xk = fk + '>' + mk; let xp = xpairs.get(xk); if (!xp) { xp = { fk, mk, xn: 0, xnet: 0, wins: 0 }; xpairs.set(xk, xp); } xp.xn++; xp.xnet += t.net; if (t.net > 0) xp.wins++; } continue; }
     x.n++; x.net += t.net; x.sp -= t.spreadCost || 0; x.cm += t.commission || 0; x.sw += t.swap || 0;
     if (Number.isFinite(t.duration)) { x.dur += t.duration; x.durN++; }
     sy.n++; sy.net += t.net;
-    if (!m) continue;
+    if (!m) { x.unm += t.net; x.unmN++; sy.unm += t.net; sy.unmN++; continue; }
+    x.mf += t.net; sy.mf += t.net;
     x.found++; x.mnet += m.net; sy.mnet += m.net; sy.found++; x.mkeys.add(mk); x.masters.add(srcKey(m));
     if (Number.isFinite(m.duration)) { x.mdur += m.duration; x.mdurN++; }
     const pk = fk + '>' + mk; let p = pairs.get(pk); if (!p) { p = { fk, mk, n: 0, net: 0, mnet: 0, wins: 0 }; pairs.set(pk, p); }
@@ -2515,7 +2517,7 @@ function faGroupPage(host, A, d) {
   if (!list.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader copies for this master in the current selection.')); return; }
   const selKey = d.sel || (g.focus ? g.focus.account + '|' + g.focus.magic : ''), isAll = !!d.showAll;
   host.appendChild(el('p', { class: 'sub' }, 'All faders that copy this master, side by side. Click a fader magic to see its details (per pair and masters copied) below the table.'));
-  const rows = list.map((x) => ({ fader: faLabel(x), magic: x.magic, account: x.account, trades: x.n + x.xn, net: x.net + x.xnet, mnet: x.mnet, diff: x.net + x.mnet, x }));
+  const rows = list.map((x) => ({ fader: faLabel(x), magic: x.magic, account: x.account, trades: x.n + x.xn, net: x.net + x.xnet, mnet: x.mnet, mf: x.mf, diff: x.mf + x.mnet, unm: x.unm, unmN: x.unmN, found: x.found, x }));
   const det = el('div', { id: 'fa-grp-detail' });
   const fill = () => {
     det.textContent = ''; const key = FA.detail.sel || selKey, all = !!FA.detail.showAll;
@@ -2528,7 +2530,13 @@ function faGroupPage(host, A, d) {
   bar2.appendChild(allBtn);
   table(host, [{ key: 'magic', label: 'Fader magic', render: (td, v, r) => { const b = el('button', { class: 'cm-open', type: 'button', title: 'Show the details of this fader below' }, String(v)); b.addEventListener('click', (e) => { e.stopPropagation(); FA.detail.sel = r.account + '|' + r.magic; FA.detail.showAll = false; allBtn.textContent = 'Show details of all ' + list.length + ' faders'; fill(); det.scrollIntoView({ behavior: 'smooth', block: 'start' }); }); td.appendChild(b); } },
     { key: 'fader', label: 'Name' }, { key: 'account', label: 'Account' }, { key: 'trades', label: 'Trades', num: true },
-    { key: 'net', label: 'Fader $', num: true, f: money, cls: signCls, title: 'Net of the fader (first copies + extras)' }, { key: 'mnet', label: 'Master $ (same trades)', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'diff', label: 'Difference $', num: true, f: money, cls: signCls, title: C.masterDiff.title }], rows, { tabId: 'faGrp', defKey: 'net' });
+    { key: 'net', label: 'Fader $ (all orders)', num: true, f: money, cls: signCls, title: 'Everything the fader made: first copies + extra copies, matched or not' },
+    { key: 'found', label: 'Matched orders', num: true, title: 'First copies whose closed master trade was found' },
+    { key: 'mf', label: 'Matched fader $', num: true, f: money, cls: signCls, title: 'Fader net on the matched first copies only: the same trades the Master $ column is measured on' },
+    { key: 'mnet', label: 'Master $ (matched)', num: true, f: money, cls: signCls, title: C.master.title },
+    { key: 'diff', label: 'Difference $ (matched only)', num: true, f: money, cls: signCls, title: 'Matched fader $ + Master $ (matched): same trades on both sides. Unmatched orders and extra copies are NOT in it.' },
+    { key: 'unm', label: 'Unmatched $ (no closed master)', num: true, f: money, cls: signCls, title: 'First copies with no matched closed master trade (master still open, not in the loaded data, or no ticket in the comment). Their net is kept out of Difference.' },
+    { key: 'unmN', label: 'Unmatched orders', num: true }], rows, { tabId: 'faGrp', defKey: 'net' });
   host.appendChild(bar2); fill(); host.appendChild(det);
 }
 function faDetailPage(host, A) {
@@ -2552,9 +2560,11 @@ function faDetail(host, A, x, big) {
     const costs = x.sp + x.cm + x.sw;
     const grid = el('div', { class: 'fa-tiles' });
     const tl = (label, value, note, cls) => { const d = el('div', { class: 'tile' }); d.appendChild(el('div', { class: 'label' }, label)); d.appendChild(el('div', { class: 'value' + (cls ? ' ' + cls : '') }, value)); if (note) d.appendChild(el('div', { class: 'note', title: note }, note)); grid.appendChild(d); };
-    tl('The fader made', money(x.net + x.xnet), (x.n + x.xn) + ' trades' + (x.xn ? ' (incl. ' + x.xn + ' extra copies)' : ''), signCls(x.net + x.xnet));
+    tl('The fader made (all orders)', money(x.net + x.xnet), (x.n + x.xn) + ' trades' + (x.xn ? ' (incl. ' + x.xn + ' extra copies)' : ''), signCls(x.net + x.xnet));
     tl('The masters it copies made', money(x.mnet), 'on the same ' + x.found + ' trades, run alone', signCls(x.mnet));
-    tl('Both together', money(x.net + x.mnet), 'fader first copies + masters', signCls(x.net + x.mnet));
+    tl('Matched fader $', money(x.mf), x.found + ' matched first copies', signCls(x.mf));
+    tl('Difference (matched only)', money(x.mf + x.mnet), 'matched fader $ + masters, same ' + x.found + ' trades', signCls(x.mf + x.mnet));
+    tl('Unmatched orders', x.unmN + ' · ' + money(x.unm), 'first copies with no closed master: not in the difference', signCls(x.unm));
     tl('Costs', money(costs), 'spread, commission, swap', signCls(costs));
     host.appendChild(grid);
     host.appendChild(el('p', { class: 'sub' }, 'Copies ' + x.mkeys.size + ' master strateg' + (x.mkeys.size === 1 ? 'y' : 'ies') + '. ' + (x.net > 0 && x.mnet < 0 ? 'The fader gains while the masters lose.' : x.net < 0 && x.mnet > 0 ? 'The fader loses while the masters gain.' : x.net > 0 ? 'The fader and the masters both gain.' : 'The fader and the masters both lose.')));
@@ -2562,15 +2572,15 @@ function faDetail(host, A, x, big) {
   const sr = [...x.sym.values()].map((v) => {
     const top = [...v.who].sort((p, q) => q[1] - p[1]);
     return { symbol: v.symbol, trades: v.n + v.xn, win: (v.n + v.xn) ? v.wins / (v.n + v.xn) : NaN, total: v.net + v.xnet, firstN: v.n, net: v.net, xn: v.xn || '', xnet: v.xn ? v.xnet : NaN,
-      masterN: v.found, master: v.mnet, sum: v.net + v.xnet + v.mnet, copying: top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) + ' more' : '') : '',
+      masterN: v.found, master: v.mnet, mf: v.mf, unm: v.unm, unmN: v.unmN, sum: v.mf + v.mnet, copying: top.length ? top[0][0] + (top.length > 1 ? '  +' + (top.length - 1) + ' more' : '') : '',
       copyingAll: top.slice(0, 25).map(([k, n]) => k + '  (' + n + ' trades)').join('\n') };
   });
   host.appendChild(el('h3', { class: 'section-title' }, 'Per pair (symbol)'));
   if (simple) table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct },
-    { key: 'total', label: 'Fader $', num: true, f: money, cls: signCls, title: 'What the fader made on this pair' }, { key: 'master', label: 'Master $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Difference $', num: true, f: money, cls: signCls, title: C.masterDiff.title }], sr, { tabId: 'fa2symS', defKey: 'total' });
+    { key: 'total', label: 'Fader $ (all orders)', num: true, f: money, cls: signCls, title: 'What the fader made on this pair, all orders' }, { key: 'mf', label: 'Matched fader $', num: true, f: money, cls: signCls, title: 'Fader net on first copies with a matched closed master' }, { key: 'master', label: 'Master $ (matched)', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Difference $ (matched only)', num: true, f: money, cls: signCls, title: C.masterDiff.title }, { key: 'unm', label: 'Unmatched $', num: true, f: money, cls: signCls, title: 'First copies on this pair with no matched closed master: not in the difference' }], sr, { tabId: 'fa2symS', defKey: 'total' });
   else table(host, [{ key: 'symbol', label: 'Pair' }, { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct }, { key: 'total', label: 'Net', num: true, f: money, cls: signCls, title: C.net.title },
     { key: 'firstN', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls, title: C.firsts.title }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls, title: C.extras.title },
-    { key: 'masterN', label: 'Master trade count', num: true, title: C.masterN.title }, { key: 'master', label: 'Master alone $', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Difference $', num: true, f: money, cls: signCls, title: C.masterDiff.title },
+    { key: 'masterN', label: 'Master trade count', num: true, title: C.masterN.title }, { key: 'mf', label: 'Matched fader $', num: true, f: money, cls: signCls, title: 'Fader net on first copies with a matched closed master' }, { key: 'master', label: 'Master alone $ (matched)', num: true, f: money, cls: signCls, title: C.master.title }, { key: 'sum', label: 'Difference $ (matched only)', num: true, f: money, cls: signCls, title: C.masterDiff.title }, { key: 'unm', label: 'Unmatched $', num: true, f: money, cls: signCls, title: 'First copies on this pair with no matched closed master: not in the difference' },
     Object.assign({ key: 'copying' }, C.copying, { render: (td, v, r) => { td.textContent = v || ''; if (r.copyingAll) td.title = r.copyingAll; } })], sr, { tabId: 'fa2sym' + (big ? 'b' : ''), defKey: 'total' });
   host.appendChild(el('h3', { class: 'section-title' }, 'Masters copied by ' + faLabel(x) + ' (' + x.mkeys.size + ')'));
   const mr = []; const keys = new Set();
@@ -2579,14 +2589,14 @@ function faDetail(host, A, x, big) {
   for (const mk of keys) {
     const p = A.pairs.get(x.key + '>' + mk) || { n: 0, net: 0, mnet: 0, wins: 0 }, xp = A.xpairs.get(x.key + '>' + mk) || { xn: 0, xnet: 0, wins: 0 }, m = A.ma.get(mk);
     const all = p.n + xp.xn;
-    mr.push({ mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: faCov(A, p), total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + xp.xnet + p.mnet : NaN });
+    mr.push({ mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: faCov(A, p), total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + p.mnet : NaN });
   }
   if (simple) {
-    host.appendChild(el('p', { class: 'sub' }, 'Fader $ = what the fader made on its copies of that master · Master $ = what the master made on those same trades · Difference = Fader $ + Master $ (positive: the fader gains more than the master loses). Coverage = share of the master\'s trades this fader copied.'));
+    host.appendChild(el('p', { class: 'sub' }, 'Fader $ = what the fader made on its copies of that master · Master $ = what the master made on those same trades · Difference = first-copy net + Master $ on the same matched trades (extras and orders with no matched master are not in it; positive: the fader gains more than the master loses). Coverage = share of the master\'s trades this fader copied.'));
     faMasterGroups(host, mr);
     return;
   }
-  host.appendChild(el('p', { class: 'sub' }, 'Trades = first + extra trade count. First trade count = first copies, Extra trade count = second copies (+#), Master trade count = all trades of that master strategy in the selected period. Net = Firsts $ + Extras $. Difference = Net + Master alone $.'));
+  host.appendChild(el('p', { class: 'sub' }, 'Trades = first + extra trade count. First trade count = first copies, Extra trade count = second copies (+#), Master trade count = all trades of that master strategy in the selected period. Net = Firsts $ + Extras $ (all orders). Difference = matched first-copy net + Master alone $ only: extras and first copies with no matched closed master (Unmatched $) are kept out.'));
   table(host, [{ key: 'mmagic', label: 'Master magic' }, { key: 'comment', label: 'Master comment' },
     { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct }, { key: 'total', label: 'Net', num: true, f: money, cls: signCls },
     { key: 'n', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
@@ -2627,7 +2637,7 @@ function faMasterGroups(host, mr) {
 }
 function faPerFader(host, A, faders) {
   const rows = faders.map((x) => { const costs = x.sp + x.cm + x.sw; return { key: x.key, terminal: x.terminal, account: x.account, magic: x.magic, type: x.type, src: x.src,
-    n: x.n, net: x.net, xn: x.xn || '', xnet: x.xn ? x.xnet : NaN, total: x.net + x.xnet, master: x.found ? x.mnet : NaN, drag: x.found ? x.net + x.mnet : NaN,
+    n: x.n, net: x.net, xn: x.xn || '', xnet: x.xn ? x.xnet : NaN, total: x.net + x.xnet, master: x.found ? x.mnet : NaN, drag: x.found ? x.mf + x.mnet : NaN,
     cpt: x.n ? costs / x.n : NaN, hold: x.durN ? x.dur / x.durN : NaN, mhold: x.mdurN ? x.mdur / x.mdurN : NaN, cov: x.cov, masters: x.mkeys.size }; });
   const cols = [{ key: 'terminal', label: 'Terminal' }, { key: 'account', label: 'Account' }, { key: 'magic', label: 'Fader (magic)' }, { key: 'type', label: 'Type' }, { key: 'src', label: 'Source' },
     { key: 'n', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
