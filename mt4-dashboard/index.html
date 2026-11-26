@@ -1445,7 +1445,9 @@ function guardCheck(names) {
   if (SOURCE.kind !== 'drive' || DB.files.some((f) => f.kind === 'failed')) return;   // only a complete Drive load is comparable
   const cur = guardSnapshot(names), base = baseRead();
   if (!base) { baseWrite(cur); return; }
-  const have = new Set(cur.files), gone = base.files.filter((n) => !have.has(n));
+  // a file only counts as gone when nothing is left of it: the build may split a month into _p1/_p2 or keep the old file as archive_<name>; both are the same data under another name
+  const logical = (n) => n.replace(/^archive_/i, '').replace(/_p\d+(?=\.csv\.gz$)/i, '').replace(/_\d{8}_\d{6}(?=\.csv\.gz$)/, '');
+  const have = new Set(cur.files.map(logical)), gone = base.files.filter((n) => !have.has(logical(n)));
   const less = []; for (const a of Object.keys(base.acc || {})) { const c = cur.acc[a] || 0; if (c < base.acc[a]) less.push({ account: a, from: base.acc[a], to: c }); }
   if (!gone.length && !less.length) { baseWrite(cur); return; }   // nothing lost: the baseline moves forward
   less.sort((x, y) => (y.from - y.to) - (x.from - x.to));
