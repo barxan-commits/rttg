@@ -2610,6 +2610,26 @@ function faDetail(host, A, x, big) {
 // one row per MASTER MAGIC (what the fader fades from that master), click a row to see its comments underneath
 // biggest fall from a peak of the cumulative result of closed trades [[closeTime, net], ...], in close-time order (same rule as the Drawdown (closed) tiles)
 function ddOfPairs(L) { if (!L || !L.length) return NaN; const a = L.slice().sort((x, y) => x[0] - y[0]); let c = 0, pk = 0, dd = 0; for (const [, v] of a) { c += v; if (c > pk) pk = c; if (pk - c > dd) dd = pk - c; } return dd; }
+// small line of the running result with the biggest drawdown (peak to bottom) in red and its amount written on it
+function ddSpark(L, W, color) {
+  const ns = 'http://www.w3.org/2000/svg', H = 64, svg = document.createElementNS(ns, 'svg'); svg.setAttribute('width', W); svg.setAttribute('height', H); svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('role', 'img');
+  const a = (L || []).slice().sort((x, y) => x[0] - y[0]); if (a.length < 2) return svg;
+  let c = 0, pk = 0, pkI = -1, dd = 0, ddPk = -1, ddLo = -1; const v = [0]; // v[i + 1] = running result after trade i; index 0 = start
+  for (let i = 0; i < a.length; i++) { c += a[i][1]; v.push(c); }
+  c = 0; pk = 0; pkI = 0; for (let i = 0; i < a.length; i++) { c += a[i][1]; if (c > pk) { pk = c; pkI = i + 1; } if (pk - c > dd) { dd = pk - c; ddPk = pkI; ddLo = i + 1; } }
+  const lo = Math.min(...v), hi = Math.max(...v), span = hi - lo || 1, X = (i) => 4 + (i / (v.length - 1)) * (W - 8), Y = (x) => H - 8 - ((x - lo) / span) * (H - 22);
+  const mk = (tag, at) => { const e = document.createElementNS(ns, tag); for (const k in at) e.setAttribute(k, at[k]); svg.appendChild(e); return e; };
+  mk('line', { x1: 0, x2: W, y1: Y(0), y2: Y(0), style: 'stroke:var(--axis);stroke-width:1;stroke-dasharray:3 3' });
+  const step = Math.max(1, Math.ceil(v.length / 240)), idx = []; for (let i = 0; i < v.length; i += step) idx.push(i); if (idx[idx.length - 1] !== v.length - 1) idx.push(v.length - 1);
+  mk('polyline', { fill: 'none', points: idx.map((i) => X(i).toFixed(1) + ',' + Y(v[i]).toFixed(1)).join(' '), style: 'stroke:' + color + ';stroke-width:1.6;stroke-opacity:.9' });
+  if (dd > 0) {
+    const seg = []; for (let i = ddPk; i <= ddLo; i += Math.max(1, Math.ceil((ddLo - ddPk) / 120))) seg.push(i); if (seg[seg.length - 1] !== ddLo) seg.push(ddLo);
+    mk('polyline', { fill: 'none', points: seg.map((i) => X(i).toFixed(1) + ',' + Y(v[i]).toFixed(1)).join(' '), style: 'stroke:var(--series-8);stroke-width:2.6' });
+    mk('circle', { cx: X(ddPk), cy: Y(v[ddPk]), r: 3, style: 'fill:var(--series-8)' }); mk('circle', { cx: X(ddLo), cy: Y(v[ddLo]), r: 3, style: 'fill:var(--series-8)' });
+    const t = mk('text', { x: Math.min(W - 4, Math.max(4, (X(ddPk) + X(ddLo)) / 2)), y: 11, 'text-anchor': 'middle', style: 'fill:var(--series-8);font-size:12px;font-weight:600' }); t.textContent = money(-dd);
+  }
+  return svg;
+}
 function faMasterGroups(host, mr) {
   const g = new Map();
   for (const r of mr) {
@@ -2654,13 +2674,11 @@ function faMasterGroups(host, mr) {
     const cr = el('tr', { hidden: '' }); const ctd = el('td', { colspan: String(hr.children.length), style: 'padding:8px 12px' }); cr.appendChild(ctd); tb.appendChild(cr);
     cb.addEventListener('click', (e) => {
       e.preventDefault(); e.stopPropagation(); const open = cr.hidden; cr.hidden = !open; cb.textContent = open ? '📈 Hide chart' : '📈 Chart'; if (!open) return;
-      ctd.textContent = ''; const wd = Math.max(280, ((tbl.parentElement && tbl.parentElement.clientWidth) || 600) - 28); const box = el('div', { style: 'position:sticky;left:0;width:' + wd + 'px' }); ctd.appendChild(box);
-      const cum = (L) => { const a = (L || []).slice().sort((x, y) => x[0] - y[0]); let c = 0; const pts = a.length ? [[a[0][0], 0]] : []; for (const [t, v] of a) { c += v; pts.push([t, c]); } return pts; };
-      const fd = ddOfPairs(o.ft), md = ddOfPairs(o.mt);
-      box.appendChild(el('div', { class: 'sub' }, 'Running profit / loss · max fader drawdown ' + (Number.isFinite(fd) ? money(-fd) : '–') + ' · max master drawdown ' + (Number.isFinite(md) ? money(-md) : '–')));
-      const host2 = el('div', { class: 'chart', style: 'width:' + wd + 'px' }); box.appendChild(host2);
-      lineChart(host2, [{ name: 'Fader copies', color: cssVar('--series-1'), pts: downsample(cum(o.ft), 800) }, { name: 'Master (same trades)', color: cssVar('--series-2'), pts: downsample(cum(o.mt), 800) }], { height: 240, zero: true, label: 'running profit and loss of the fader copies and of the master trades' });
-      const lg = el('div', { class: 'muted', style: 'font-size:12px' }); lg.appendChild(el('span', { style: 'color:' + cssVar('--series-1') }, '━ Fader copies   ')); lg.appendChild(el('span', { style: 'color:' + cssVar('--series-2') }, '━ Master (same trades)')); box.appendChild(lg);
+      ctd.textContent = ''; const wd = Math.max(240, ((tbl.parentElement && tbl.parentElement.clientWidth) || 600) - 28); const box = el('div', { style: 'position:sticky;left:0;width:' + wd + 'px;display:grid;gap:10px' }); ctd.appendChild(box);
+      for (const [name, L, col] of [['Fader copies', o.ft, '--series-1'], ['Master (same trades)', o.mt, '--series-2']]) {
+        const row = el('div'); row.appendChild(el('div', { class: 'muted', style: 'font-size:12px' }, name + ' · max drawdown ' + (Number.isFinite(ddOfPairs(L)) ? money(-ddOfPairs(L)) : '–') + ' (red part of the line)'));
+        row.appendChild(ddSpark(L, wd, cssVar(col))); box.appendChild(row);
+      }
     });
     if (o.kids.length < 2) continue;
     const kids = o.kids.slice().sort((a, b) => b.total - a.total).map((k) => {
