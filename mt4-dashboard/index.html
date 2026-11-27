@@ -2365,8 +2365,9 @@ function faderAnalysis() {
     x.mf += t.net; sy.mf += t.net;
     x.found++; x.mnet += m.net; sy.mnet += m.net; sy.found++; x.mkeys.add(mk); x.masters.add(srcKey(m));
     if (Number.isFinite(m.duration)) { x.mdur += m.duration; x.mdurN++; }
-    const pk = fk + '>' + mk; let p = pairs.get(pk); if (!p) { p = { fk, mk, n: 0, net: 0, mnet: 0, wins: 0 }; pairs.set(pk, p); }
+    const pk = fk + '>' + mk; let p = pairs.get(pk); if (!p) { p = { fk, mk, n: 0, net: 0, mnet: 0, wins: 0, ft: [], mt: [], mseen: new Set() }; pairs.set(pk, p); }
     p.n++; p.net += t.net; p.mnet += m.net; if (t.net > 0) p.wins++;
+    p.ft.push([t.closeTime, t.net]); if (!p.mseen.has(srcKey(m))) { p.mseen.add(srcKey(m)); p.mt.push([m.closeTime, m.net]); }
     mm.faders.add(fk); mm.copies++; mm.fnet += t.net; mm.pairSum += t.net + m.net;
     if (!mm.copied.has(srcKey(m))) { mm.copied.add(srcKey(m)); mm.cnet += m.net; }
   }
@@ -2589,9 +2590,9 @@ function faDetail(host, A, x, big) {
   for (const p of A.pairs.values()) if (p.fk === x.key) keys.add(p.mk);
   for (const p of A.xpairs.values()) if (p.fk === x.key) keys.add(p.mk);
   for (const mk of keys) {
-    const p = A.pairs.get(x.key + '>' + mk) || { n: 0, net: 0, mnet: 0, wins: 0 }, xp = A.xpairs.get(x.key + '>' + mk) || { xn: 0, xnet: 0, wins: 0 }, m = A.ma.get(mk);
+    const p = A.pairs.get(x.key + '>' + mk) || { n: 0, net: 0, mnet: 0, wins: 0, ft: [], mt: [] }, xp = A.xpairs.get(x.key + '>' + mk) || { xn: 0, xnet: 0, wins: 0 }, m = A.ma.get(mk);
     const all = p.n + xp.xn;
-    mr.push({ mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: faCov(A, p), total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + p.mnet : NaN });
+    mr.push({ ft: p.ft, mt: p.mt, fdd: ddOfPairs(p.ft), mdd: ddOfPairs(p.mt), mmagic: m.magic, comment: m.label, trades: all, win: all ? (p.wins + xp.wins) / all : NaN, n: p.n, xn: xp.xn || '', mn: m.n, cov: faCov(A, p), total: p.net + xp.xnet, net: p.net, xnet: xp.xn ? xp.xnet : NaN, mnet: p.n ? p.mnet : NaN, sum: p.n ? p.net + p.mnet : NaN });
   }
   if (simple) {
     host.appendChild(el('p', { class: 'sub' }, 'Fader $ = what the fader made on its copies of that master · Master $ = what the master made on those same trades · Difference = first-copy net + Master $ on the same matched trades (extras and orders with no matched master are not in it; positive: the fader gains more than the master loses). Coverage = share of the master\'s trades this fader copied.'));
@@ -2603,26 +2604,31 @@ function faDetail(host, A, x, big) {
     { key: 'trades', label: 'Trades', num: true }, { key: 'win', label: 'Win %', num: true, f: pct }, { key: 'total', label: 'Net', num: true, f: money, cls: signCls },
     { key: 'n', label: 'First trade count', num: true }, { key: 'net', label: 'Firsts $', num: true, f: money, cls: signCls }, { key: 'xn', label: 'Extra trade count', num: true }, { key: 'xnet', label: 'Extras $', num: true, f: money, cls: signCls },
     { key: 'mn', label: 'Master trade count', num: true }, { key: 'cov', label: 'Coverage', num: true, f: pct },
-    { key: 'mnet', label: 'Master alone $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Difference $', num: true, f: money, cls: signCls }], mr, { tabId: 'fa2m' + (big ? 'b' : ''), defKey: 'total', pageSize: 1000 });
+    { key: 'mnet', label: 'Master alone $', num: true, f: money, cls: signCls }, { key: 'sum', label: 'Difference $', num: true, f: money, cls: signCls },
+    { key: 'fdd', label: 'Max fader drawdown', num: true, f: (v) => (Number.isFinite(v) ? money(-v) : ''), cls: () => 'neg', title: 'Biggest closed-trade fall from a peak: the fader\'s matched first copies of this master' }, { key: 'mdd', label: 'Max master drawdown', num: true, f: (v) => (Number.isFinite(v) ? money(-v) : ''), cls: () => 'neg', title: 'Biggest closed-trade fall from a peak: the master trades those copies came from' }], mr, { tabId: 'fa2m' + (big ? 'b' : ''), defKey: 'total', pageSize: 1000 });
 }
 // one row per MASTER MAGIC (what the fader fades from that master), click a row to see its comments underneath
+// biggest fall from a peak of the cumulative result of closed trades [[closeTime, net], ...], in close-time order (same rule as the Drawdown (closed) tiles)
+function ddOfPairs(L) { if (!L || !L.length) return NaN; const a = L.slice().sort((x, y) => x[0] - y[0]); let c = 0, pk = 0, dd = 0; for (const [, v] of a) { c += v; if (c > pk) pk = c; if (pk - c > dd) dd = pk - c; } return dd; }
 function faMasterGroups(host, mr) {
   const g = new Map();
   for (const r of mr) {
-    let o = g.get(r.mmagic); if (!o) g.set(r.mmagic, o = { magic: r.mmagic, trades: 0, wins: 0, total: 0, mnet: 0, hasM: false, sum: 0, hasS: false, n: 0, mn: 0, kids: [] });
+    let o = g.get(r.mmagic); if (!o) g.set(r.mmagic, o = { magic: r.mmagic, trades: 0, wins: 0, total: 0, mnet: 0, hasM: false, sum: 0, hasS: false, n: 0, mn: 0, ft: [], mt: [], kids: [] });
+    o.ft = o.ft.concat(r.ft || []); o.mt = o.mt.concat(r.mt || []);
     o.trades += r.trades; o.wins += Number.isFinite(r.win) ? r.win * r.trades : 0; o.total += r.total; o.n += r.n; o.mn += r.mn;
     if (Number.isFinite(r.mnet)) { o.mnet += r.mnet; o.hasM = true; } if (Number.isFinite(r.sum)) { o.sum += r.sum; o.hasS = true; }
     o.kids.push(r);
   }
   const groups = [...g.values()].sort((a, b) => b.total - a.total);
   const tbl = el('table', { class: 'fa-groups' }); const hr = el('tr');
-  for (const [l, num] of [['Master magic', 0], ['Trades', 1], ['Win %', 1], ['Fader $', 1], ['Master $', 1], ['Difference $', 1], ['Coverage', 1]]) hr.appendChild(el('th', { class: num ? 'num' : '' }, l));
+  for (const [l, num] of [['Master magic', 0], ['Trades', 1], ['Win %', 1], ['Fader $', 1], ['Master $', 1], ['Difference $', 1], ['Coverage', 1], ['Max fader drawdown', 1], ['Max master drawdown', 1]]) hr.appendChild(el('th', { class: num ? 'num' : '', title: /drawdown/.test(l) ? 'Biggest fall from a peak of the cumulative result of the CLOSED trades of this pair in the selected dates: ' + (/fader/.test(l) ? 'the fader\'s matched first copies' : 'the master trades those copies came from') + '. Floating loss is not included.' : '' }, l));
   tbl.appendChild(el('thead', null)).appendChild(hr);
   const tb = el('tbody'); tbl.appendChild(tb);
   const cells = (tr, label, o, kid) => {
     tr.appendChild(label);
     const nums = [[String(o.trades), ''], [o.trades ? pct((kid ? (Number.isFinite(o.win) ? o.win * o.trades : 0) : o.wins) / o.trades) : '', ''], [money(o.total), signCls(o.total)],
-      [(kid ? Number.isFinite(o.mnet) : o.hasM) ? money(o.mnet) : '', signCls(o.mnet)], [(kid ? Number.isFinite(o.sum) : o.hasS) ? money(o.sum) : '', signCls(o.sum)], [o.mn ? pct(o.n / o.mn) : (Number.isFinite(o.cov) ? pct(o.cov) : ''), '']];
+      [(kid ? Number.isFinite(o.mnet) : o.hasM) ? money(o.mnet) : '', signCls(o.mnet)], [(kid ? Number.isFinite(o.sum) : o.hasS) ? money(o.sum) : '', signCls(o.sum)], [o.mn ? pct(o.n / o.mn) : (Number.isFinite(o.cov) ? pct(o.cov) : ''), ''],
+      [Number.isFinite(kid ? o.fdd : ddOfPairs(o.ft)) ? money(-(kid ? o.fdd : ddOfPairs(o.ft))) : '', 'neg'], [Number.isFinite(kid ? o.mdd : ddOfPairs(o.mt)) ? money(-(kid ? o.mdd : ddOfPairs(o.mt))) : '', 'neg']];
     for (const [t, c] of nums) tr.appendChild(el('td', { class: 'num ' + c }, t));
   };
   for (const o of groups) {
