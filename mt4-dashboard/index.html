@@ -675,6 +675,8 @@ function isCandidate(name) {
 /* ---------------- trade records ---------------- */
 function stripSuffix(c) { return (c || '').replace(/\s*\[(sl|tp|so)\]\s*$/i, '').trim(); }
 // copier trades that carry the master ticket ("MP T10 #2052488935") group under one name ("MP T10")
+// a master comment that carries a ticket number inside it (e.g. M307R1795395905000196|V6B) is one kind of comment, not one per trade
+const tickNorm = (c) => String(c || '').replace(/\d{6,}/g, '#').replace(/\s+/g, ' ').trim();
 function baseOf(base, comment) { const b = base || stripSuffix(comment); return b.replace(/\s*\+?#[A-Za-z]*\d{6,}$/, '').trim() || b; }
 function deriveExit(c) {
   const m = /\[(sl|tp|so)\]\s*$/i.exec(c || '');
@@ -1840,7 +1842,7 @@ function masterExtra(arr) {
     if (f.master && !chk.has(sk)) { chk.add(sk); if (!sc) stGone++; else if (!Number.isFinite(sc.closeTime)) stOpen++; }
     if (f.master && !seen.has(sk)) {
       seen.add(sk); const m = sc && Number.isFinite(sc.closeTime) ? sc : null;
-      if (m) { found++; master += m.net; mkeys.add(masterKeyOf(m)); const k = m.magic + ' ' + baseOf(m.base, m.comment); who.set(k, (who.get(k) || 0) + 1); }
+      if (m) { found++; master += m.net; mkeys.add(masterKeyOf(m)); const k = m.magic + ' ' + tickNorm(baseOf(m.base, m.comment)); who.set(k, (who.get(k) || 0) + 1); }
     }
   }
   // the master strategy(ies) the fader copies: the one it copies most, and how many others
@@ -2209,10 +2211,18 @@ function renderTab() {
     // the same magic number can run on several accounts (e.g. one fader on two terminals): "Split by account" shows one row per account
     const split = SPLIT.magic; const CB = copiedByMap();
     const g = groupBy(T, (t) => (split ? t.account + '|' : '') + t.magic);
-    const rows = [...g].map(([k, arr]) => {
+    const buildRow = (k, arr, lab) => {
       const bs = baskets(arr); const a0 = arr[0]; const acc = DB.accounts.get(a0.account) || {};
-      return dimRow(k, a0.magic, arr, { ...masterExtra(arr), copiedBy: cbFor(CB, a0.magic, new Set(arr.map((t) => t.account))), ...rosterExtra(a0.magic, a0.account), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
-    });
+      return dimRow(k, lab || a0.magic, arr, { ...masterExtra(arr), copiedBy: cbFor(CB, a0.magic, new Set(arr.map((t) => t.account))), ...rosterExtra(a0.magic, a0.account), terminal: acc.terminal || '', account: split || new Set(arr.map((t) => t.account)).size === 1 ? a0.account : '', magic: a0.magic, baskets: bs.length || NaN, basketWin: bs.length ? bs.filter((b) => b.net > 0).length / bs.length : NaN, worstBasket: bs.length ? minOf(bs.map((b) => b.net)) : NaN });
+    };
+    // a fader that copies several masters: with one account / terminal selected, one row per master it copies (instead of one row with "+N more")
+    const rows = [];
+    for (const [k, arr] of g) {
+      if (state.account && !split) { const gm = groupBy(arr.filter((t) => faderOf(t).is), (t) => { const m = srcOf(t); return m ? m.magic : ''; }); const others = arr.filter((t) => !faderOf(t).is);
+        if (gm.size > 1 && !others.length) { for (const [mm, sub] of gm) rows.push(buildRow(k, sub, arr[0].magic + '  ←  ' + (mm ? 'master ' + mm : 'no master found'))); continue; } }
+      rows.push(buildRow(k, arr));
+    }
+    const _unused = 0;
     const lead = split ? [{ key: 'terminal', label: 'Terminal' }, { key: 'label', label: 'Magic', num: false }, { key: 'account', label: 'Account' }] : [{ key: 'label', label: 'Magic', num: false }];
     const cols = colsOf(['comments', 'strategy', 'about'].concat(STD_COLS.slice(0, 3), ['firstN', 'firsts', 'extraN', 'extras', 'masterN', 'master', 'masterDiff', 'mcov', 'mratio', 'masterStatus', 'copying', 'baskets', 'basketWin', 'worstBasket'], STD_COLS.slice(3), ['noTP', 'wideSL', 'accounts', 'symbols']), lead);
     const extra = (bar) => {
@@ -2356,7 +2366,7 @@ function faderAnalysis() {
     if (m) { mm = ma.get(mk); if (!mm) { mm = newMaster(mk, m); ma.set(mk, mm); } }
     let sy = x.sym.get(t.symbol); if (!sy) { sy = { symbol: t.symbol, n: 0, net: 0, mf: 0, unm: 0, unmN: 0, mnet: 0, found: 0, xn: 0, xnet: 0, wins: 0, who: new Map() }; x.sym.set(t.symbol, sy); }
     if (t.net > 0) sy.wins++;
-    if (m) { const wk = m.magic + ' ' + baseOf(m.base, m.comment); sy.who.set(wk, (sy.who.get(wk) || 0) + 1); }
+    if (m) { const wk = m.magic + ' ' + tickNorm(baseOf(m.base, m.comment)); sy.who.set(wk, (sy.who.get(wk) || 0) + 1); }
     if (f.extra) { sy.xn++; sy.xnet += t.net; x.xn++; x.xnet += t.net; if (mm) { mm.xn++; mm.xnet += t.net; const xk = fk + '>' + mk; let xp = xpairs.get(xk); if (!xp) { xp = { fk, mk, xn: 0, xnet: 0, wins: 0 }; xpairs.set(xk, xp); } xp.xn++; xp.xnet += t.net; if (t.net > 0) xp.wins++; } continue; }
     x.n++; x.net += t.net; x.sp -= t.spreadCost || 0; x.cm += t.commission || 0; x.sw += t.swap || 0;
     if (Number.isFinite(t.duration)) { x.dur += t.duration; x.durN++; }
