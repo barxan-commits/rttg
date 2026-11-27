@@ -2167,7 +2167,7 @@ function colsOf(keys, lead) { return lead.concat(keys.map((k) => Object.assign({
 function totalsFooter(T, firstKey) { const r = dimRow('', 'Total', T); const me = masterExtra(T); delete me.copying; delete me.copyingAll; delete me.copyingList; delete me.masterStatus; Object.assign(r, me); r[firstKey] = 'Total (' + T.length.toLocaleString('en-US') + ')'; r.comments = ''; return r; }
 
 const TABS = [
-  ['magic', 'By magic'], ['compare', 'Compare'], ['periods', 'Periods'], ['faders', 'Faders'], ['fa', 'Fader analysis'], ['roster', 'Roster'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
+  ['magic', 'By magic'], ['compare', 'Compare'], ['periods', 'Periods'], ['faders', 'Faders'], ['fa', 'Fader analysis'], ['variants', 'Master variants'], ['roster', 'Roster'], ['comment', 'By comment'], ['magiccomment', 'Magic × comment'], ['symbol', 'By symbol'],
   ['account', 'By account'], ['firsttrade', 'Added (first trade)'], ['exit', 'Exit reasons'], ['baskets', 'Baskets & depth'],
   ['time', 'Hour / weekday'], ['trades', 'Trades'], ['open', 'Open positions'], ['accounts', 'Accounts'], ['health', 'Health'], ['files', 'Files'],
 ];
@@ -2289,10 +2289,52 @@ function renderTab() {
   else if (id === 'periods') renderPeriods(host, T);
   else if (id === 'faders') renderFaders(host, T);
   else if (id === 'fa') renderFaderAnalysis(host);
+  else if (id === 'variants') renderVariants(host, T);
   else if (id === 'roster') renderRoster(host, T);
   else if (id === 'files') renderFiles(host);
 }
 // One row per fader (account + magic), like the fader tables: its own result, the master trades it copied, and both together.
+
+// every master variant (account + magic + comment without ticket numbers) that has fader copies, next to the fader that did best on it:
+// is the fader's GROSS edge bigger than its trading costs? (net = profit + commission + swap)
+function renderVariants(host, T) {
+  const mkey = (t) => t.account + '|' + t.magic + '|' + tickNorm(baseOf(t.base, t.comment));
+  const fad = new Map(), copied = new Map(), nonF = [];
+  for (const t of T) {
+    const f = faderOf(t); if (!f.is) { nonF.push(t); continue; }
+    if (f.extra || !f.master) continue;
+    const m = srcOf(t, true); if (!m) continue;
+    const k = mkey(m); let g = fad.get(k); if (!g) { g = new Map(); fad.set(k, g); }
+    const fk = t.account + '|' + t.magic; let a = g.get(fk); if (!a) { a = { magic: t.magic, account: t.account, arr: [] }; g.set(fk, a); } a.arr.push(t);
+    let c = copied.get(k); if (!c) { c = new Set(); copied.set(k, c); } c.add(srcKey(m));
+  }
+  const marr = new Map(); for (const t of nonF) { const k = mkey(t); if (!fad.has(k)) continue; let a = marr.get(k); if (!a) { a = []; marr.set(k, a); } a.push(t); }
+  const rows = [];
+  for (const [k, arr] of marr) {
+    const [account, magic, comment] = k.split('|'); const M = stats(arr); const fl = [...fad.get(k).values()].map((x) => Object.assign(x, { S: stats(x.arr) }));
+    const ratio = (x) => (x.S.maxDD > 0 ? x.S.net / x.S.maxDD : x.S.net);
+    const pool = fl.filter((x) => x.S.n >= 30); const best = (pool.length ? pool : fl).slice().sort((p, q) => ratio(q) - ratio(p))[0];
+    const B = best.S, gross = B.profit, cost = B.comm + B.swap, ftr = fl.reduce((a, x) => a + x.S.n, 0);
+    rows.push({ key: magic, account, magic, label: magic + ' ' + comment, mn: M.n, mwin: M.winRate, maw: M.wins ? M.gp / M.wins : NaN, mal: M.losses ? M.gl / M.losses : NaN, mnet: M.net, mpf: M.pf, mdd: M.maxDD,
+      nf: fl.length, cpt: copied.get(k).size ? ftr / copied.get(k).size : NaN, allf: fl.reduce((a, x) => a + x.S.net, 0),
+      bf: best.magic + (best.account !== account ? ' (' + best.account + ')' : ''), bn: B.n, bnet: B.net, bdd: B.maxDD, bpf: B.pf, bgross: gross, bcost: cost, bcp: gross > 0 ? -cost / gross : NaN,
+      verdict: B.n < 30 ? 'too few trades' : gross <= 0 ? 'no gross edge' : B.net > 0 ? 'edge covers costs' : 'costs eat the edge' });
+  }
+  host.appendChild(el('p', { class: 'sub' }, 'One row per master variant that has fader copies in the selected dates: the master\'s own results, how many faders copy it, and its best fader (best net ÷ drawdown, at least 30 trades). Gross = profit before commission and swap; Costs = commission + swap; "Costs % of gross" shows how much of the fader\'s edge the costs take. Worst masters first: those are the ones worth fading. Click a row to filter by that master.'));
+  if (!rows.length) { host.appendChild(el('p', { class: 'muted' }, 'No fader copies in the current selection.')); return; }
+  const ORD = ['label', 'mnet', 'mpf', 'nf', 'bf', 'bnet', 'bgross', 'bcost', 'bcp', 'verdict', 'account', 'mn', 'mwin', 'maw', 'mal', 'mdd', 'cpt', 'allf', 'bn', 'bdd', 'bpf'];
+  const cols = [{ key: 'label', label: 'Master variant', num: false }, { key: 'account', label: 'Account' }, { key: 'mn', label: 'Trades', num: true }, { key: 'mwin', label: 'Win %', num: true, f: pct },
+    { key: 'maw', label: 'Avg win', num: true, f: money, cls: signCls }, { key: 'mal', label: 'Avg loss', num: true, f: money, cls: signCls }, { key: 'mnet', label: 'Master net', num: true, f: money, cls: signCls },
+    { key: 'mpf', label: 'Master PF', num: true, f: ratio, title: 'Profit factor of the master variant: below 1 = it loses money' }, { key: 'mdd', label: 'Master drawdown', num: true, f: (v) => (v > 0 ? money(-v) : money(0)), cls: () => 'neg' },
+    { key: 'nf', label: 'Fader magics copying', num: true, title: 'How many different fader magics copy this master variant' }, { key: 'cpt', label: 'Copies per master trade', num: true, f: (v) => (Number.isFinite(v) ? fmtNum(v, 1) : ''), title: 'Fader copies divided by the distinct master trades that were copied. Above 1 = several faders pile onto the same trade.' },
+    { key: 'allf', label: 'All faders net', num: true, f: money, cls: signCls }, { key: 'bf', label: 'Best fader', num: false }, { key: 'bn', label: 'Best trades', num: true }, { key: 'bnet', label: 'Best net', num: true, f: money, cls: signCls },
+    { key: 'bdd', label: 'Best drawdown', num: true, f: (v) => (v > 0 ? money(-v) : money(0)), cls: () => 'neg' }, { key: 'bpf', label: 'Best PF', num: true, f: ratio },
+    { key: 'bgross', label: 'Gross', num: true, f: money, cls: signCls, title: 'Best fader profit before commission and swap (spread is already inside it)' }, { key: 'bcost', label: 'Costs', num: true, f: money, cls: signCls, title: 'Commission + swap of the best fader' },
+    { key: 'bcp', label: 'Costs % of gross', num: true, f: pct, title: 'Share of the best fader\'s gross profit taken by commission and swap. Above 100% = costs exceed the edge.' }, { key: 'verdict', label: 'Verdict', num: false }];
+  cols.sort((x, y) => ORD.indexOf(x.key) - ORD.indexOf(y.key));
+  table(host, cols,
+    rows, { tabId: 'variants', defKey: 'mnet', defDir: 'asc', onRow: (r) => { state.account = r.account; state.magic = r.magic; syncFilterInputs(); render(); window.scrollTo({ top: 0, behavior: 'smooth' }); } });
+}
 function renderFaders(host, T) {
   const F = T.filter((t) => faderOf(t).is);
   host.appendChild(el('p', { class: 'sub' }, 'Faders are copies of a master trade: the comment ends with the master ticket ("<type> <source> #<master ticket>", also "#BIG<ticket>" or "+#<ticket>"), whatever the EA version or magic number. Types the dashboard does not know are listed as COPY. Trades, Fader $, Master $ and Fader + master cover the first (normal) copies, so they compare with the plain faders. Extra copies are the second copies that ADDL5 / ADDP5 / ADDP20 test faders add (comment "+#<master ticket>"): how many closed and their result. Master $ is the result of the distinct master trades the fader copied (found by ticket in any account). Spread, comm and swap are the costs of those same trades, fader and master side by side; costs are negative, and Costs = spread + comm + swap (the spread is an estimate from the collector and is already inside the profit, so it is not subtracted from Net again). Use Category and Fader type above to filter the whole dashboard to them.'));
