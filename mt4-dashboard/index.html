@@ -2619,6 +2619,19 @@ function faMasterGroups(host, mr) {
     if (Number.isFinite(r.mnet)) { o.mnet += r.mnet; o.hasM = true; } if (Number.isFinite(r.sum)) { o.sum += r.sum; o.hasS = true; }
     o.kids.push(r);
   }
+  // comments that only differ by a ticket number (e.g. "LTA2056876435", "REF1X #2056...") are the same kind of order: merge them so a master is not listed as "104 comments" for 104 trades
+  const normC = (c) => String(c || '').replace(/\d{6,}/g, '#').replace(/\s+/g, ' ').trim();
+  for (const o of g.values()) {
+    const m = new Map();
+    for (const r of o.kids) {
+      const k = normC(r.comment); let q = m.get(k);
+      if (!q) { m.set(k, q = Object.assign({}, r, { comment: k || r.comment, ft: (r.ft || []).slice(), mt: (r.mt || []).slice(), win: Number.isFinite(r.win) ? r.win * r.trades : 0, cov: NaN, _same: 1 })); continue; }
+      q._same++; q.win += Number.isFinite(r.win) ? r.win * r.trades : 0; q.trades += r.trades; q.n += r.n; q.mn += r.mn; q.total += r.total;
+      if (Number.isFinite(r.mnet)) q.mnet = (Number.isFinite(q.mnet) ? q.mnet : 0) + r.mnet; if (Number.isFinite(r.sum)) q.sum = (Number.isFinite(q.sum) ? q.sum : 0) + r.sum;
+      q.ft = q.ft.concat(r.ft || []); q.mt = q.mt.concat(r.mt || []);
+    }
+    o.kids = [...m.values()].map((q) => Object.assign(q, { win: q.trades ? q.win / q.trades : NaN, fdd: ddOfPairs(q.ft), mdd: ddOfPairs(q.mt) }));
+  }
   const groups = [...g.values()].sort((a, b) => b.total - a.total);
   const tbl = el('table', { class: 'fa-groups' }); const hr = el('tr');
   for (const [l, num] of [['Master magic', 0], ['Trades', 1], ['Win %', 1], ['Fader $', 1], ['Master $', 1], ['Difference $', 1], ['Coverage', 1], ['Max fader drawdown', 1], ['Max master drawdown', 1]]) hr.appendChild(el('th', { class: num ? 'num' : '', title: /drawdown/.test(l) ? 'Biggest fall from a peak of the cumulative result of the CLOSED trades of this pair in the selected dates: ' + (/fader/.test(l) ? 'the fader\'s matched first copies' : 'the master trades those copies came from') + '. Floating loss is not included.' : '' }, l));
@@ -2633,7 +2646,7 @@ function faMasterGroups(host, mr) {
   };
   for (const o of groups) {
     const lab = el('td', { class: 'gl' }); const arrow = el('span', { class: 'gar' }, o.kids.length > 1 ? '▸' : ' ');
-    lab.append(arrow, el('b', null, ' ' + o.magic), el('span', { class: 'muted' }, o.kids.length > 1 ? '  ·  ' + o.kids.length + ' comments' : '  ·  ' + o.kids[0].comment));
+    lab.append(arrow, el('b', null, ' ' + o.magic), el('span', { class: 'muted' }, o.kids.length > 1 ? '  ·  ' + o.kids.length + ' kinds of comment' : '  ·  ' + o.kids[0].comment));
     const tr = el('tr', { class: 'gr' + (o.kids.length > 1 ? ' click' : '') }); cells(tr, lab, o, false); tb.appendChild(tr);
     if (o.kids.length < 2) continue;
     const kids = o.kids.slice().sort((a, b) => b.total - a.total).map((k) => {
