@@ -1,7 +1,7 @@
 InpSymbols=EURUSD
 InpMagicNumber=261128101
 InpFaderTag=#BIG
-InpCommentLabel=T15 1COPY OFF
+InpCommentLabel=T15 REF
 InpHeader0====== Master Filters =====
 InpMasterMagicNumber=2604172
 InpMasterMagicList=
@@ -9,12 +9,12 @@ InpMatchComment=
 InpExcludeComment1=#BIG
 InpExcludeComment2=Fader
 InpMaxMasterAgeSeconds=300
-InpAllowMissingMasterTP=false
+InpAllowMissingMasterTP=true
 InpFaderSLMultiplier=0.0
-InpFaderDisasterSLPips=0
+InpFaderDisasterSLPips=30
 InpMinMasterLossOverN=0
 InpMinMasterLossUSD=0.0
-InpMinMasterAgeSeconds=30
+InpMinMasterAgeSeconds=0
 InpBasketScalingTiers=
 InpAllowDuringWideSpread=false
 InpUseExposureLimits=false
