@@ -2648,6 +2648,20 @@ function faMasterGroups(host, mr) {
     const lab = el('td', { class: 'gl' }); const arrow = el('span', { class: 'gar' }, o.kids.length > 1 ? '▸' : ' ');
     lab.append(arrow, el('b', null, ' ' + o.magic), el('span', { class: 'muted' }, o.kids.length > 1 ? '  ·  ' + o.kids.length + ' kinds of comment' : '  ·  ' + o.kids[0].comment));
     const tr = el('tr', { class: 'gr' + (o.kids.length > 1 ? ' click' : '') }); cells(tr, lab, o, false); tb.appendChild(tr);
+    // profit / loss chart of this fader's copies of this master next to the master's own trades (the same trades the drawdown columns use)
+    const cb = el('button', { type: 'button', class: 'btn small', style: 'margin-left:8px', title: 'Show the running profit / loss of this fader\'s copies of this master and of the master trades they came from, with the biggest drawdown of each' }, '📈 Chart');
+    lab.appendChild(cb);
+    const cr = el('tr', { hidden: '' }); const ctd = el('td', { colspan: String(hr.children.length), style: 'padding:8px 12px' }); cr.appendChild(ctd); tb.appendChild(cr);
+    cb.addEventListener('click', (e) => {
+      e.preventDefault(); e.stopPropagation(); const open = cr.hidden; cr.hidden = !open; cb.textContent = open ? '📈 Hide chart' : '📈 Chart'; if (!open) return;
+      ctd.textContent = ''; const wd = Math.max(280, ((tbl.parentElement && tbl.parentElement.clientWidth) || 600) - 28); const box = el('div', { style: 'position:sticky;left:0;width:' + wd + 'px' }); ctd.appendChild(box);
+      const cum = (L) => { const a = (L || []).slice().sort((x, y) => x[0] - y[0]); let c = 0; const pts = a.length ? [[a[0][0], 0]] : []; for (const [t, v] of a) { c += v; pts.push([t, c]); } return pts; };
+      const fd = ddOfPairs(o.ft), md = ddOfPairs(o.mt);
+      box.appendChild(el('div', { class: 'sub' }, 'Running profit / loss · max fader drawdown ' + (Number.isFinite(fd) ? money(-fd) : '–') + ' · max master drawdown ' + (Number.isFinite(md) ? money(-md) : '–')));
+      const host2 = el('div', { class: 'chart', style: 'width:' + wd + 'px' }); box.appendChild(host2);
+      lineChart(host2, [{ name: 'Fader copies', color: cssVar('--series-1'), pts: downsample(cum(o.ft), 800) }, { name: 'Master (same trades)', color: cssVar('--series-2'), pts: downsample(cum(o.mt), 800) }], { height: 240, zero: true, label: 'running profit and loss of the fader copies and of the master trades' });
+      const lg = el('div', { class: 'muted', style: 'font-size:12px' }); lg.appendChild(el('span', { style: 'color:' + cssVar('--series-1') }, '━ Fader copies   ')); lg.appendChild(el('span', { style: 'color:' + cssVar('--series-2') }, '━ Master (same trades)')); box.appendChild(lg);
+    });
     if (o.kids.length < 2) continue;
     const kids = o.kids.slice().sort((a, b) => b.total - a.total).map((k) => {
       const kr = el('tr', { class: 'kid', hidden: '' }); cells(kr, el('td', { class: 'kl' }, k.comment), k, true); tb.appendChild(kr); return kr; });
